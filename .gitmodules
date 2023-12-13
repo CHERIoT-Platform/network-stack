@@ -1,0 +1,3 @@
+[submodule "third_party/freertos-plus-tcp"]
+	path = third_party/freertos-plus-tcp
+	url = https://github.com/FreeRTOS/FreeRTOS-Plus-TCP.git
