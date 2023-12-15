@@ -159,7 +159,12 @@ namespace
 	{
 		EthernetHeader *ethernetHeader =
 		  reinterpret_cast<EthernetHeader *>(const_cast<uint8_t *>(data));
-		Debug::log("Sending {} frame", ethertype_as_string(ethernetHeader->etherType));
+		Debug::log("Sending {} frame",
+		           ethertype_as_string(ethernetHeader->etherType));
+		if (ethernetHeader->etherType == EtherType::ARP)
+		{
+			// print_frame(data, length);
+		}
 		return true;
 	}
 
@@ -171,10 +176,11 @@ namespace
 			return false;
 		}
 		auto *ipv4Header = reinterpret_cast<const IPv4Header *>(data);
-		if (ipv4Header->protocol == IPProtocolNumber::ICMP)
+		// if (ipv4Header->protocol == IPProtocolNumber::ICMP)
 		{
 			int32_t sender = ipv4Header->sourceAddress;
-			Debug::log("ICMP from {}.{}.{}.{}",
+			Debug::log("{} from {}.{}.{}.{}",
+			           ipv4Header->protocol,
 			           sender & 0xff,
 			           (sender >> 8) & 0xff,
 			           (sender >> 16) & 0xff,
@@ -185,8 +191,9 @@ namespace
 
 	bool packet_filter_ingress(const uint8_t *data, size_t length)
 	{
-		// Not a valid Ethernet frame
-		if (length < 64)
+		// Not a valid Ethernet frame (64 bytes including four-byte FCS, which
+		// is stripped by this point).
+		if (length < 60)
 		{
 			Debug::log("Dropping frame with length {}", length);
 			return false;
@@ -197,8 +204,8 @@ namespace
 		{
 			// For now, testing with v6 disabled.
 			case EtherType::IPv6:
-				Debug::log("Dropping IPv6 packet");
-				return false;
+				// Debug::log("Dropping IPv6 packet");
+				return true;
 			case EtherType::ARP:
 				Debug::log("Saw ARP packet");
 				break;
@@ -213,6 +220,8 @@ namespace
 
 		return true;
 	}
+
+	std::atomic<uint32_t> receivedCounter;
 
 } // namespace
 
@@ -244,6 +253,9 @@ bool __cheri_compartment("Ethernet")
 	LockGuard g{sendLock};
 	Debug::log("Sending frame: ");
 	auto &ethernet = lazy_network_interface();
+	ethernet.dropped_frames_log_all_if_changed();
+	ethernet.received_frames_log();
+	Debug::log("Received {} frames in software", receivedCounter.load());
 	return ethernet.send_frame(frame, length, packet_filter_egress);
 }
 
@@ -260,8 +272,8 @@ void __cheri_compartment("Ethernet") ethernet_run_driver()
 	{
 		uint32_t lastInterrupt = interface.receive_interrupt_value();
 		int      packets       = 0;
-		Debug::log("Receive interrupt value: {}", lastInterrupt);
-		// Debug::log("Checking for frames");
+		// Debug::log("Receive interrupt value: {}", lastInterrupt);
+		//  Debug::log("Checking for frames");
 		while (auto maybeFrame = interface.receive_frame())
 		{
 			packets++;
@@ -276,9 +288,10 @@ void __cheri_compartment("Ethernet") ethernet_run_driver()
 			ConditionalDebug<true, "Packet filter">::log("Received {} packets",
 			                                             packets);
 		}
+		receivedCounter += packets;
 		// Sleep until the next frame arrives
-		//Timeout t{MS_TO_TICKS(1000)}; // For debugging, don't wait forever
 		Timeout t{UnlimitedTimeout};
+		// Timeout t{MS_TO_TICKS(1000)}; // For debugging, don't wait forever
 		interface.receive_interrupt_complete(&t, lastInterrupt);
 	}
 	Debug::log("Driver thread exiting");

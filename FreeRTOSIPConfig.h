@@ -46,3 +46,6 @@
 #define configSUPPORT_STATIC_ALLOCATION 0
 
 #define ipconfigBUFFER_PADDING 18
+
+#define ipconfigALLOW_SOCKET_SEND_WITHOUT_BIND 1
+#define ipconfigUSE_NETWORK_EVENT_HOOK 1

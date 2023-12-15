@@ -22,20 +22,28 @@ include_lib("event_group")
 include_lib("stdio")
 include_lib("cxxrt")
 
+compartment("Ethernet")
+  add_includedirs(".", "third_party/freertos-plus-tcp/source/include")
+  add_includedirs("third_party/freertos")
+  add_includedirs(path.join(sdkdir, "include/FreeRTOS-Compat"))
+  --FIXME: The FreeRTOS compat headers need to work with this mode!
+  --add_defines("CHERIOT_NO_AMBIENT_MALLOC", "CHERIOT_NO_NEW_DELETE")
+  add_files("firewall.cc")
+
 compartment("TCPIP")
   set_default(false)
   add_deps("freestanding", "string", "message_queue_library", "event_group", "stdio", "cxxrt")
   add_cflags("-Wno-error=int-conversion", "-Wno-error=cheri-provenance", "-Wno-error=pointer-integer-compare", { force = true})
   add_defines("CHERIOT_CUSTOM_DEFAULT_MALLOC_CAPABILITY")
   add_includedirs(".", "third_party/freertos-plus-tcp/source/include")
-  add_includedirs(".", "third_party/freertos-plus-tcp/source/include")
   add_includedirs("third_party/freertos")
   add_includedirs(path.join(sdkdir, "include/FreeRTOS-Compat"))
   add_files("third_party/freertos/list.c")
   add_files("externs.c")
-  add_files("driver_adaptor.cc")
   add_files("FreeRTOS_IP_wrapper.c")
   add_files("BufferManagement.cc")
+  add_files("driver_adaptor.cc")
+  add_files("test.cc")
   add_files(
             "third_party/freertos-plus-tcp/source/FreeRTOS_ARP.c",
             "third_party/freertos-plus-tcp/source/FreeRTOS_BitConfig.c",
@@ -84,7 +92,7 @@ compartment("TCPIP")
 
 firmware("toy_network")
     set_policy("build.warning", true)
-    add_deps("TCPIP")
+    add_deps("TCPIP", "Ethernet")
     on_load(function(target)
         target:values_set("board", "$(board)")
         target:values_set("threads", {
@@ -103,11 +111,11 @@ firmware("toy_network")
                 trusted_stack_frames = 4
             },
             {
-                compartment = "TCPIP",
+                compartment = "Ethernet",
                 priority = 1,
-                entry_point = "run_driver",
-                stack_size = 0xe00,
-                trusted_stack_frames = 3
+                entry_point = "ethernet_run_driver",
+                stack_size = 0x1000,
+                trusted_stack_frames = 4
             }
         }, {expand = false})
     end)
