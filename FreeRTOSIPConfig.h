@@ -14,9 +14,9 @@
  */
 #define ipconfigUSE_IPv4 1
 /**
- * Enable IPv4.
+ * Enable IPv6.
  */
-#define ipconfigUSE_IPv6 1
+#define ipconfigUSE_IPv6 CHERIOT_RTOS_OPTION_IPv6
 #define ipconfigUSE_RA 1
 #define ipconfigUSE_DHCPv6 0
 
@@ -45,7 +45,9 @@
 // We don't support static allocation
 #define configSUPPORT_STATIC_ALLOCATION 0
 
-#define ipconfigBUFFER_PADDING 18
+// Padding needs to be 14 bytes on platforms where pointers are 64 bits.  This
+// is fixed upstream but after the release that we're currently using.
+#define ipconfigBUFFER_PADDING 14
 
 #define ipconfigALLOW_SOCKET_SEND_WITHOUT_BIND 1
 #define ipconfigUSE_NETWORK_EVENT_HOOK 1

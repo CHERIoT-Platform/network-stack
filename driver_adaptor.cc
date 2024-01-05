@@ -8,7 +8,7 @@
 #include <platform-ethernet.hh>
 #include <timeout.h>
 
-#include "driver_compartment.h"
+#include "firewall.h"
 
 // FreeRTOS APIs
 #include <FreeRTOS.h>
@@ -28,25 +28,34 @@ namespace
 	 */
 	NetworkInterface_t *thisInterface = nullptr;
 
+	/**
+	 * Callback to initialise the network interface.  Starts the driver thread.
+	 */
 	BaseType_t initialise(struct xNetworkInterface *pxDescriptor)
 	{
 		ethernet_driver_start();
 		return pdPASS;
 	}
 
+	/**
+	 * Frame output callback.  Passes the frame to the firewall layer.
+	 */
 	BaseType_t output_frame(struct xNetworkInterface *,
 	                        NetworkBufferDescriptor_t *const pxNetworkBuffer,
 	                        BaseType_t                       xReleaseAfterSend)
 	{
-		ethernet_send_frame(pxNetworkBuffer->pucEthernetBuffer,
+		bool sent = ethernet_send_frame(pxNetworkBuffer->pucEthernetBuffer,
 		                    pxNetworkBuffer->xDataLength);
 		if (xReleaseAfterSend)
 		{
 			vReleaseNetworkBufferAndDescriptor(pxNetworkBuffer);
 		}
-		return pdPASS;
+		return sent ? pdPASS : pdFAIL;
 	}
 
+	/**
+	 * Callback to query the link status.
+	 */
 	BaseType_t phy_link_status(struct xNetworkInterface *pxInterface)
 	{
 		return ethernet_link_is_up() ? pdPASS : pdFAIL;

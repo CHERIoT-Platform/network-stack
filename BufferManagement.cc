@@ -51,6 +51,7 @@ pxGetNetworkBufferWithDescriptor(size_t     xRequestedSizeBytes,
 		Debug::log("Failed to allocate {} byte buffer", xRequestedSizeBytes);
 		return nullptr;
 	}
+	Debug::log("Allocated {} byte buffer: {}", xRequestedSizeBytes, buffer);
 
 	vListInitialiseItem(&descriptor->xBufferListItem);
 	listSET_LIST_ITEM_OWNER(&descriptor->xBufferListItem, descriptor.get());
@@ -58,9 +59,9 @@ pxGetNetworkBufferWithDescriptor(size_t     xRequestedSizeBytes,
 	*reinterpret_cast<NetworkBufferDescriptor_t **>(buffer) = descriptor.get();
 	// Make sure that there is enough space in the padding for the pointer.
 	static_assert(sizeof(NetworkBufferDescriptor_t *) <= ipBUFFER_PADDING);
-	// Make sure that the result is correctly aligned (two bytes off 8-byte
-	// alignment, to eat the Ethernet header).
-	static_assert(ipBUFFER_PADDING % 8 == 2);
+	// Make sure that the result is correctly aligned so that the packet after
+	// the Ethernet header is 4-byte aligned.
+	static_assert(((ipBUFFER_PADDING % 8) + 14) % 4 == 0);
 	descriptor->pucEthernetBuffer = buffer + ipBUFFER_PADDING;
 	descriptor->xDataLength       = xRequestedSizeBytes;
 	// Debug::log("Allocated buffer of size {}: {}", buffer,

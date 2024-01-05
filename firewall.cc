@@ -1,18 +1,18 @@
+#include "firewall.h"
 #include "cdefs.h"
-#include "driver_compartment.h"
 #include <atomic>
 #include <compartment-macros.h>
 #include <cstdint>
 #include <debug.hh>
 #include <fail-simulator-on-error.h>
-#include <futex.h>
 #include <locks.hh>
 #include <platform-ethernet.hh>
 #include <timeout.h>
+#include <vector>
 
 namespace
 {
-	using Debug = ConditionalDebug<true, "Firewall">;
+	using Debug = ConditionalDebug<false, "Firewall">;
 
 	/**
 	 * EtherType values, for Ethernet headers.  These are defined in network
@@ -155,36 +155,233 @@ namespace
 
 	static_assert(sizeof(IPv4Header) == 20);
 
+	/**
+	 * Simple firewall table for IPv4 endpoints.
+	 *
+	 * This is intended to be reasonably fast for small numbers of rules and to
+	 * have a low memory overhead.  It stores endpoints as a sorted array of
+	 * addresses.  This means insertion and deletion is O(n) and lookup is
+	 * O(log n).  Each connection typically requires a few KiBs of state, so
+	 * we're unlikely to encounter systems where this is a problem in the near
+	 * future.
+	 */
+	class EndpointsTable
+	{
+		/**
+		 * A reference-counted IPv4 endpoint.
+		 *
+		 * This may be extended to include ports at some point.
+		 */
+		struct IPv4Endpoint
+		{
+			uint32_t endpoint;
+			uint32_t refcount;
+		};
+		std::vector<IPv4Endpoint> permittedTCPEndpoints;
+		std::vector<IPv4Endpoint> permittedUDPEndpoints;
+		FlagLockPriorityInherited permittedEndpointsLock;
+		EndpointsTable()
+		{
+			permittedTCPEndpoints.reserve(8);
+			permittedUDPEndpoints.reserve(8);
+		}
+
+		using GuardedTable =
+		  std::pair<LockGuard<decltype(permittedEndpointsLock)>,
+		            decltype(permittedTCPEndpoints) &>;
+
+		GuardedTable permitted_endpoints(IPProtocolNumber protocol)
+		{
+			Debug::Assert(protocol == IPProtocolNumber::TCP ||
+			                protocol == IPProtocolNumber::UDP,
+			              "Invalid protocol for firewall: {}",
+			              protocol);
+			LockGuard g{permittedEndpointsLock};
+			return GuardedTable(std::move(g),
+			                    protocol == IPProtocolNumber::TCP
+			                      ? permittedTCPEndpoints
+			                      : permittedUDPEndpoints);
+		}
+
+		auto find_endpoint_ipv4(decltype(permittedTCPEndpoints) &table,
+		                        uint32_t                         endpoint)
+		{
+			return std::lower_bound(
+			  table.begin(),
+			  table.end(),
+			  endpoint,
+			  [](const IPv4Endpoint &a, const uint32_t b) {
+				  return a.endpoint < b;
+			  });
+		}
+
+		public:
+		static EndpointsTable &instance()
+		{
+			static EndpointsTable table;
+			return table;
+		}
+
+		void add_endpoint_ipv4(IPProtocolNumber protocol, uint32_t endpoint)
+		{
+			Debug::log(
+			  "Adding endpoint {} for protocol {}", endpoint, protocol);
+			auto [g, table] = permitted_endpoints(protocol);
+			auto iterator   = find_endpoint_ipv4(table, endpoint);
+			if (iterator != table.end() && iterator->endpoint == endpoint)
+			{
+				iterator->refcount++;
+				Debug::log("Endpoint {} already in table", endpoint);
+				return;
+			}
+			table.push_back({endpoint, 1});
+			std::sort(table.begin(),
+			          table.end(),
+			          [](const IPv4Endpoint &a, const IPv4Endpoint &b) {
+				          return a.endpoint < b.endpoint;
+			          });
+		}
+
+		void remove_endpoint_ipv4(IPProtocolNumber protocol, uint32_t endpoint)
+		{
+			Debug::log(
+			  "Removing endpoint {} for protocol {}", endpoint, protocol);
+			auto [g, table] = permitted_endpoints(protocol);
+			auto iterator   = find_endpoint_ipv4(table, endpoint);
+			if (iterator == table.end() || iterator->endpoint != endpoint)
+			{
+				Debug::log("Endpoint {} not in table", endpoint);
+				return;
+			}
+			if (iterator->refcount > 1)
+			{
+				iterator->refcount--;
+				Debug::log("Endpoint {} still in table", endpoint);
+			}
+			else
+			{
+				table.erase(iterator);
+			}
+		}
+
+		bool is_endpoint_permitted(IPProtocolNumber protocol, uint32_t endpoint)
+		{
+			auto [g, table] = permitted_endpoints(protocol);
+			auto iterator   = find_endpoint_ipv4(table, endpoint);
+			return iterator != table.end() && iterator->endpoint == endpoint;
+		}
+	};
+
+	uint32_t dnsServerAddress;
+	bool     dnsIsPermitted = false;
+
+	bool packet_filter_ipv4(const uint8_t *data,
+	                        size_t         length,
+	                        uint32_t(IPv4Header::*field),
+	                        bool permitBroadcast)
+	{
+		if (__predict_false(length < sizeof(IPv4Header)))
+		{
+			Debug::log("Dropping outbound IPv4 packet with length {}", length);
+			return false;
+		}
+		auto *ipv4Header = reinterpret_cast<const IPv4Header *>(data);
+		switch (ipv4Header->protocol)
+		{
+			// Drop all packets with unknown protocol types.
+			default:
+				Debug::log("Dropping IPv4 packet with unknown protocol {}",
+				           ipv4Header->protocol);
+				return false;
+			case IPProtocolNumber::UDP:
+				// If we haven't finished doing DHCP, permit all UDP packets
+				// (we don't know the address of the DHCP server yet, so
+				// IP-based filtering is not going to be reliable).
+				if (__predict_false(dnsServerAddress == 0))
+				{
+					return true;
+				}
+				// Permit DNS requests during a DNS query.
+				if (dnsIsPermitted)
+				{
+					if (ipv4Header->*field == dnsServerAddress)
+					{
+						Debug::log("Permitting DNS request");
+						return true;
+					}
+				}
+				if (permitBroadcast)
+				{
+					if (ipv4Header->*field == 0xffffffff)
+					{
+						Debug::log("Permitting broadcast UDP packet");
+						return true;
+					}
+				}
+				[[fallthrough]];
+			case IPProtocolNumber::TCP:
+			{
+				uint32_t endpoint = ipv4Header->*field;
+				if (EndpointsTable::instance().is_endpoint_permitted(
+				      ipv4Header->protocol, endpoint))
+				{
+					Debug::log(
+					  "Permitting {} {} {}.{}.{}.{}",
+					  ipv4Header->protocol,
+					  field == &IPv4Header::destinationAddress ? "to" : "from",
+					  (int)endpoint & 0xff,
+					  (int)(endpoint >> 8) & 0xff,
+					  (int)(endpoint >> 16) & 0xff,
+					  (int)(endpoint >> 24) & 0xff);
+					return true;
+				}
+				if (0)
+					Debug::log(
+					  "Dropping {} {} {}.{}.{}.{}",
+					  ipv4Header->protocol,
+					  field == &IPv4Header::destinationAddress ? "to" : "from",
+					  (int)endpoint & 0xff,
+					  (int)(endpoint >> 8) & 0xff,
+					  (int)(endpoint >> 16) & 0xff,
+					  (int)(endpoint >> 24) & 0xff);
+				return false;
+			}
+			break;
+			case IPProtocolNumber::ICMP:
+				// FIXME: Allow disabling ICMP.
+				return true;
+		}
+	}
+
 	bool packet_filter_egress(const uint8_t *data, size_t length)
 	{
 		EthernetHeader *ethernetHeader =
 		  reinterpret_cast<EthernetHeader *>(const_cast<uint8_t *>(data));
-		Debug::log("Sending {} frame",
-		           ethertype_as_string(ethernetHeader->etherType));
-		if (ethernetHeader->etherType == EtherType::ARP)
+		switch (ethernetHeader->etherType)
 		{
-			// print_frame(data, length);
-		}
-		return true;
-	}
-
-	bool ipv4_ingress_filter(const uint8_t *data, size_t length)
-	{
-		if (length < sizeof(IPv4Header))
-		{
-			Debug::log("Dropping IPv4 packet with length {}", length);
-			return false;
-		}
-		auto *ipv4Header = reinterpret_cast<const IPv4Header *>(data);
-		// if (ipv4Header->protocol == IPProtocolNumber::ICMP)
-		{
-			int32_t sender = ipv4Header->sourceAddress;
-			Debug::log("{} from {}.{}.{}.{}",
-			           ipv4Header->protocol,
-			           sender & 0xff,
-			           (sender >> 8) & 0xff,
-			           (sender >> 16) & 0xff,
-			           (sender >> 24) & 0xff);
+			default:
+				Debug::log("Dropping outbound frame with unknown EtherType {}",
+				           ethertype_as_string(ethernetHeader->etherType));
+				return false;
+			// For now, permit all outbound ARP frames.  Eventually we may want
+			// to do a bit more sanity checking.
+			case EtherType::ARP:
+				return true;
+			case EtherType::IPv4:
+			{
+				bool ret = packet_filter_ipv4(data + sizeof(EthernetHeader),
+				                              length - sizeof(EthernetHeader),
+				                              &IPv4Header::destinationAddress,
+				                              true);
+				return ret;
+			}
+			// For now, permit all outbound IPv6 packets.
+			case EtherType::IPv6:
+			{
+				Debug::log("Permitting outbound IPv6 frame");
+				return true;
+				break;
+			}
 		}
 		return true;
 	}
@@ -204,28 +401,27 @@ namespace
 		{
 			// For now, testing with v6 disabled.
 			case EtherType::IPv6:
-				// Debug::log("Dropping IPv6 packet");
 				return true;
 			case EtherType::ARP:
-				Debug::log("Saw ARP packet");
-				break;
+				Debug::log("Saw ARP frame");
+				return true;
 			case EtherType::IPv4:
-				return ipv4_ingress_filter(data + sizeof(EthernetHeader),
-				                           length - sizeof(EthernetHeader));
+				return packet_filter_ipv4(data + sizeof(EthernetHeader),
+				                          length - sizeof(EthernetHeader),
+				                          &IPv4Header::sourceAddress,
+				                          false);
 			default:
-				Debug::log("Dropping frame with unknown EtherType {}",
-				           static_cast<uint16_t>(ethernetHeader->etherType));
 				return false;
 		}
 
-		return true;
+		return false;
 	}
 
 	std::atomic<uint32_t> receivedCounter;
 
 } // namespace
 
-bool __cheri_compartment("Ethernet") ethernet_driver_start()
+bool ethernet_driver_start()
 {
 	// Protect against double entry.  If the barrier state is 0, no
 	// initialisation has happened and we should proceed.  If it's 1, we're in
@@ -245,21 +441,14 @@ bool __cheri_compartment("Ethernet") ethernet_driver_start()
 	return true;
 }
 
-bool __cheri_compartment("Ethernet")
-  ethernet_send_frame(uint8_t *frame, size_t length)
+bool ethernet_send_frame(uint8_t *frame, size_t length)
 {
-	// TODO: Egress filtering goes here.
-	Debug::log("Acquiring send lock");
 	LockGuard g{sendLock};
-	Debug::log("Sending frame: ");
-	auto &ethernet = lazy_network_interface();
-	ethernet.dropped_frames_log_all_if_changed();
-	ethernet.received_frames_log();
-	Debug::log("Received {} frames in software", receivedCounter.load());
+	auto     &ethernet = lazy_network_interface();
 	return ethernet.send_frame(frame, length, packet_filter_egress);
 }
 
-void __cheri_compartment("Ethernet") ethernet_run_driver()
+void __cheri_compartment("Firewall") ethernet_run_driver()
 {
 	// Sleep until the driver is initialized.
 	for (int barrierState = barrier; barrier != 2;)
@@ -283,11 +472,6 @@ void __cheri_compartment("Ethernet") ethernet_run_driver()
 				ethernet_receive_frame(frame.buffer, frame.length);
 			}
 		}
-		if (packets > 1)
-		{
-			ConditionalDebug<true, "Packet filter">::log("Received {} packets",
-			                                             packets);
-		}
 		receivedCounter += packets;
 		// Sleep until the next frame arrives
 		Timeout t{UnlimitedTimeout};
@@ -297,9 +481,51 @@ void __cheri_compartment("Ethernet") ethernet_run_driver()
 	Debug::log("Driver thread exiting");
 }
 
-bool __cheri_compartment("Ethernet") ethernet_link_is_up()
+bool ethernet_link_is_up()
 {
 	auto &ethernet = lazy_network_interface();
 	Debug::log("Querying link status ({})", ethernet.phy_link_status());
 	return ethernet.phy_link_status();
+}
+
+void firewall_dns_server_ip_set(uint32_t ip)
+{
+	// This is potentially racy but, since it's called very early in network
+	// stack initialisation, it's not worth worrying about an attacker being
+	// able to control it.  We should eventually allow changing this as DHCP
+	// leases expire.
+	if (dnsServerAddress == 0)
+	{
+		dnsServerAddress = ip;
+	}
+	Debug::log("DNS server address set to {}", ip);
+}
+
+void firewall_permit_dns(bool dnsIsPermitted)
+{
+	::dnsIsPermitted = dnsIsPermitted;
+}
+
+void firewall_add_tcpipv4_endpoint(uint32_t endpoint)
+{
+	EndpointsTable::instance().add_endpoint_ipv4(IPProtocolNumber::TCP,
+	                                             endpoint);
+}
+
+void firewall_add_udpipv4_endpoint(uint32_t endpoint)
+{
+	EndpointsTable::instance().add_endpoint_ipv4(IPProtocolNumber::UDP,
+	                                             endpoint);
+}
+
+void firewall_remove_tcpipv4_endpoint(uint32_t endpoint)
+{
+	EndpointsTable::instance().remove_endpoint_ipv4(IPProtocolNumber::TCP,
+	                                                endpoint);
+}
+
+void firewall_remove_udpipv4_endpoint(uint32_t endpoint)
+{
+	EndpointsTable::instance().remove_endpoint_ipv4(IPProtocolNumber::UDP,
+	                                                endpoint);
 }

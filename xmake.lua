@@ -3,13 +3,16 @@
 
 sdkdir = "../cheriot-rtos/sdk"
 
-
 set_project("CHERIoT Network Stack Example")
 includes(sdkdir)
 set_toolchains("cheriot-clang")
 
 option("board")
     set_default("ibex-arty-a7-100")
+
+option("IPv6")
+    set_default(true)
+    set_showmenu(true)
 
 function include_lib(lib)
 	includes(path.join(sdkdir, "lib/" .. lib))
@@ -22,7 +25,7 @@ include_lib("event_group")
 include_lib("stdio")
 include_lib("cxxrt")
 
-compartment("Ethernet")
+compartment("Firewall")
   add_includedirs(".", "third_party/freertos-plus-tcp/source/include")
   add_includedirs("third_party/freertos")
   add_includedirs(path.join(sdkdir, "include/FreeRTOS-Compat"))
@@ -35,6 +38,23 @@ compartment("TCPIP")
   add_deps("freestanding", "string", "message_queue_library", "event_group", "stdio", "cxxrt")
   add_cflags("-Wno-error=int-conversion", "-Wno-error=cheri-provenance", "-Wno-error=pointer-integer-compare", { force = true})
   add_defines("CHERIOT_CUSTOM_DEFAULT_MALLOC_CAPABILITY")
+  add_defines("CHERIOT_EXPOSE_FREERTOS_SEMAPHORE")
+  on_load(function(target)
+    target:add('options', "IPv6")
+    local IPv6 = get_config("IPv6")
+    target:add("defines", "CHERIOT_RTOS_OPTION_IPv6=" .. tostring(IPv6))
+    target:add("files", {
+            "third_party/freertos-plus-tcp/source/FreeRTOS_DHCPv6.c",
+            "third_party/freertos-plus-tcp/source/FreeRTOS_TCP_State_Handling_IPv6.c",
+            "third_party/freertos-plus-tcp/source/FreeRTOS_TCP_IP_IPv6.c",
+            "third_party/freertos-plus-tcp/source/FreeRTOS_IPv6.c",
+            "third_party/freertos-plus-tcp/source/FreeRTOS_IPv6_Sockets.c",
+            "third_party/freertos-plus-tcp/source/FreeRTOS_IPv6_Utils.c",
+            "third_party/freertos-plus-tcp/source/FreeRTOS_TCP_Transmission_IPv6.c",
+            "third_party/freertos-plus-tcp/source/FreeRTOS_TCP_Utils_IPv6.c",
+            "third_party/freertos-plus-tcp/source/FreeRTOS_UDP_IPv6.c"
+    })
+  end)
   add_includedirs(".", "third_party/freertos-plus-tcp/source/include")
   add_includedirs("third_party/freertos")
   add_includedirs(path.join(sdkdir, "include/FreeRTOS-Compat"))
@@ -43,12 +63,12 @@ compartment("TCPIP")
   add_files("FreeRTOS_IP_wrapper.c")
   add_files("BufferManagement.cc")
   add_files("driver_adaptor.cc")
-  add_files("test.cc")
+  add_files("network_wrapper.cc")
+  add_files("startup.cc")
   add_files(
             "third_party/freertos-plus-tcp/source/FreeRTOS_ARP.c",
             "third_party/freertos-plus-tcp/source/FreeRTOS_BitConfig.c",
             "third_party/freertos-plus-tcp/source/FreeRTOS_DHCP.c",
-            "third_party/freertos-plus-tcp/source/FreeRTOS_DHCPv6.c",
             "third_party/freertos-plus-tcp/source/FreeRTOS_DNS.c",
             "third_party/freertos-plus-tcp/source/FreeRTOS_DNS_Cache.c",
             "third_party/freertos-plus-tcp/source/FreeRTOS_DNS_Callback.c",
@@ -62,9 +82,6 @@ compartment("TCPIP")
             "third_party/freertos-plus-tcp/source/FreeRTOS_IPv4.c",
             "third_party/freertos-plus-tcp/source/FreeRTOS_IPv4_Sockets.c",
             "third_party/freertos-plus-tcp/source/FreeRTOS_IPv4_Utils.c",
-            "third_party/freertos-plus-tcp/source/FreeRTOS_IPv6.c",
-            "third_party/freertos-plus-tcp/source/FreeRTOS_IPv6_Sockets.c",
-            "third_party/freertos-plus-tcp/source/FreeRTOS_IPv6_Utils.c",
             "third_party/freertos-plus-tcp/source/FreeRTOS_ND.c",
             "third_party/freertos-plus-tcp/source/FreeRTOS_RA.c",
             "third_party/freertos-plus-tcp/source/FreeRTOS_Routing.c",
@@ -72,50 +89,68 @@ compartment("TCPIP")
             "third_party/freertos-plus-tcp/source/FreeRTOS_Stream_Buffer.c",
             "third_party/freertos-plus-tcp/source/FreeRTOS_TCP_IP.c",
             "third_party/freertos-plus-tcp/source/FreeRTOS_TCP_IP_IPv4.c",
-            "third_party/freertos-plus-tcp/source/FreeRTOS_TCP_IP_IPv6.c",
             "third_party/freertos-plus-tcp/source/FreeRTOS_TCP_Reception.c",
             "third_party/freertos-plus-tcp/source/FreeRTOS_TCP_State_Handling.c",
             "third_party/freertos-plus-tcp/source/FreeRTOS_TCP_State_Handling_IPv4.c",
-            "third_party/freertos-plus-tcp/source/FreeRTOS_TCP_State_Handling_IPv6.c",
             "third_party/freertos-plus-tcp/source/FreeRTOS_TCP_Transmission.c",
             "third_party/freertos-plus-tcp/source/FreeRTOS_TCP_Transmission_IPv4.c",
-            "third_party/freertos-plus-tcp/source/FreeRTOS_TCP_Transmission_IPv6.c",
             "third_party/freertos-plus-tcp/source/FreeRTOS_TCP_Utils.c",
             "third_party/freertos-plus-tcp/source/FreeRTOS_TCP_Utils_IPv4.c",
-            "third_party/freertos-plus-tcp/source/FreeRTOS_TCP_Utils_IPv6.c",
             "third_party/freertos-plus-tcp/source/FreeRTOS_TCP_WIN.c",
             "third_party/freertos-plus-tcp/source/FreeRTOS_Tiny_TCP.c",
             "third_party/freertos-plus-tcp/source/FreeRTOS_UDP_IP.c",
-            "third_party/freertos-plus-tcp/source/FreeRTOS_UDP_IPv4.c",
-            "third_party/freertos-plus-tcp/source/FreeRTOS_UDP_IPv6.c"
+            "third_party/freertos-plus-tcp/source/FreeRTOS_UDP_IPv4.c"
             )
+
+compartment("NetAPI")
+  set_default(false)
+  add_deps("freestanding", "TCPIP")
+  add_files("NetAPI.cc")
+  on_load(function(target)
+    target:add('options', "IPv6")
+    local IPv6 = get_config("IPv6")
+    target:add("defines", "CHERIOT_RTOS_OPTION_IPv6=" .. tostring(IPv6))
+  end)
+
+compartment("test")
+  set_default(false)
+  add_deps("freestanding", "TCPIP", "NetAPI")
+  add_files("test.cc")
+  on_load(function(target)
+    target:add('options', "IPv6")
+    local IPv6 = get_config("IPv6")
+    target:add("defines", "CHERIOT_RTOS_OPTION_IPv6=" .. tostring(IPv6))
+  end)
 
 firmware("toy_network")
     set_policy("build.warning", true)
-    add_deps("TCPIP", "Ethernet")
+    add_deps("TCPIP", "Firewall", "NetAPI", "test")
     on_load(function(target)
         target:values_set("board", "$(board)")
         target:values_set("threads", {
             {
-                compartment = "TCPIP",
+                compartment = "test",
                 priority = 1,
-                entry_point = "test_ethernet",
+                entry_point = "test_network",
                 stack_size = 0xe00,
-                trusted_stack_frames = 4
+                trusted_stack_frames = 6
             },
             {
                 compartment = "TCPIP",
                 priority = 1,
                 entry_point = "ip_thread_entry",
                 stack_size = 0xe00,
-                trusted_stack_frames = 4
+                trusted_stack_frames = 5
             },
             {
-                compartment = "Ethernet",
-                priority = 1,
+                compartment = "Firewall",
+                -- Higher priority, this will be back-pressured by the message
+                -- queue if the network stack can't keep up, but we want
+                -- packets to arrive immediately.
+                priority = 2,
                 entry_point = "ethernet_run_driver",
                 stack_size = 0x1000,
-                trusted_stack_frames = 4
+                trusted_stack_frames = 5
             }
         }, {expand = false})
     end)
