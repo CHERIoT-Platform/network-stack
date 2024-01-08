@@ -151,6 +151,20 @@ namespace
 		 * Destination IP address.
 		 */
 		uint32_t destinationAddress;
+
+		/**
+		 * Returns the offset of the start of the body of this packet.
+		 */
+		size_t body_offset() const
+		{
+			return ((versionAndHeaderLength & 0xf0) >> 4) * 4;
+		}
+	} __packed;
+
+	struct TCPUDPCommonPrefix
+	{
+		uint16_t sourcePort;
+		uint16_t destinationPort;
 	} __packed;
 
 	static_assert(sizeof(IPv4Header) == 20);
@@ -168,18 +182,20 @@ namespace
 	class EndpointsTable
 	{
 		/**
-		 * A reference-counted IPv4 endpoint.
+		 * A permitted IPv4 tuple (source and destination address and port).
 		 *
-		 * This may be extended to include ports at some point.
+		 * We assume a single local address, so the local address is not stored.
 		 */
-		struct IPv4Endpoint
+		struct IPv4ConnectionTuple
 		{
-			uint32_t endpoint;
-			uint32_t refcount;
+			uint32_t remoteAddress;
+			uint16_t localPort;
+			uint16_t remotePort;
+			auto operator<=>(const IPv4ConnectionTuple &other) const = default;
 		};
-		std::vector<IPv4Endpoint> permittedTCPEndpoints;
-		std::vector<IPv4Endpoint> permittedUDPEndpoints;
-		FlagLockPriorityInherited permittedEndpointsLock;
+		std::vector<IPv4ConnectionTuple> permittedTCPEndpoints;
+		std::vector<IPv4ConnectionTuple> permittedUDPEndpoints;
+		FlagLockPriorityInherited        permittedEndpointsLock;
 		EndpointsTable()
 		{
 			permittedTCPEndpoints.reserve(8);
@@ -204,15 +220,9 @@ namespace
 		}
 
 		auto find_endpoint_ipv4(decltype(permittedTCPEndpoints) &table,
-		                        uint32_t                         endpoint)
+		                        const IPv4ConnectionTuple       &endpoint)
 		{
-			return std::lower_bound(
-			  table.begin(),
-			  table.end(),
-			  endpoint,
-			  [](const IPv4Endpoint &a, const uint32_t b) {
-				  return a.endpoint < b;
-			  });
+			return std::lower_bound(table.begin(), table.end(), endpoint);
 		}
 
 		public:
@@ -222,53 +232,64 @@ namespace
 			return table;
 		}
 
-		void add_endpoint_ipv4(IPProtocolNumber protocol, uint32_t endpoint)
+		void remove_endpoint_ipv4(IPProtocolNumber protocol,
+		                          uint32_t         endpoint,
+		                          uint16_t         localPort,
+		                          uint16_t         remotePort)
 		{
 			Debug::log(
 			  "Adding endpoint {} for protocol {}", endpoint, protocol);
 			auto [g, table] = permitted_endpoints(protocol);
-			auto iterator   = find_endpoint_ipv4(table, endpoint);
-			if (iterator != table.end() && iterator->endpoint == endpoint)
-			{
-				iterator->refcount++;
-				Debug::log("Endpoint {} already in table", endpoint);
-				return;
-			}
-			table.push_back({endpoint, 1});
-			std::sort(table.begin(),
-			          table.end(),
-			          [](const IPv4Endpoint &a, const IPv4Endpoint &b) {
-				          return a.endpoint < b.endpoint;
-			          });
-		}
-
-		void remove_endpoint_ipv4(IPProtocolNumber protocol, uint32_t endpoint)
-		{
-			Debug::log(
-			  "Removing endpoint {} for protocol {}", endpoint, protocol);
-			auto [g, table] = permitted_endpoints(protocol);
-			auto iterator   = find_endpoint_ipv4(table, endpoint);
-			if (iterator == table.end() || iterator->endpoint != endpoint)
-			{
-				Debug::log("Endpoint {} not in table", endpoint);
-				return;
-			}
-			if (iterator->refcount > 1)
-			{
-				iterator->refcount--;
-				Debug::log("Endpoint {} still in table", endpoint);
-			}
-			else
+			IPv4ConnectionTuple tuple{endpoint, localPort, remotePort};
+			auto                iterator = find_endpoint_ipv4(table, tuple);
+			if (iterator != table.end() && (*iterator == tuple))
 			{
 				table.erase(iterator);
 			}
 		}
 
-		bool is_endpoint_permitted(IPProtocolNumber protocol, uint32_t endpoint)
+		void add_endpoint_ipv4(IPProtocolNumber protocol,
+		                       uint32_t         endpoint,
+		                       uint16_t         localPort,
+		                       uint16_t         remotePort)
+		{
+			Debug::log(
+			  "Adding endpoint {} for protocol {}", endpoint, protocol);
+			auto [g, table] = permitted_endpoints(protocol);
+			IPv4ConnectionTuple tuple{endpoint, localPort, remotePort};
+			auto                iterator = find_endpoint_ipv4(table, tuple);
+			if (iterator != table.end() && (*iterator == tuple))
+			{
+				Debug::log("Endpoint {} already in table", endpoint);
+				return;
+			}
+			table.push_back({endpoint, 1});
+			std::sort(table.begin(), table.end());
+		}
+
+		void remove_endpoint_ipv4(IPProtocolNumber protocol, uint16_t localPort)
+		{
+			Debug::log(
+			  "Removing endpoint {} for protocol {}", localPort, protocol);
+			auto [g, table] = permitted_endpoints(protocol);
+			// TODO: If we sorted by local port, we could make this O(log(n))
+			// If we expect n to be < 8 (currently do) then that's too much work.
+			std::remove_if(table.begin(),
+			               table.end(),
+			               [localPort](const IPv4ConnectionTuple &tuple) {
+				               return tuple.localPort == localPort;
+			               });
+		}
+
+		bool is_endpoint_permitted(IPProtocolNumber protocol,
+		                           uint32_t         endpoint,
+		                           uint16_t         localPort,
+		                           uint16_t         remotePort)
 		{
 			auto [g, table] = permitted_endpoints(protocol);
-			auto iterator   = find_endpoint_ipv4(table, endpoint);
-			return iterator != table.end() && iterator->endpoint == endpoint;
+			IPv4ConnectionTuple tuple{endpoint, localPort, remotePort};
+			auto                iterator = find_endpoint_ipv4(table, tuple);
+			return iterator != table.end() && (*iterator == tuple);
 		}
 	};
 
@@ -277,7 +298,9 @@ namespace
 
 	bool packet_filter_ipv4(const uint8_t *data,
 	                        size_t         length,
-	                        uint32_t(IPv4Header::*field),
+	                        uint32_t(IPv4Header::*remoteAddress),
+	                        uint16_t(TCPUDPCommonPrefix::*localPort),
+	                        uint16_t(TCPUDPCommonPrefix::*remotePort),
 	                        bool permitBroadcast)
 	{
 		if (__predict_false(length < sizeof(IPv4Header)))
@@ -304,7 +327,7 @@ namespace
 				// Permit DNS requests during a DNS query.
 				if (dnsIsPermitted)
 				{
-					if (ipv4Header->*field == dnsServerAddress)
+					if (ipv4Header->*remoteAddress == dnsServerAddress)
 					{
 						Debug::log("Permitting DNS request");
 						return true;
@@ -312,7 +335,7 @@ namespace
 				}
 				if (permitBroadcast)
 				{
-					if (ipv4Header->*field == 0xffffffff)
+					if (ipv4Header->*remoteAddress == 0xffffffff)
 					{
 						Debug::log("Permitting broadcast UDP packet");
 						return true;
@@ -321,29 +344,45 @@ namespace
 				[[fallthrough]];
 			case IPProtocolNumber::TCP:
 			{
-				uint32_t endpoint = ipv4Header->*field;
-				if (EndpointsTable::instance().is_endpoint_permitted(
-				      ipv4Header->protocol, endpoint))
+				if (ipv4Header->body_offset() + sizeof(TCPUDPCommonPrefix) >
+				    length)
 				{
-					Debug::log(
-					  "Permitting {} {} {}.{}.{}.{}",
-					  ipv4Header->protocol,
-					  field == &IPv4Header::destinationAddress ? "to" : "from",
-					  (int)endpoint & 0xff,
-					  (int)(endpoint >> 8) & 0xff,
-					  (int)(endpoint >> 16) & 0xff,
-					  (int)(endpoint >> 24) & 0xff);
+					Debug::log("Dropping IPv4 packet with length {}", length);
+					return false;
+				}
+				auto *tcpudpHeader =
+				  reinterpret_cast<const TCPUDPCommonPrefix *>(
+				    data + ipv4Header->body_offset());
+				uint32_t endpoint         = ipv4Header->*remoteAddress;
+				uint16_t localPortNumber  = tcpudpHeader->*localPort;
+				uint16_t remotePortNumber = tcpudpHeader->*remotePort;
+				if (EndpointsTable::instance().is_endpoint_permitted(
+				      ipv4Header->protocol,
+				      endpoint,
+				      localPortNumber,
+				      remotePortNumber))
+				{
+					Debug::log("Permitting {} {} {}.{}.{}.{}",
+					           ipv4Header->protocol,
+					           remoteAddress == &IPv4Header::destinationAddress
+					             ? "to"
+					             : "from",
+					           (int)endpoint & 0xff,
+					           (int)(endpoint >> 8) & 0xff,
+					           (int)(endpoint >> 16) & 0xff,
+					           (int)(endpoint >> 24) & 0xff);
 					return true;
 				}
 				if (0)
-					Debug::log(
-					  "Dropping {} {} {}.{}.{}.{}",
-					  ipv4Header->protocol,
-					  field == &IPv4Header::destinationAddress ? "to" : "from",
-					  (int)endpoint & 0xff,
-					  (int)(endpoint >> 8) & 0xff,
-					  (int)(endpoint >> 16) & 0xff,
-					  (int)(endpoint >> 24) & 0xff);
+					Debug::log("Dropping {} {} {}.{}.{}.{}",
+					           ipv4Header->protocol,
+					           remoteAddress == &IPv4Header::destinationAddress
+					             ? "to"
+					             : "from",
+					           (int)endpoint & 0xff,
+					           (int)(endpoint >> 8) & 0xff,
+					           (int)(endpoint >> 16) & 0xff,
+					           (int)(endpoint >> 24) & 0xff);
 				return false;
 			}
 			break;
@@ -369,10 +408,13 @@ namespace
 				return true;
 			case EtherType::IPv4:
 			{
-				bool ret = packet_filter_ipv4(data + sizeof(EthernetHeader),
-				                              length - sizeof(EthernetHeader),
-				                              &IPv4Header::destinationAddress,
-				                              true);
+				bool ret =
+				  packet_filter_ipv4(data + sizeof(EthernetHeader),
+				                     length - sizeof(EthernetHeader),
+				                     &IPv4Header::destinationAddress,
+				                     &TCPUDPCommonPrefix::sourcePort,
+				                     &TCPUDPCommonPrefix::destinationPort,
+				                     true);
 				return ret;
 			}
 			// For now, permit all outbound IPv6 packets.
@@ -409,6 +451,8 @@ namespace
 				return packet_filter_ipv4(data + sizeof(EthernetHeader),
 				                          length - sizeof(EthernetHeader),
 				                          &IPv4Header::sourceAddress,
+				                          &TCPUDPCommonPrefix::destinationPort,
+				                          &TCPUDPCommonPrefix::sourcePort,
 				                          false);
 			default:
 				return false;
@@ -506,26 +550,36 @@ void firewall_permit_dns(bool dnsIsPermitted)
 	::dnsIsPermitted = dnsIsPermitted;
 }
 
-void firewall_add_tcpipv4_endpoint(uint32_t endpoint)
+void firewall_add_tcpipv4_endpoint(uint32_t remoteAddress,
+                                   uint16_t localPort,
+                                   uint16_t remotePort)
 {
-	EndpointsTable::instance().add_endpoint_ipv4(IPProtocolNumber::TCP,
-	                                             endpoint);
+	EndpointsTable::instance().add_endpoint_ipv4(
+	  IPProtocolNumber::TCP, remoteAddress, localPort, remotePort);
 }
 
-void firewall_add_udpipv4_endpoint(uint32_t endpoint)
+void firewall_add_udpipv4_endpoint(uint32_t remoteAddress, uint16_t localPort, uint16_t remotePort)
 {
-	EndpointsTable::instance().add_endpoint_ipv4(IPProtocolNumber::UDP,
-	                                             endpoint);
+	EndpointsTable::instance().add_endpoint_ipv4(
+	  IPProtocolNumber::UDP, remoteAddress, localPort, remotePort);
 }
 
-void firewall_remove_tcpipv4_endpoint(uint32_t endpoint)
+void firewall_remove_tcpipv4_endpoint(uint16_t localPort)
 {
 	EndpointsTable::instance().remove_endpoint_ipv4(IPProtocolNumber::TCP,
-	                                                endpoint);
+	                                                localPort);
 }
 
-void firewall_remove_udpipv4_endpoint(uint32_t endpoint)
+void firewall_remove_udpipv4_local_endpoint(uint16_t localPort)
 {
 	EndpointsTable::instance().remove_endpoint_ipv4(IPProtocolNumber::UDP,
-	                                                endpoint);
+	                                                localPort);
+}
+
+void   firewall_remove_udpipv4_remote_endpoint(uint32_t remoteAddress,
+                                          uint16_t localPort,
+                                          uint16_t remotePort)
+{
+	EndpointsTable::instance().remove_endpoint_ipv4(
+	  IPProtocolNumber::UDP, remoteAddress, localPort, remotePort);
 }

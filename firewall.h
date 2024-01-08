@@ -44,19 +44,27 @@ void __cheri_compartment("Firewall")
 
 /**
  * Open a hole in the firewall for TCP packets to and from the given endpoint.
+ * This permits inbound packets to, and outbound packets from, the specified
+ * local port, if the remote endpoint is the given remote address and port.
  *
  * This should be called only by the NetAPI compartment.
  */
 void __cheri_compartment("Firewall")
-  firewall_add_tcpipv4_endpoint(uint32_t endpoint);
+  firewall_add_tcpipv4_endpoint(uint32_t remoteAddress,
+                                uint16_t localPort,
+                                uint16_t remotePort);
 
 /**
  * Open a hole in the firewall for UDP packets to and from the given endpoint.
+ * This permits inbound packets to, and outbound packets from, the specified
+ * local port, if the remote endpoint is the given remote address and port.
  *
  * This should be called only by the NetAPI compartment.
  */
 void __cheri_compartment("Firewall")
-  firewall_add_udpipv4_endpoint(uint32_t endpoint);
+  firewall_add_udpipv4_endpoint(uint32_t remoteAddress,
+                                uint16_t localPort,
+                                uint16_t remotePort);
 
 /**
  * Close a hole in the firewall for TCP packets to and from the given endpoint.
@@ -67,7 +75,7 @@ void __cheri_compartment("Firewall")
  * it when a connection should be closed.
  */
 void __cheri_compartment("Firewall")
-  firewall_remove_tcpipv4_endpoint(uint32_t endpoint);
+  firewall_remove_tcpipv4_endpoint(uint16_t localPort);
 
 /**
  * Close a hole in the firewall for UDP packets to and from the given endpoint.
@@ -78,4 +86,12 @@ void __cheri_compartment("Firewall")
  * it when a connection should be closed.
  */
 void __cheri_compartment("Firewall")
-  firewall_remove_udpipv4_endpoint(uint32_t endpoint);
+  firewall_remove_udpipv4_local_endpoint(uint16_t endpoint);
+
+/**
+ * Remove a specific remote UDP endpoint from the firewall.
+ */
+void __cheri_compartment("Firewall")
+  firewall_remove_udpipv4_remote_endpoint(uint32_t remoteAddress,
+                                          uint16_t localPort,
+                                          uint16_t remotePort);

@@ -35,11 +35,6 @@ namespace
 	struct SealedSocket
 	{
 		/**
-		 * The network address that this socket is connected to.  This is used
-		 * to close the firewall hole when the socket is closed.
-		 */
-		NetworkAddress address;
-		/**
 		 * The lock protecting this socket.
 		 */
 		FlagLockPriorityInherited socketLock;
@@ -234,19 +229,16 @@ NetworkAddress network_host_resolve(const char *hostname, bool useIPv6)
 	return host_resolve(hostname, useIPv6);
 }
 
-SObj network_socket_create_and_connect(Timeout       *timeout,
-                                       SObj           mallocCapability,
-                                       NetworkAddress address,
-                                       ConnectionType            type,
-                                       short          port)
+SObj network_socket_create_and_bind(Timeout       *timeout,
+                                    SObj           mallocCapability,
+                                    bool           isIPv6,
+                                    ConnectionType type,
+                                    uint16_t       localPort)
 {
-	bool     isIPv6 = address.kind == NetworkAddress::AddressKindIPv6;
-	Socket_t socket =
-	  FreeRTOS_socket(isIPv6 ? FREERTOS_AF_INET6 : FREERTOS_AF_INET,
-	                  type == ConnectionTypeTCP ? FREERTOS_SOCK_STREAM  :
-	                                              FREERTOS_SOCK_DGRAM,
-	                  type == ConnectionTypeTCP ? FREERTOS_IPPROTO_TCP:
-	                                              FREERTOS_IPPROTO_UDP);
+	Socket_t socket = FreeRTOS_socket(
+	  isIPv6 ? FREERTOS_AF_INET6 : FREERTOS_AF_INET,
+	  type == ConnectionTypeTCP ? FREERTOS_SOCK_STREAM : FREERTOS_SOCK_DGRAM,
+	  type == ConnectionTypeTCP ? FREERTOS_IPPROTO_TCP : FREERTOS_IPPROTO_UDP);
 	if (socket == nullptr)
 	{
 		Debug::log("Failed to create socket");
@@ -271,34 +263,47 @@ SObj network_socket_create_and_connect(Timeout       *timeout,
 		FreeRTOS_closesocket(socket);
 		return nullptr;
 	}
-	socketWrapper->address = address;
-	socketWrapper->socket  = socket;
-	struct freertos_sockaddr server;
-	memset(&server, 0, sizeof(server));
-	server.sin_len  = sizeof(server);
-	server.sin_port = FreeRTOS_htons(port);
-	if (isIPv6)
-	{
-		server.sin_family = FREERTOS_AF_INET6;
-		memcpy(server.sin_address.xIP_IPv6.ucBytes, address.ipv6, 16);
-	}
-	else
-	{
-		server.sin_family            = FREERTOS_AF_INET;
-		server.sin_address.ulIP_IPv4 = address.ipv4;
-	}
-	Debug::log("Trying to connect to server");
-	if (int ret = FreeRTOS_connect(socket, &server, sizeof(server)); ret != 0)
-	{
-		// TODO: Retry until the timeout expires.
-		Debug::log("Failed to connect to server.  Error: {}.", ret);
-		token_obj_destroy(mallocCapability, socket_key(), sealedSocket);
-		// FIXME: Remove the firewall rule if we didn't manage to connect.
-		return nullptr;
-	}
-	Debug::log("Successfully connected to server");
+	socketWrapper->socket = socket;
 	c.release();
 	return sealedSocket;
+}
+
+int network_socket_connect_tcp_internal(Timeout       *timeout,
+                                        SObj           socket,
+                                        NetworkAddress address,
+                                        short          port)
+{
+	return with_sealed_socket(
+	  [&](SealedSocket *socket) {
+		  bool                     isIPv6 = socket->socket->bits.bIsIPv6;
+		  struct freertos_sockaddr server;
+		  memset(&server, 0, sizeof(server));
+		  server.sin_len  = sizeof(server);
+		  server.sin_port = FreeRTOS_htons(port);
+		  if (isIPv6)
+		  {
+			  server.sin_family = FREERTOS_AF_INET6;
+			  memcpy(server.sin_address.xIP_IPv6.ucBytes, address.ipv6, 16);
+		  }
+		  else
+		  {
+			  server.sin_family            = FREERTOS_AF_INET;
+			  server.sin_address.ulIP_IPv4 = address.ipv4;
+		  }
+		  Debug::log("Trying to connect to server");
+		  switch (FreeRTOS_connect(socket->socket, &server, sizeof(server)))
+		  {
+			  default:
+				  return -EINVAL;
+			  case 0:
+				  Debug::log("Successfully connected to server");
+				  return 0;
+			  case -pdFREERTOS_ERRNO_EWOULDBLOCK:
+			  case -pdFREERTOS_ERRNO_ETIMEDOUT:
+				  return -ETIMEDOUT;
+		  }
+	  },
+	  socket);
 }
 
 int network_socket_close(Timeout *t, SObj mallocCapability, SObj sealedSocket)
@@ -323,15 +328,16 @@ int network_socket_close(Timeout *t, SObj mallocCapability, SObj sealedSocket)
 		  bool isTCP = socket->socket->ucProtocol == FREERTOS_IPPROTO_TCP;
 		  // Shut down the socket before closing the firewall.
 		  FreeRTOS_shutdown(socket->socket, FREERTOS_SHUT_RDWR);
-		  if (socket->address.kind == NetworkAddress::AddressKindIPv4)
+		  if (!socket->socket->bits.bIsIPv6)
 		  {
 			  if (isTCP)
 			  {
-				  firewall_remove_tcpipv4_endpoint(socket->address.ipv4);
+				  firewall_remove_tcpipv4_endpoint(socket->socket->usLocalPort);
 			  }
 			  else
 			  {
-				  firewall_remove_udpipv4_endpoint(socket->address.ipv4);
+				  firewall_remove_udpipv4_local_endpoint(
+				    socket->socket->usLocalPort);
 			  }
 		  }
 		  // Close the socket.  Another thread will actually clean up the
@@ -466,4 +472,28 @@ network_socket_send(Timeout *timeout, SObj socket, void *buffer, size_t length)
 		  return -EINVAL;
 	  },
 	  socket);
+}
+
+SocketKind network_socket_kind(SObj socket)
+{
+	SocketKind kind = {SocketKind::Invalid, 0};
+	with_sealed_socket(
+	  [&](SealedSocket *socket) {
+		  if (socket->socket->ucProtocol == FREERTOS_IPPROTO_TCP)
+		  {
+			  kind.protocol = socket->socket->bits.bIsIPv6
+			                    ? SocketKind::TCPIPv6
+			                    : SocketKind::TCPIPv4;
+		  }
+		  else
+		  {
+			  kind.protocol = socket->socket->bits.bIsIPv6
+			                    ? SocketKind::UDPIPv6
+			                    : SocketKind::UDPIPv4;
+		  }
+		  kind.localPort = socket->socket->usLocalPort;
+		  return 0;
+	  },
+	  socket);
+	return kind;
 }
