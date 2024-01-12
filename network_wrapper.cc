@@ -80,7 +80,7 @@ namespace
 	                       auto                 operation,
 	                       Sealed<SealedSocket> sealedSocket)
 	{
-		with_sealed_socket(
+		return with_sealed_socket(
 		  [&](SealedSocket *socket) {
 			  if (LockGuard g{socket->socketLock, timeout})
 			  {
@@ -133,7 +133,10 @@ namespace
 			}
 			else
 			{
-				isValid      = heap_claim(mallocCapability, value) > 0;
+				auto claimRet =
+				  heap_claim(mallocCapability,
+				             const_cast<std::remove_const_t<T> *>(value)) > 0;
+				isValid      = claimRet > 0;
 				isHeapObject = true;
 			}
 		}
@@ -145,7 +148,8 @@ namespace
 		{
 			if (isValid && isHeapObject)
 			{
-				heap_free(mallocCapability, value);
+				heap_free(mallocCapability,
+				          const_cast<std::remove_const_t<T> *>(value));
 			}
 		}
 
@@ -168,23 +172,39 @@ namespace
 		}
 	};
 
+	/**
+	 * The freertos_addrinfo structure is huge (>300 bytes) and so we
+	 * definitely don't want to stack-allocate it.  Fortunately, when used for
+	 * hints, only the second field is referenced.  This means that we can use
+	 * the prefix.
+	 */
+	struct addrinfo_hints
+	{
+		BaseType_t ai_flags;
+		BaseType_t ai_family;
+	};
+	static_assert(offsetof(addrinfo_hints, ai_family) ==
+	              offsetof(freertos_addrinfo, ai_family));
+
 } // namespace
 
 namespace
 {
+	/**
+	 * Resolve a hostname to an IP address.  If `useIPv6` is true, then this
+	 * will favour IPv6 addresses, but can still return IPv4 addresses if no
+	 * IPv6 address is available.
+	 */
 	NetworkAddress host_resolve(const char *hostname, bool useIPv6 = UseIPv6)
 	{
-		// This structure is *huge* (>300 bytes!) don't allocate it on the
-		// stack. The FreeRTOS code uses only one field of this structure, which
-		// is quite depressing.  We might be able to allocate something smaller
-		// that has the same initial layout.
-		static struct freertos_addrinfo hints;
+		struct addrinfo_hints hints;
 		hints.ai_family = useIPv6 ? FREERTOS_AF_INET6 : FREERTOS_AF_INET;
 		struct freertos_addrinfo *results = nullptr;
-		Debug::log("Trying DNS request (hints is {} bytes!)", sizeof(hints));
-		firewall_permit_dns();
-		auto ret = FreeRTOS_getaddrinfo(hostname, nullptr, &hints, &results);
-		firewall_permit_dns(false);
+		auto                      ret =
+		  FreeRTOS_getaddrinfo(hostname,
+		                       nullptr,
+		                       reinterpret_cast<freertos_addrinfo *>(&hints),
+		                       &results);
 		if (ret != 0)
 		{
 			Debug::log("DNS request returned: {}", ret);
@@ -235,13 +255,24 @@ SObj network_socket_create_and_bind(Timeout       *timeout,
                                     ConnectionType type,
                                     uint16_t       localPort)
 {
-	Socket_t socket = FreeRTOS_socket(
-	  isIPv6 ? FREERTOS_AF_INET6 : FREERTOS_AF_INET,
+	const auto Family = isIPv6 ? FREERTOS_AF_INET6 : FREERTOS_AF_INET;
+	Socket_t socket = FreeRTOS_socket(Family,
 	  type == ConnectionTypeTCP ? FREERTOS_SOCK_STREAM : FREERTOS_SOCK_DGRAM,
 	  type == ConnectionTypeTCP ? FREERTOS_IPPROTO_TCP : FREERTOS_IPPROTO_UDP);
 	if (socket == nullptr)
 	{
 		Debug::log("Failed to create socket");
+		return nullptr;
+	}
+	freertos_sockaddr localAddress;
+	memset(&localAddress, 0, sizeof(localAddress));
+	localAddress.sin_len = sizeof(localAddress);
+	localAddress.sin_port    = FreeRTOS_htons(localPort);
+	localAddress.sin_family = Family;
+
+	auto bindResult = FreeRTOS_bind(socket, &localAddress, sizeof(localAddress));
+	if (bindResult != 0)
+	{
 		return nullptr;
 	}
 	// Claim the socket so that it counts towards the caller's quota.  The
@@ -306,6 +337,12 @@ int network_socket_connect_tcp_internal(Timeout       *timeout,
 	  socket);
 }
 
+SObj network_socket_udp(Timeout *timeout, SObj mallocCapability, bool isIPv6)
+{
+	return network_socket_create_and_bind(
+	  timeout, mallocCapability, isIPv6, ConnectionTypeUDP);
+}
+
 int network_socket_close(Timeout *t, SObj mallocCapability, SObj sealedSocket)
 {
 	return with_sealed_socket(
@@ -328,7 +365,19 @@ int network_socket_close(Timeout *t, SObj mallocCapability, SObj sealedSocket)
 		  bool isTCP = socket->socket->ucProtocol == FREERTOS_IPPROTO_TCP;
 		  // Shut down the socket before closing the firewall.
 		  FreeRTOS_shutdown(socket->socket, FREERTOS_SHUT_RDWR);
-		  if (!socket->socket->bits.bIsIPv6)
+		  if (socket->socket->bits.bIsIPv6)
+		  {
+			  if (isTCP)
+			  {
+				  firewall_remove_tcpipv6_endpoint(socket->socket->usLocalPort);
+			  }
+			  else
+			  {
+				  firewall_remove_udpipv6_local_endpoint(
+				    socket->socket->usLocalPort);
+			  }
+		  }
+		  else
 		  {
 			  if (isTCP)
 			  {
@@ -349,11 +398,108 @@ int network_socket_close(Timeout *t, SObj mallocCapability, SObj sealedSocket)
 	  sealedSocket);
 }
 
+NetworkReceiveResult network_socket_receive_from(Timeout *timeout,
+                                                 SObj     mallocCapability,
+                                                 SObj     socket,
+                                                 NetworkAddress *address,
+                                                 uint16_t       *port)
+{
+	uint8_t *buffer = nullptr;
+	ssize_t  result = with_sealed_socket(
+	   timeout,
+	   [&](SealedSocket *socket) {
+          freertos_sockaddr remoteAddress;
+          socklen_t         remoteAddressLength = sizeof(remoteAddress);
+          // Set the receive timeout for the socket to our timeout
+          TickType_t remaining = timeout->remaining;
+          FreeRTOS_setsockopt(
+		     socket->socket, 0, FREERTOS_SO_RCVTIMEO, &remaining, 0);
+          uint8_t *unclaimedBuffer = nullptr;
+          // Receive a packet with zero copy.  The zero-copy interface for UDP
+          // returns a pointer to the packet buffer, so we don't end up
+          // claiming a huge stream buffer.
+          int received = FreeRTOS_recvfrom(socket->socket,
+		                                    &unclaimedBuffer,
+		                                    0,
+		                                    FREERTOS_ZERO_COPY,
+		                                    &remoteAddress,
+		                                    &remoteAddressLength);
+          if (received > 0)
+          {
+              ssize_t claimed = heap_claim(mallocCapability, unclaimedBuffer);
+              Debug::log(
+			     "Claimed {} bytes for {}-byte buffer", claimed, received);
+              FreeRTOS_ReleaseUDPPayloadBuffer(unclaimedBuffer);
+              if (claimed <= 0)
+              {
+                  return -ENOMEM;
+              }
+              Capability claimedBuffer{unclaimedBuffer};
+              claimedBuffer.bounds() = received;
+              if (heap_claim_fast(timeout, address, port) < 0)
+              {
+                  return -ETIMEDOUT;
+              }
+              if (address != nullptr)
+              {
+                  if (!check_pointer<PermissionSet{Permission::Store}>(address))
+                  {
+                      return -EPERM;
+                  }
+                  if (remoteAddress.sin_family == FREERTOS_AF_INET6)
+                  {
+                      address->kind = NetworkAddress::AddressKindIPv6;
+                      memcpy(address->ipv6,
+					          remoteAddress.sin_address.xIP_IPv6.ucBytes,
+					          16);
+                  }
+                  else
+                  {
+                      address->kind = NetworkAddress::AddressKindIPv4;
+                      address->ipv4 = remoteAddress.sin_address.ulIP_IPv4;
+                  }
+              }
+              if (port != nullptr)
+              {
+                  if (!check_pointer<PermissionSet{Permission::Store}>(address))
+                  {
+                      return -EPERM;
+                  }
+                  *port = FreeRTOS_ntohs(remoteAddress.sin_port);
+              }
+              if (received > 0)
+              {
+                  buffer = claimedBuffer;
+                  return received;
+              }
+          }
+          else if (received < 0)
+          {
+              if (received == -pdFREERTOS_ERRNO_ENOTCONN)
+              {
+                  Debug::log("Connection closed, not receiving");
+                  return -ENOTCONN;
+              }
+              if (received == -pdFREERTOS_ERRNO_EAGAIN)
+              {
+                  return -ETIMEDOUT;
+              }
+              // Something went wrong?
+              Debug::log("Receive failed with unexpected error: {}", received);
+              return -EINVAL;
+          }
+          return received;
+	   },
+	   socket);
+	return {result, buffer};
+}
+
 NetworkReceiveResult
 network_socket_receive(Timeout *timeout, SObj mallocCapability, SObj socket)
 {
 	uint8_t *buffer = nullptr;
 	ssize_t  result = with_sealed_socket(
+	   timeout,
 	   [&](SealedSocket *socket) {
           do
           {
@@ -441,6 +587,7 @@ ssize_t
 network_socket_send(Timeout *timeout, SObj socket, void *buffer, size_t length)
 {
 	return with_sealed_socket(
+	  timeout,
 	  [&](SealedSocket *socket) {
 		  // Ensure that the buffer is valid for the duration of the send.
 		  Claim claim{MALLOC_CAPABILITY, buffer};
@@ -474,6 +621,76 @@ network_socket_send(Timeout *timeout, SObj socket, void *buffer, size_t length)
 	  socket);
 }
 
+ssize_t network_socket_send_to(Timeout              *timeout,
+                               SObj                  socket,
+                               const NetworkAddress *address,
+                               uint16_t              port,
+                               const void           *buffer,
+                               size_t                length)
+{
+	return with_sealed_socket(
+	  timeout,
+	  [&](SealedSocket *socket) {
+		  struct freertos_sockaddr server;
+		  memset(&server, 0, sizeof(server));
+		  server.sin_len  = sizeof(server);
+		  server.sin_port = FreeRTOS_htons(port);
+		  if (heap_claim_fast(timeout, address) < 0)
+		  {
+			  Debug::log("Failed to claim address");
+			  return -ETIMEDOUT;
+		  }
+		  if (!check_pointer<PermissionSet{Permission::Load}>(address))
+		  {
+			  Debug::log("Invalid address pointer");
+			  return -EPERM;
+		  }
+		  if (address->kind == NetworkAddress::AddressKindIPv6)
+		  {
+			  server.sin_family = FREERTOS_AF_INET6;
+			  memcpy(server.sin_address.xIP_IPv6.ucBytes, address->ipv6, 16);
+		  }
+		  else
+		  {
+			  server.sin_family            = FREERTOS_AF_INET;
+			  server.sin_address.ulIP_IPv4 = address->ipv4;
+		  }
+		  // Ensure that the buffer is valid for the duration of the send.
+		  Claim claim{MALLOC_CAPABILITY, buffer};
+		  if (!claim)
+		  {
+			  Debug::log("Failed to claim buffer");
+			  return -ENOMEM;
+		  }
+		  // At this point, we know that the buffer can't go away from under us,
+		  // so it's safe to do the checks.
+		  if (!CHERI::check_pointer<PermissionSet{Permission::Load}>(buffer,
+		                                                             length))
+		  {
+			  Debug::log("Buffer is invalid: {}", buffer);
+			  return -EPERM;
+		  }
+		  Debug::log("Sending {}-byte UDP packet", length);
+		  // FIXME: This should use the socket options to set / update
+		  // the timeout.
+		  auto ret = FreeRTOS_sendto(
+		    socket->socket, buffer, length, 0, &server, sizeof(server));
+		  Debug::log("Send returned {}", ret);
+		  if (ret >= 0)
+		  {
+			  return ret;
+		  }
+		  if (ret == -pdFREERTOS_ERRNO_ENOTCONN)
+		  {
+			  return -ENOTCONN;
+		  }
+		  // Catchall
+		  Debug::log("Send failed with unexpected error: {}", ret);
+		  return -EINVAL;
+	  },
+	  socket);
+}
+
 SocketKind network_socket_kind(SObj socket)
 {
 	SocketKind kind = {SocketKind::Invalid, 0};
@@ -491,7 +708,8 @@ SocketKind network_socket_kind(SObj socket)
 			                    ? SocketKind::UDPIPv6
 			                    : SocketKind::UDPIPv4;
 		  }
-		  kind.localPort = socket->socket->usLocalPort;
+		  kind.localPort = listGET_LIST_ITEM_VALUE(
+		    (&((socket->socket)->xBoundSocketListItem)));
 		  return 0;
 	  },
 	  socket);

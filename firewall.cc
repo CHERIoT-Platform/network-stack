@@ -1,13 +1,12 @@
 #include "firewall.h"
-#include "cdefs.h"
 #include <atomic>
 #include <compartment-macros.h>
-#include <cstdint>
 #include <debug.hh>
 #include <fail-simulator-on-error.h>
 #include <locks.hh>
 #include <platform-ethernet.hh>
 #include <timeout.h>
+#include <timeout.hh>
 #include <vector>
 
 namespace
@@ -157,7 +156,7 @@ namespace
 		 */
 		size_t body_offset() const
 		{
-			return ((versionAndHeaderLength & 0xf0) >> 4) * 4;
+			return (versionAndHeaderLength & 0xf) * 4;
 		}
 	} __packed;
 
@@ -179,23 +178,24 @@ namespace
 	 * we're unlikely to encounter systems where this is a problem in the near
 	 * future.
 	 */
+	template<typename Address>
 	class EndpointsTable
 	{
 		/**
-		 * A permitted IPv4 tuple (source and destination address and port).
+		 * A permitted  tuple (source and destination address and port).
 		 *
 		 * We assume a single local address, so the local address is not stored.
 		 */
-		struct IPv4ConnectionTuple
+		struct ConnectionTuple
 		{
-			uint32_t remoteAddress;
+			Address  remoteAddress;
 			uint16_t localPort;
 			uint16_t remotePort;
-			auto operator<=>(const IPv4ConnectionTuple &other) const = default;
+			auto     operator<=>(const ConnectionTuple &) const = default;
 		};
-		std::vector<IPv4ConnectionTuple> permittedTCPEndpoints;
-		std::vector<IPv4ConnectionTuple> permittedUDPEndpoints;
-		FlagLockPriorityInherited        permittedEndpointsLock;
+		std::vector<ConnectionTuple> permittedTCPEndpoints;
+		std::vector<ConnectionTuple> permittedUDPEndpoints;
+		FlagLockPriorityInherited    permittedEndpointsLock;
 		EndpointsTable()
 		{
 			permittedTCPEndpoints.reserve(8);
@@ -219,8 +219,8 @@ namespace
 			                      : permittedUDPEndpoints);
 		}
 
-		auto find_endpoint_ipv4(decltype(permittedTCPEndpoints) &table,
-		                        const IPv4ConnectionTuple       &endpoint)
+		auto find_endpoint(decltype(permittedTCPEndpoints) &table,
+		                   const ConnectionTuple           &endpoint)
 		{
 			return std::lower_bound(table.begin(), table.end(), endpoint);
 		}
@@ -232,69 +232,63 @@ namespace
 			return table;
 		}
 
-		void remove_endpoint_ipv4(IPProtocolNumber protocol,
-		                          uint32_t         endpoint,
-		                          uint16_t         localPort,
-		                          uint16_t         remotePort)
+		void remove_endpoint(IPProtocolNumber protocol,
+		                     Address          endpoint,
+		                     uint16_t         localPort,
+		                     uint16_t         remotePort)
 		{
-			Debug::log(
-			  "Adding endpoint {} for protocol {}", endpoint, protocol);
 			auto [g, table] = permitted_endpoints(protocol);
-			IPv4ConnectionTuple tuple{endpoint, localPort, remotePort};
-			auto                iterator = find_endpoint_ipv4(table, tuple);
+			ConnectionTuple tuple{endpoint, localPort, remotePort};
+			auto            iterator = find_endpoint(table, tuple);
 			if (iterator != table.end() && (*iterator == tuple))
 			{
 				table.erase(iterator);
 			}
 		}
 
-		void add_endpoint_ipv4(IPProtocolNumber protocol,
-		                       uint32_t         endpoint,
-		                       uint16_t         localPort,
-		                       uint16_t         remotePort)
+		void add_endpoint(IPProtocolNumber protocol,
+		                  Address          remoteAddress,
+		                  uint16_t         localPort,
+		                  uint16_t         remotePort)
 		{
-			Debug::log(
-			  "Adding endpoint {} for protocol {}", endpoint, protocol);
 			auto [g, table] = permitted_endpoints(protocol);
-			IPv4ConnectionTuple tuple{endpoint, localPort, remotePort};
-			auto                iterator = find_endpoint_ipv4(table, tuple);
+			ConnectionTuple tuple{remoteAddress, localPort, remotePort};
+			auto            iterator = find_endpoint(table, tuple);
 			if (iterator != table.end() && (*iterator == tuple))
 			{
-				Debug::log("Endpoint {} already in table", endpoint);
 				return;
 			}
-			table.push_back({endpoint, 1});
+			table.push_back(tuple);
 			std::sort(table.begin(), table.end());
 		}
 
-		void remove_endpoint_ipv4(IPProtocolNumber protocol, uint16_t localPort)
+		void remove_endpoint(IPProtocolNumber protocol, uint16_t localPort)
 		{
-			Debug::log(
-			  "Removing endpoint {} for protocol {}", localPort, protocol);
 			auto [g, table] = permitted_endpoints(protocol);
 			// TODO: If we sorted by local port, we could make this O(log(n))
-			// If we expect n to be < 8 (currently do) then that's too much work.
+			// If we expect n to be < 8 (currently do) then that's too much
+			// work.
 			std::remove_if(table.begin(),
 			               table.end(),
-			               [localPort](const IPv4ConnectionTuple &tuple) {
+			               [localPort](const ConnectionTuple &tuple) {
 				               return tuple.localPort == localPort;
 			               });
 		}
 
 		bool is_endpoint_permitted(IPProtocolNumber protocol,
-		                           uint32_t         endpoint,
+		                           Address          endpoint,
 		                           uint16_t         localPort,
 		                           uint16_t         remotePort)
 		{
 			auto [g, table] = permitted_endpoints(protocol);
-			IPv4ConnectionTuple tuple{endpoint, localPort, remotePort};
-			auto                iterator = find_endpoint_ipv4(table, tuple);
+			ConnectionTuple tuple{endpoint, localPort, remotePort};
+			auto            iterator = find_endpoint(table, tuple);
 			return iterator != table.end() && (*iterator == tuple);
 		}
 	};
 
-	uint32_t dnsServerAddress;
-	bool     dnsIsPermitted = false;
+	uint32_t          dnsServerAddress;
+	_Atomic(uint32_t) dnsIsPermitted;
 
 	bool packet_filter_ipv4(const uint8_t *data,
 	                        size_t         length,
@@ -325,7 +319,7 @@ namespace
 					return true;
 				}
 				// Permit DNS requests during a DNS query.
-				if (dnsIsPermitted)
+				if (dnsIsPermitted > 0)
 				{
 					if (ipv4Header->*remoteAddress == dnsServerAddress)
 					{
@@ -344,6 +338,13 @@ namespace
 				[[fallthrough]];
 			case IPProtocolNumber::TCP:
 			{
+				if (ipv4Header->body_offset() < sizeof(ipv4Header))
+				{
+					Debug::log("Body offset is {} but IPv4 header is {} bytes",
+					           ipv4Header->body_offset(),
+					           sizeof(ipv4Header));
+					return false;
+				}
 				if (ipv4Header->body_offset() + sizeof(TCPUDPCommonPrefix) >
 				    length)
 				{
@@ -356,7 +357,7 @@ namespace
 				uint32_t endpoint         = ipv4Header->*remoteAddress;
 				uint16_t localPortNumber  = tcpudpHeader->*localPort;
 				uint16_t remotePortNumber = tcpudpHeader->*remotePort;
-				if (EndpointsTable::instance().is_endpoint_permitted(
+				if (EndpointsTable<uint32_t>::instance().is_endpoint_permitted(
 				      ipv4Header->protocol,
 				      endpoint,
 				      localPortNumber,
@@ -373,16 +374,18 @@ namespace
 					           (int)(endpoint >> 24) & 0xff);
 					return true;
 				}
-				if (0)
-					Debug::log("Dropping {} {} {}.{}.{}.{}",
-					           ipv4Header->protocol,
-					           remoteAddress == &IPv4Header::destinationAddress
-					             ? "to"
-					             : "from",
-					           (int)endpoint & 0xff,
-					           (int)(endpoint >> 8) & 0xff,
-					           (int)(endpoint >> 16) & 0xff,
-					           (int)(endpoint >> 24) & 0xff);
+				if (1)
+					ConditionalDebug<true, "firewall">::log(
+					  "Dropping {} {} {}.{}.{}.{}:{} (local port {})",
+					  ipv4Header->protocol,
+					  remoteAddress == &IPv4Header::destinationAddress ? "to"
+					                                                   : "from",
+					  (int)endpoint & 0xff,
+					  (int)(endpoint >> 8) & 0xff,
+					  (int)(endpoint >> 16) & 0xff,
+					  (int)(endpoint >> 24) & 0xff,
+					  remotePortNumber,
+					  localPortNumber);
 				return false;
 			}
 			break;
@@ -408,6 +411,9 @@ namespace
 				return true;
 			case EtherType::IPv4:
 			{
+				static_assert(offsetof(TCPUDPCommonPrefix, sourcePort) == 0);
+				static_assert(offsetof(TCPUDPCommonPrefix, destinationPort) ==
+				              2);
 				bool ret =
 				  packet_filter_ipv4(data + sizeof(EthernetHeader),
 				                     length - sizeof(EthernetHeader),
@@ -547,39 +553,137 @@ void firewall_dns_server_ip_set(uint32_t ip)
 
 void firewall_permit_dns(bool dnsIsPermitted)
 {
-	::dnsIsPermitted = dnsIsPermitted;
+	::dnsIsPermitted += dnsIsPermitted ? 1 : -1;
 }
 
 void firewall_add_tcpipv4_endpoint(uint32_t remoteAddress,
                                    uint16_t localPort,
                                    uint16_t remotePort)
 {
-	EndpointsTable::instance().add_endpoint_ipv4(
+	EndpointsTable<uint32_t>::instance().add_endpoint(
 	  IPProtocolNumber::TCP, remoteAddress, localPort, remotePort);
 }
 
-void firewall_add_udpipv4_endpoint(uint32_t remoteAddress, uint16_t localPort, uint16_t remotePort)
+void firewall_add_udpipv4_endpoint(uint32_t remoteAddress,
+                                   uint16_t localPort,
+                                   uint16_t remotePort)
 {
-	EndpointsTable::instance().add_endpoint_ipv4(
+	EndpointsTable<uint32_t>::instance().add_endpoint(
 	  IPProtocolNumber::UDP, remoteAddress, localPort, remotePort);
 }
 
 void firewall_remove_tcpipv4_endpoint(uint16_t localPort)
 {
-	EndpointsTable::instance().remove_endpoint_ipv4(IPProtocolNumber::TCP,
-	                                                localPort);
+	EndpointsTable<uint32_t>::instance().remove_endpoint(IPProtocolNumber::TCP,
+	                                                     localPort);
 }
 
 void firewall_remove_udpipv4_local_endpoint(uint16_t localPort)
 {
-	EndpointsTable::instance().remove_endpoint_ipv4(IPProtocolNumber::UDP,
-	                                                localPort);
+	EndpointsTable<uint32_t>::instance().remove_endpoint(IPProtocolNumber::UDP,
+	                                                     localPort);
 }
 
-void   firewall_remove_udpipv4_remote_endpoint(uint32_t remoteAddress,
-                                          uint16_t localPort,
-                                          uint16_t remotePort)
+void firewall_remove_udpipv4_remote_endpoint(uint32_t remoteAddress,
+                                             uint16_t localPort,
+                                             uint16_t remotePort)
 {
-	EndpointsTable::instance().remove_endpoint_ipv4(
+	EndpointsTable<uint32_t>::instance().remove_endpoint(
 	  IPProtocolNumber::UDP, remoteAddress, localPort, remotePort);
+}
+
+namespace
+{
+
+	/**
+	 * IPv6 address.
+	 *
+	 * This should be `std::array<uint8_t, 16>` but our version of `std::array`
+	 * does not yet have a three-way comparison operator.
+	 */
+	struct IPv6Address
+	{
+		/**
+		 * The bytes of the address.
+		 */
+		uint8_t bytes[16];
+		/**
+		 * Returns a pointer to the bytes of this address.
+		 */
+		auto    data()
+		{
+			return bytes;
+		}
+		/**
+		 * Returns the size of an address.
+		 */
+		size_t size() const
+		{
+			return sizeof(bytes);
+		}
+		/// Comparison operator.
+		auto operator<=>(const IPv6Address &) const = default;
+	};
+
+	/**
+	 * Defensively copy the address, returns nullopt if the address is invalid.
+	 */
+	std::optional<IPv6Address> copy_address(const uint8_t *address)
+	{
+		IPv6Address copy;
+		if (!blocking_forever<heap_claim_fast>(address, nullptr) ||
+		    !CHERI::check_pointer<CHERI::PermissionSet{
+		      CHERI::Permission::Load}>(address, copy.size()))
+		{
+			Debug::log("Invalid IPv6 address {}", address);
+			return std::nullopt;
+		}
+		memcpy(copy.data(), address, copy.size());
+		return copy;
+	}
+} // namespace
+
+void firewall_add_tcpipv6_endpoint(uint8_t *remoteAddress,
+                                   uint16_t localPort,
+                                   uint16_t remotePort)
+{
+	if (auto copy = copy_address(remoteAddress))
+	{
+		EndpointsTable<IPv6Address>::instance().add_endpoint(
+		  IPProtocolNumber::TCP, *copy, localPort, remotePort);
+	}
+}
+
+void firewall_add_udpipv6_endpoint(uint8_t *remoteAddress,
+                                   uint16_t localPort,
+                                   uint16_t remotePort)
+{
+	if (auto copy = copy_address(remoteAddress))
+	{
+		EndpointsTable<IPv6Address>::instance().add_endpoint(
+		  IPProtocolNumber::UDP, *copy, localPort, remotePort);
+	}
+}
+
+void firewall_remove_tcpipv6_endpoint(uint16_t localPort)
+{
+	EndpointsTable<IPv6Address>::instance().remove_endpoint(
+	  IPProtocolNumber::TCP, localPort);
+}
+
+void firewall_remove_udpipv6_local_endpoint(uint16_t localPort)
+{
+	EndpointsTable<IPv6Address>::instance().remove_endpoint(
+	  IPProtocolNumber::UDP, localPort);
+}
+
+void firewall_remove_udpipv6_remote_endpoint(uint8_t *remoteAddress,
+                                             uint16_t localPort,
+                                             uint16_t remotePort)
+{
+	if (auto copy = copy_address(remoteAddress))
+	{
+		EndpointsTable<IPv6Address>::instance().remove_endpoint(
+		  IPProtocolNumber::UDP, *copy, localPort, remotePort);
+	}
 }

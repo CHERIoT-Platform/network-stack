@@ -62,7 +62,7 @@ struct SocketKind
 		Invalid,
 	} protocol;
 	/**
-	 * The local port for this socket.
+	 * The local port for this socket.  This is in host byte order.
 	 */
 	uint16_t localPort;
 };

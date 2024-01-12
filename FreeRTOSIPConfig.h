@@ -49,5 +49,5 @@
 // is fixed upstream but after the release that we're currently using.
 #define ipconfigBUFFER_PADDING 14
 
-#define ipconfigALLOW_SOCKET_SEND_WITHOUT_BIND 1
+#define ipconfigALLOW_SOCKET_SEND_WITHOUT_BIND 0
 #define ipconfigUSE_NETWORK_EVENT_HOOK 1
