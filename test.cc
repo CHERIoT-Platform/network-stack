@@ -1,6 +1,10 @@
 #include "NetAPI.h"
+#include "sntp.h"
+#include "timeout.h"
 #include <debug.hh>
 #include <errno.h>
+#include <thread.h>
+#include <tick_macros.h>
 
 using Debug            = ConditionalDebug<true, "Network test">;
 constexpr bool UseIPv6 = CHERIOT_RTOS_OPTION_IPv6;
@@ -18,7 +22,31 @@ DECLARE_AND_DEFINE_ALLOCATOR_CAPABILITY(TestMalloc, 4 * 1024);
 void __cheri_compartment("test") test_network()
 {
 	network_start();
-	Timeout t{UnlimitedTimeout};
+	Timeout t{MS_TO_TICKS(5000)};
+	while (sntp_update(&t) != 0)
+	{
+		Debug::log("Failed to update NTP time");
+		Timeout oneSecond{MS_TO_TICKS(1000)};
+	}
+	Debug::log("Updating NTP took {} ticks", t.elapsed);
+	t = UnlimitedTimeout;
+	for (int i = 0; i < 100; i++)
+	{
+		timeval tv;
+		int    ret = gettimeofday(&tv, nullptr);
+		if (ret != 0)
+		{
+			Debug::log("Failed to get time of day: {}", ret);
+		}
+		else
+		{
+			// Truncate the epoch time to 32 bits for printing.
+			Debug::log("Current UNIX epoch time: {}", (int32_t)tv.tv_sec);
+		}
+		Timeout oneSecond{MS_TO_TICKS(1000)};
+		thread_sleep(&oneSecond);
+	}
+
 	auto    socket = network_socket_connect_tcp(
 	     &t, TEST_MALLOC, STATIC_SEALED_VALUE(ExampleCom));
 

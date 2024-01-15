@@ -25,6 +25,9 @@ include_lib("event_group")
 include_lib("stdio")
 include_lib("cxxrt")
 
+library("time_helpers")
+  add_files("time-helpers.cc")
+
 compartment("Firewall")
   add_includedirs(".", "third_party/freertos-plus-tcp/source/include")
   add_includedirs("third_party/freertos")
@@ -112,6 +115,15 @@ compartment("NetAPI")
     target:add("defines", "CHERIOT_RTOS_OPTION_IPv6=" .. tostring(IPv6))
   end)
 
+compartment("SNTP")
+  set_default(false)
+  add_deps("freestanding", "NetAPI")
+  add_files("sntp.cc")
+  add_includedirs(".", "third_party/coreSNTP/source/include")
+  add_defines("CHERIOT_CUSTOM_DEFAULT_MALLOC_CAPABILITY")
+  add_files("third_party/coreSNTP/source/core_sntp_client.c",
+            "third_party/coreSNTP/source/core_sntp_serializer.c")
+
 compartment("test")
   set_default(false)
   add_deps("freestanding", "TCPIP", "NetAPI")
@@ -124,7 +136,7 @@ compartment("test")
 
 firmware("toy_network")
     set_policy("build.warning", true)
-    add_deps("TCPIP", "Firewall", "NetAPI", "test")
+    add_deps("TCPIP", "Firewall", "NetAPI", "SNTP", "test", "atomic8", "time_helpers")
     on_load(function(target)
         target:values_set("board", "$(board)")
         target:values_set("threads", {
