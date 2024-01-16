@@ -256,9 +256,10 @@ SObj network_socket_create_and_bind(Timeout       *timeout,
                                     uint16_t       localPort)
 {
 	const auto Family = isIPv6 ? FREERTOS_AF_INET6 : FREERTOS_AF_INET;
-	Socket_t socket = FreeRTOS_socket(Family,
-	  type == ConnectionTypeTCP ? FREERTOS_SOCK_STREAM : FREERTOS_SOCK_DGRAM,
-	  type == ConnectionTypeTCP ? FREERTOS_IPPROTO_TCP : FREERTOS_IPPROTO_UDP);
+	Socket_t   socket = FreeRTOS_socket(
+	    Family,
+      type == ConnectionTypeTCP ? FREERTOS_SOCK_STREAM : FREERTOS_SOCK_DGRAM,
+      type == ConnectionTypeTCP ? FREERTOS_IPPROTO_TCP : FREERTOS_IPPROTO_UDP);
 	if (socket == nullptr)
 	{
 		Debug::log("Failed to create socket");
@@ -266,11 +267,12 @@ SObj network_socket_create_and_bind(Timeout       *timeout,
 	}
 	freertos_sockaddr localAddress;
 	memset(&localAddress, 0, sizeof(localAddress));
-	localAddress.sin_len = sizeof(localAddress);
-	localAddress.sin_port    = FreeRTOS_htons(localPort);
+	localAddress.sin_len    = sizeof(localAddress);
+	localAddress.sin_port   = FreeRTOS_htons(localPort);
 	localAddress.sin_family = Family;
 
-	auto bindResult = FreeRTOS_bind(socket, &localAddress, sizeof(localAddress));
+	auto bindResult =
+	  FreeRTOS_bind(socket, &localAddress, sizeof(localAddress));
 	if (bindResult != 0)
 	{
 		return nullptr;
