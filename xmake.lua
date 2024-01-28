@@ -18,12 +18,7 @@ function include_lib(lib)
 	includes(path.join(sdkdir, "lib/" .. lib))
 end
 
-include_lib("freestanding")
-include_lib("string")
-include_lib("queue")
-include_lib("event_group")
-include_lib("stdio")
-include_lib("cxxrt")
+includes(path.join(sdkdir, "lib"))
 
 library("time_helpers")
   add_files("time-helpers.cc")
@@ -136,7 +131,7 @@ compartment("test")
 
 firmware("toy_network")
     set_policy("build.warning", true)
-    add_deps("TCPIP", "Firewall", "NetAPI", "SNTP", "test", "atomic8", "time_helpers")
+    add_deps("TCPIP", "Firewall", "NetAPI", "SNTP", "test", "atomic8", "time_helpers", "debug")
     on_load(function(target)
         target:values_set("board", "$(board)")
         target:values_set("threads", {

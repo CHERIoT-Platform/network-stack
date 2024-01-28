@@ -50,30 +50,6 @@ namespace
 	FlagLockPriorityInherited sendLock;
 
 	/**
-	 * Helper for use when debugging.  Prints a frame in a format that can be
-	 * pasted into wireshark for decoding.
-	 */
-	[[cheri::interrupt_state(disabled)]] void print_frame(const uint8_t *data,
-	                                                      size_t         length)
-	{
-		static FlagLockPriorityInherited   printLock;
-		LockGuard                          g{printLock};
-		MessageBuilder<ImplicitUARTOutput> out;
-		static char                        digits[] = "0123456789abcdef";
-		for (int i = 0; i < length; i++)
-		{
-			if ((i % 8) == 0)
-			{
-				out.write('\n');
-			}
-			out.write(digits[data[i] >> 4]);
-			out.write(digits[data[i] & 0xf]);
-			out.write(' ');
-		}
-		out.write('\n');
-	}
-
-	/**
 	 * Ethernet MAC address.
 	 */
 	using MACAddress = std::array<uint8_t, 6>;
@@ -374,18 +350,6 @@ namespace
 					           (int)(endpoint >> 24) & 0xff);
 					return true;
 				}
-				if (1)
-					ConditionalDebug<true, "firewall">::log(
-					  "Dropping {} {} {}.{}.{}.{}:{} (local port {})",
-					  ipv4Header->protocol,
-					  remoteAddress == &IPv4Header::destinationAddress ? "to"
-					                                                   : "from",
-					  (int)endpoint & 0xff,
-					  (int)(endpoint >> 8) & 0xff,
-					  (int)(endpoint >> 16) & 0xff,
-					  (int)(endpoint >> 24) & 0xff,
-					  remotePortNumber,
-					  localPortNumber);
 				return false;
 			}
 			break;
