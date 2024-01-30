@@ -234,8 +234,7 @@ namespace
 			{
 				return;
 			}
-			table.push_back(tuple);
-			std::sort(table.begin(), table.end());
+			table.insert(iterator, tuple);
 		}
 
 		void remove_endpoint(IPProtocolNumber protocol, uint16_t localPort)
