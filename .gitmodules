@@ -4,3 +4,6 @@
 [submodule "third_party/coreSNTP"]
 	path = third_party/coreSNTP
 	url = https://github.com/FreeRTOS/coreSNTP.git
+[submodule "third_party/BearSSL"]
+	path = third_party/BearSSL
+	url = https://www.bearssl.org/git/BearSSL

@@ -74,20 +74,59 @@ void __cheri_compartment("test") test_network()
 			break;
 		}
 	}
+
+
+	ssize_t contentLength = -1;
+
 	while (true)
 	{
 		auto [received, buffer] =
 		  network_socket_receive(&t, TEST_MALLOC, socket);
 		if (received > 0)
 		{
-			Debug::log("Received {} bytes in: {}", received, buffer);
+			if (contentLength < 0)
+			{
+				static const char Header[] = "Content-Length: ";
+				auto *strBuffer = reinterpret_cast<char *>(buffer);
+				if (char *headerStart = strnstr(strBuffer, Header, received) ; headerStart != nullptr)
+				{
+					char *length = headerStart + sizeof(Header) - 1;
+					contentLength = 0;
+					while (*length > '0' && *length < '9')
+					{
+						contentLength *= 10;
+						contentLength += *length - '0';
+						length++;
+					}
+					char *headerEnd = strnstr(headerStart, "\r\n\r\n", received - (headerStart - strBuffer));
+					if (headerEnd != nullptr)
+					{
+						Debug::log("Content length: {}", contentLength);
+					}
+					// Skip the initial header
+					headerEnd += 4;
+					received -= headerEnd - strBuffer;
+					buffer = reinterpret_cast<unsigned char *>(headerEnd);
+				}
+				else
+				{
+					Debug::log("No content length header found");
+					break;
+				}
+			}
 			Debug::log(
 			  "Received:\n{}",
 			  std::string_view(reinterpret_cast<char *>(buffer), received));
+			contentLength -= received;
 			int ret = heap_free(TEST_MALLOC, buffer);
 			if (ret != 0)
 			{
 				Debug::log("Failed to free buffer: {}", ret);
+				break;
+			}
+			if (contentLength <= 0)
+			{
+				Debug::log("Received all content");
 				break;
 			}
 		}
