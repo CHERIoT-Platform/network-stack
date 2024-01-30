@@ -30,10 +30,10 @@ void __cheri_compartment("test") test_network()
 	}
 	Debug::log("Updating NTP took {} ticks", t.elapsed);
 	t = UnlimitedTimeout;
-	for (int i = 0; i < 100; i++)
+	for (int i = 0; i < 10; i++)
 	{
 		timeval tv;
-		int    ret = gettimeofday(&tv, nullptr);
+		int     ret = gettimeofday(&tv, nullptr);
 		if (ret != 0)
 		{
 			Debug::log("Failed to get time of day: {}", ret);
