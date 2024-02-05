@@ -1,6 +1,5 @@
+#include "../third_party/BearSSL/inc//bearssl_x509.h"
 #include "NetAPI.h"
-#include "cdefs.h"
-#include "third_party/BearSSL/inc//bearssl_x509.h"
 #include <token.h>
 
 /**
@@ -17,10 +16,11 @@
  * This can fail if:
  *
  *  - The connection capability is not a valid TCP connection capability.
- *  - The allocator capability does not have enough quota to satisfy the allocations.
+ *  - The allocator capability does not have enough quota to satisfy the
+ * allocations.
  *  - The remote host is not accessible.
  *  - The remote host's certificate is not trusted by the trust anchors.
- * 
+ *
  * Known problems with this API:
  *
  *  - The BearSSL types are leaked into the API.

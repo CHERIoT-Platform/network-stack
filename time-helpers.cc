@@ -1,5 +1,4 @@
-#include "cdefs.h"
-#include "sntp.h"
+#include <sntp.h>
 #include <compartment-macros.h>
 #include <cstdint>
 #include <debug.hh>
