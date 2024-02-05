@@ -7,6 +7,14 @@
 
 using Debug = ConditionalDebug<false, "Buffer management">;
 
+constexpr size_t MinimumBufferSize =
+#if ipconfigUSE_TCP == 1
+  sizeof(TCPPacket_t)
+#else
+  sizeof(ARPPacket_t)
+#endif
+  ;
+
 /**
  * Variable consumed in FreeRTOS_IP.c to determine whether buffers are fixed
  * sizes.
@@ -29,9 +37,11 @@ NetworkBufferDescriptor_t *
 pxGetNetworkBufferWithDescriptor(size_t     xRequestedSizeBytes,
                                  TickType_t xBlockTimeTicks)
 {
-	if (xRequestedSizeBytes < sizeof(TCPPacket_t))
+	xRequestedSizeBytes = std::max(xRequestedSizeBytes, MinimumBufferSize);
+	if ((xRequestedSizeBytes & (sizeof(void *) - 1U)) != 0U)
 	{
-		xRequestedSizeBytes = sizeof(TCPPacket_t);
+		xRequestedSizeBytes =
+		  (xRequestedSizeBytes | (sizeof(void *) - 1U)) + 1U;
 	}
 
 	Timeout t{xBlockTimeTicks};
@@ -51,7 +61,10 @@ pxGetNetworkBufferWithDescriptor(size_t     xRequestedSizeBytes,
 		Debug::log("Failed to allocate {} byte buffer", xRequestedSizeBytes);
 		return nullptr;
 	}
-	Debug::log("Allocated {} byte buffer: {}", xRequestedSizeBytes, buffer);
+	Debug::log("Allocated {} byte buffer: {}, descriptor: {}",
+	           xRequestedSizeBytes,
+	           buffer,
+	           descriptor.get());
 
 	vListInitialiseItem(&descriptor->xBufferListItem);
 	listSET_LIST_ITEM_OWNER(&descriptor->xBufferListItem, descriptor.get());

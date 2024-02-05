@@ -384,12 +384,20 @@ namespace
 				                     &TCPUDPCommonPrefix::sourcePort,
 				                     &TCPUDPCommonPrefix::destinationPort,
 				                     true);
+				if (!ret)
+				{
+					Debug::log("Dropping outbound IPv4 packet");
+				}
+				else
+				{
+					Debug::log("Permitting outbound IPv4 packet");
+				}
 				return ret;
 			}
 			// For now, permit all outbound IPv6 packets.
 			case EtherType::IPv6:
 			{
-				Debug::log("Permitting outbound IPv6 frame");
+				Debug::log("Permitting outbound IPv6 packet");
 				return true;
 				break;
 			}
@@ -573,7 +581,7 @@ namespace
 		/**
 		 * Returns a pointer to the bytes of this address.
 		 */
-		auto    data()
+		auto data()
 		{
 			return bytes;
 		}

@@ -19,7 +19,7 @@
 #include <platform-ethernet.hh>
 #include <token.h>
 
-using Debug            = ConditionalDebug<true, "Network stack wrapper">;
+using Debug            = ConditionalDebug<false, "Network stack wrapper">;
 constexpr bool UseIPv6 = CHERIOT_RTOS_OPTION_IPv6;
 
 using CHERI::Capability;
@@ -207,11 +207,11 @@ namespace
 		                       &results);
 		if (ret != 0)
 		{
-			Debug::log("DNS request returned: {}", ret);
 			if (useIPv6)
 			{
 				return host_resolve(hostname, false);
 			}
+			Debug::log("DNS request returned: {}", ret);
 			return {0, NetworkAddress::AddressKindInvalid};
 		}
 
@@ -521,10 +521,19 @@ network_socket_receive(Timeout *timeout, SObj mallocCapability, SObj socket)
               {
                   do
                   {
-                      buffer = static_cast<uint8_t *>(
-                        heap_allocate(timeout, mallocCapability, available));
+                      Timeout zeroTimeout{0};
+                      buffer = static_cast<uint8_t *>(heap_allocate(
+					     &zeroTimeout, mallocCapability, available));
+                      timeout->elapse(zeroTimeout.elapsed);
                       if (buffer == nullptr)
                       {
+                          // If there's a lot of data, just try a small
+                          // allocation and see if that works.
+                          if (available > 128)
+                          {
+                              available = 128;
+                              continue;
+                          }
                           // If allocation failed and the timeout is zero, give
                           // up now.
                           if (!timeout->may_block())
@@ -605,9 +614,11 @@ network_socket_send(Timeout *timeout, SObj socket, void *buffer, size_t length)
 		  {
 			  return -EPERM;
 		  }
+		  Debug::log("Sending {}-byte TCP packet from {}", length, buffer);
 		  // FIXME: This should use the socket options to set / update
 		  // the timeout.
 		  auto ret = FreeRTOS_send(socket->socket, buffer, length, 0);
+		  Debug::log("FreeRTOS_send returned {}", ret);
 		  if (ret >= 0)
 		  {
 			  return ret;

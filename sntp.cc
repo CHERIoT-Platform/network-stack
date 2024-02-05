@@ -7,7 +7,6 @@
 //#include <fail-simulator-on-error.h>
 
 #include "sntp.h"
-#include "timeout.h"
 #include <NetAPI.h>
 #include <algorithm>
 #include <core_sntp_client.h>

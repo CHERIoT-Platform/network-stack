@@ -138,11 +138,29 @@ NetworkAddress network_socket_udp_authorise_host(Timeout *timeout,
 	}
 	else
 	{
-		Debug::log("Adding address {}.{}.{}.{} to firewall", address.ipv4 & 0xFF,
-		           (address.ipv4 >> 8) & 0xFF, (address.ipv4 >> 16) & 0xFF,
+		Debug::log("Adding address {}.{}.{}.{} to firewall",
+		           address.ipv4 & 0xFF,
+		           (address.ipv4 >> 8) & 0xFF,
+		           (address.ipv4 >> 16) & 0xFF,
 		           (address.ipv4 >> 24) & 0xFF);
 		firewall_add_udpipv4_endpoint(
 		  address.ipv4, kind.localPort, ntohs(host->port));
 	}
 	return address;
+}
+
+const char *network_host_get(SObj hostCapability)
+{
+	Sealed<ConnectionCapability> sealedHost{hostCapability};
+	auto *host = token_unseal(host_capability_key(), sealedHost);
+	if (host == nullptr)
+	{
+		Debug::log("Failed to unseal host capability");
+		return nullptr;
+	}
+	CHERI::Capability hostName = host->hostname;
+	hostName.bounds()          = host->nameLength;
+	hostName.permissions() &=
+	  {CHERI::Permission::Load, CHERI::Permission::Global};
+	return hostName;
 }

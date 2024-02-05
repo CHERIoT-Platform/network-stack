@@ -24,11 +24,15 @@
 
 #define ipconfigNUM_NETWORK_BUFFER_DESCRIPTORS 8
 
+
+#define ipconfigTCP_RX_BUFFER_LENGTH ( 1280 )
+#define ipconfigTCP_TX_BUFFER_LENGTH ( 1280 )
+
 #define ipconfigBYTE_ORDER pdFREERTOS_LITTLE_ENDIAN
 #define pvPortMalloc(x) malloc(x)
 #define vPortFree(x) free(x)
 
-#define DEBUG_FREERTOS_TCP
+//#define DEBUG_FREERTOS_TCP
 #ifdef DEBUG_FREERTOS_TCP
 #	define ipconfigHAS_DEBUG_PRINTF 1
 #	define FreeRTOS_debug_printf(x) printf x

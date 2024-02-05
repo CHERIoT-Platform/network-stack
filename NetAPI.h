@@ -204,6 +204,13 @@ enum ConnectionType : uint8_t
 };
 
 /**
+ * Returns the host name embedded in a host capability or null if this is not a
+ * valid host capability.
+ */
+const char * __cheri_compartment("NetAPI") network_host_get(SObj hostCapability);
+
+
+/**
  * Connection capability contents.  Instances of this sealed with the
  * NetworkConnectionKey sealing capability authorise access to a specific host
  * and port.

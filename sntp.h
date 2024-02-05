@@ -1,5 +1,4 @@
 #pragma once
-#include "cdefs.h"
 #include <compartment-macros.h>
 #include <errno.h>
 #include <futex.h>
@@ -42,8 +41,6 @@ int __cheri_compartment("SNTP") sntp_update(Timeout *timeout);
  */
 struct SynchronisedTime *__cheri_compartment("SNTP") sntp_time_get(void);
 
-#include <debug.hh>
-
 /**
  * Library call to compute a timeval from the previous timeval synchronised
  * with NTP.  The first argument is storage for a cached pointer retrieved from
@@ -60,9 +57,6 @@ timeval_calculate(struct timeval *__restrict tp,
  *
  * Calculates the time based on the number of cycles that have elapsed since
  * the last update from SNTP.
- *
- * TODO: This is a big function to put in every caller's compartment.  Move
- * most of it to a library.
  */
 static inline int gettimeofday(struct timeval *__restrict tp,
                                void *__restrict tzp)
@@ -70,4 +64,24 @@ static inline int gettimeofday(struct timeval *__restrict tp,
 	(void)tzp;
 	static struct SynchronisedTime *sntp_time = NULL;
 	return timeval_calculate(tp, &sntp_time);
+}
+
+/**
+ * POSIX-compatible time() implementation that uses the SNTP time.
+ *
+ * Calculates the time based on the number of cycles that have elapsed since
+ * the last update from SNTP.
+ */
+static inline time_t time(time_t *tloc)
+{
+	struct timeval tv;
+	if (gettimeofday(&tv, NULL) == -1)
+	{
+		return (time_t)-1;
+	}
+	if (tloc != NULL)
+	{
+		*tloc = tv.tv_sec;
+	}
+	return tv.tv_sec;
 }
