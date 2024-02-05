@@ -1,10 +1,5 @@
-#include "NetAPI.h"
-#include "locks.hh"
-#include "sntp.h"
 #include "timeout.h"
-#include "tls.h"
-#include "token.h"
-#include <cstdlib>
+#include <NetAPI.h>
 #include <debug.hh>
 #include <errno.h>
 #include <fail-simulator-on-error.h>
@@ -12,8 +7,6 @@
 #include <string_view>
 #include <thread.h>
 #include <tick_macros.h>
-
-#include "DigiCert_Global_G2_TLS_RSA_SHA256_2020_CA1.h"
 
 using Debug            = ConditionalDebug<true, "Network test">;
 constexpr bool UseIPv6 = CHERIOT_RTOS_OPTION_IPv6;
@@ -23,68 +16,17 @@ DECLARE_AND_DEFINE_CONNECTION_CAPABILITY(ExampleCom,
                                          80,
                                          ConnectionTypeTCP);
 
-DECLARE_AND_DEFINE_CONNECTION_CAPABILITY(ExampleComTLS,
-                                         "example.com",
-                                         443,
-                                         ConnectionTypeTCP);
-
 DECLARE_AND_DEFINE_ALLOCATOR_CAPABILITY(TestMalloc, 32 * 1024);
 
 #define TEST_MALLOC STATIC_SEALED_VALUE(TestMalloc)
 
-template<typename T>
-T *alloc(size_t arraySize = 1)
-{
-	Timeout t{UnlimitedTimeout};
-	return static_cast<T *>(
-	  heap_allocate_array(&t, TEST_MALLOC, sizeof(T), arraySize));
-};
-
-void __cheri_compartment("test") test_network()
+void __cheri_compartment("http_example") example()
 {
 	network_start();
-	Timeout t{MS_TO_TICKS(5000)};
-	while (sntp_update(&t) != 0)
-	{
-		Debug::log("Failed to update NTP time");
-		Timeout oneSecond{MS_TO_TICKS(1000)};
-	}
-	Debug::log("Updating NTP took {} ticks", t.elapsed);
-	t = UnlimitedTimeout;
-	// for (int i = 0; i < 10; i++)
-	{
-		timeval tv;
-		int     ret = gettimeofday(&tv, nullptr);
-		if (ret != 0)
-		{
-			Debug::log("Failed to get time of day: {}", ret);
-		}
-		else
-		{
-			// Truncate the epoch time to 32 bits for printing.
-			Debug::log("Current UNIX epoch time: {}", (int32_t)tv.tv_sec);
-		}
-		Timeout oneSecond{MS_TO_TICKS(1000)};
-		thread_sleep(&oneSecond);
-	}
-
-	Debug::log("Free heap space: {}", heap_available());
-
-	Debug::log("Creating TLS connection");
+	Debug::log("Creating connection");
 	Timeout unlimited{UnlimitedTimeout};
-	auto    tlsSocket = tls_connection_create(&unlimited,
-	                                          TEST_MALLOC,
-	                                          STATIC_SEALED_VALUE(ExampleComTLS),
-	                                          TAs,
-	                                          TAs_NUM);
-	Debug::log("TLS socket: {}", tlsSocket);
-
-	Debug::log("Starting HTTP test");
-	Debug::log("Free heap space: {}", heap_available());
-#if 0
-	auto socket = network_socket_connect_tcp(
-	  &t, TEST_MALLOC, STATIC_SEALED_VALUE(ExampleCom));
-#endif
+	auto    socket = network_socket_connect_tcp(
+	     &unlimited, TEST_MALLOC, STATIC_SEALED_VALUE(ExampleCom));
 
 	static char      message[] = "GET / HTTP/1.1\r\n"
 	                             "Host: example.com\r\n"
@@ -97,14 +39,8 @@ void __cheri_compartment("test") test_network()
 	{
 		size_t remaining = toSend - sent;
 
-#if 0
 		size_t sentThisCall =
-		  network_socket_send(&t, socket, &(message[sent]), remaining);
-#else
-		Debug::log("Sending {} bytes via TLS", remaining);
-		size_t sentThisCall =
-		  tls_connection_send(&t, tlsSocket, &(message[sent]), remaining, 0);
-#endif
+		  network_socket_send(&unlimited, socket, &(message[sent]), remaining);
 		Debug::log("Sent {} bytes", sentThisCall);
 
 		if (sentThisCall >= 0)
@@ -123,15 +59,13 @@ void __cheri_compartment("test") test_network()
 
 	while (true)
 	{
-#if 0
 		auto [received, buffer] =
-		  network_socket_receive(&t, TEST_MALLOC, socket);
-#else
-		auto [received, buffer] = tls_connection_receive(&t, tlsSocket);
-#endif
-		Debug::log("Receive returned {}", received);
+		  network_socket_receive(&unlimited, TEST_MALLOC, socket);
 		if (received > 0)
 		{
+			// WARNING: This assumes that the Content-Length header is in the
+			// first read.  This happens to be true for this server, but it's
+			// absolutely *not* something that is true in the general case.
 			if (contentLength < 0)
 			{
 				Debug::log(
@@ -153,7 +87,7 @@ void __cheri_compartment("test") test_network()
 					Debug::log("Content length: {}", contentLength);
 					char *headerEnd =
 					  strnstr(headerStart,
-					          "\r\n",
+					          "\r\n\r\n",
 					          received - (headerStart - strBuffer));
 					if (headerEnd != nullptr)
 					{
@@ -174,7 +108,6 @@ void __cheri_compartment("test") test_network()
 					break;
 				}
 			}
-			Debug::log("Received:\n{}", buffer);
 			Debug::log(
 			  "Received:\n{}",
 			  std::string_view(reinterpret_cast<char *>(buffer), received));
@@ -207,8 +140,6 @@ void __cheri_compartment("test") test_network()
 		}
 	}
 	Debug::log("Free heap space: {}", heap_available());
-	int ret = tls_connection_close(&t, tlsSocket);
-	// network_socket_close(&t, TEST_MALLOC, socket);
-	Debug::log("Test exiting, close returned {}", ret);
+	network_socket_close(&unlimited, TEST_MALLOC, socket);
 	Debug::log("Free heap space: {}", heap_available());
 }

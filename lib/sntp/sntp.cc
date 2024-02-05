@@ -17,7 +17,7 @@
 
 using CHERI::Capability;
 
-using Debug = ConditionalDebug<true, "NTP Client">;
+using Debug = ConditionalDebug<false, "NTP Client">;
 
 #include <platform-entropy.hh>
 

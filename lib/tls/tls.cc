@@ -1,10 +1,10 @@
-#include "NetAPI.h"
-#include "third_party/BearSSL/inc/bearssl.h"
+#include "../../third_party/BearSSL/inc/bearssl.h"
+#include <NetAPI.h>
 #include <debug.hh>
 #include <locks.hh>
 #include <platform-entropy.hh>
+#include <tls.h>
 #include <token.h>
-#include "tls.h"
 
 using Debug = ConditionalDebug<false, "TLS">;
 
@@ -16,20 +16,20 @@ namespace
 	struct TLSContext
 	{
 		/// The underlying TCP socket.
-		SObj                      socket;
+		SObj socket;
 		/**
 		 * The allocator used to allocate memory for this object.  Needed for
 		 * freeing it and for allocating internal buffers.
 		 */
-		SObj                      allocator;
+		SObj allocator;
 		/// The BearSSL client context.
-		br_ssl_client_context    *clientContext;
+		br_ssl_client_context *clientContext;
 		/// The BearSSL X.509 context.
-		br_x509_minimal_context  *x509Context;
+		br_x509_minimal_context *x509Context;
 		/// The input buffer for the TLS engine.
-		unsigned char            *iobuf_in;
+		unsigned char *iobuf_in;
 		/// The output buffer for the TLS engine.
-		unsigned char            *iobuf_out;
+		unsigned char *iobuf_out;
 		/**
 		 * The received data buffer.  If we have received data from the TCP
 		 * socket but not yet processed all of it, it will be stored here.
@@ -467,8 +467,7 @@ ssize_t tls_connection_send(Timeout *t,
 	  });
 }
 
-NetworkReceiveResult
-tls_connection_receive(Timeout *t, SObj sealedConnection)
+NetworkReceiveResult tls_connection_receive(Timeout *t, SObj sealedConnection)
 {
 	uint8_t *outBuffer = nullptr;
 	ssize_t  result =

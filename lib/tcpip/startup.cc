@@ -8,7 +8,7 @@
 #include <debug.hh>
 #include <platform-ethernet.hh>
 
-#include "firewall.h"
+#include "../firewall/firewall.h"
 
 using Debug = ConditionalDebug<false, "TCP/IP Stack startup">;
 
@@ -39,22 +39,23 @@ namespace
 	/**
 	 * The IPv4 endpoint for the FreeRTOS network stack.
 	 */
-	NetworkEndPoint_t     endpointIPv4;
+	NetworkEndPoint_t endpointIPv4;
 	/**
 	 * The IPv6 endpoint for the FreeRTOS network stack.
 	 */
-	NetworkEndPoint_t     endpointIPv6;
+	NetworkEndPoint_t endpointIPv6;
 	/**
 	 * The IPv6 link-local endpoint for the FreeRTOS network stack.
 	 */
-	NetworkEndPoint_t     endpointIPv6LinkLocal;
+	NetworkEndPoint_t endpointIPv6LinkLocal;
 	/**
 	 * Flag indicating whether to use IPv6 or not, set in xmake.
 	 */
-	constexpr bool        UseIPv6 = CHERIOT_RTOS_OPTION_IPv6;
+	constexpr bool UseIPv6 = CHERIOT_RTOS_OPTION_IPv6;
 
 	/**
-	 * The singleton network interface descriptor for the FreeRTOS network stack.
+	 * The singleton network interface descriptor for the FreeRTOS network
+	 * stack.
 	 */
 	NetworkInterface_t interface;
 
@@ -64,7 +65,6 @@ namespace
 	const uint8_t ucNetMask[4]          = {255, 255, 255, 0};
 	const uint8_t ucGatewayAddress[4]   = {192, 168, 0, 1};
 	const uint8_t ucDNSServerAddress[4] = {8, 8, 8, 8};
-
 
 } // namespace
 
@@ -91,7 +91,8 @@ void __cheri_compartment("TCPIP") network_start()
 	// Enable DHCP
 	endpointIPv4.bits.bWantDHCP = pdTRUE;
 
-	// FIXME: Factor this out into a template so that we can get rid of the ifdefs.
+	// FIXME: Factor this out into a template so that we can get rid of the
+	// ifdefs.
 #if CHERIOT_RTOS_OPTION_IPv6
 	if constexpr (UseIPv6)
 	{

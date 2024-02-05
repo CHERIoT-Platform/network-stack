@@ -1,6 +1,6 @@
+#include "../firewall/firewall.h"
+#include "../tcpip/network-internal.h"
 #include <NetAPI.h>
-#include "firewall.h"
-#include "network-internal.h"
 
 #include <atomic>
 #include <debug.hh>
@@ -20,7 +20,7 @@ namespace
 
 namespace
 {
-	using Debug            = ConditionalDebug<true, "Network API">;
+	using Debug            = ConditionalDebug<false, "Network API">;
 	constexpr bool UseIPv6 = CHERIOT_RTOS_OPTION_IPv6;
 
 	/**

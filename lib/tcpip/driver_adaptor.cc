@@ -8,7 +8,7 @@
 #include <platform-ethernet.hh>
 #include <timeout.h>
 
-#include "firewall.h"
+#include "../firewall/firewall.h"
 
 // FreeRTOS APIs
 #include <FreeRTOS.h>

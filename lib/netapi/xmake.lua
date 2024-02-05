@@ -1,0 +1,11 @@
+compartment("NetAPI")
+  set_default(false)
+  add_includedirs("../../include")
+  add_deps("freestanding", "TCPIP")
+  add_files("NetAPI.cc")
+  on_load(function(target)
+    target:add('options', "IPv6")
+    local IPv6 = get_config("IPv6")
+    target:add("defines", "CHERIOT_RTOS_OPTION_IPv6=" .. tostring(IPv6))
+  end)
+

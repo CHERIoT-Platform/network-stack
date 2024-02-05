@@ -18,14 +18,14 @@ void ip_thread_start(void)
 
 void __cheri_compartment("TCPIP") ip_thread_entry(void)
 {
-	printf("ip_thread_entry\n");
+	FreeRTOS_printf(("ip_thread_entry\n"));
 	while (threadEntryGuard == 0)
 	{
 		printf("Sleeping until the IP task is supposed to start\n");
 		futex_wait(&threadEntryGuard, 0);
 	}
 	xIPTaskHandle = thread_id_get();
-	printf("ip_thread_entry starting, thread ID is %p\n", xIPTaskHandle);
+	FreeRTOS_printf(("ip_thread_entry starting, thread ID is %p\n", xIPTaskHandle));
 	prvIPTask(NULL);
-	printf("ip_thread_entry exiting.  This should not happen\n");
+	FreeRTOS_printf(("ip_thread_entry exiting.  This should not happen\n"));
 }

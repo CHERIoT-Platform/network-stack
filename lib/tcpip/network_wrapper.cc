@@ -3,11 +3,8 @@
 #include <FreeRTOS_ND.h>
 
 #include "FreeRTOS_IP_Private.h"
-#include "NetAPI.h"
-#include "cdefs.h"
-#include "cheri.hh"
-#include "compartment-macros.h"
-#include "firewall.h"
+#include <NetAPI.h>
+#include "../firewall/firewall.h"
 #include "network-internal.h"
 
 #include <cstddef>
