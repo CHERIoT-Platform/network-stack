@@ -464,6 +464,12 @@ bool ethernet_driver_start()
 
 bool ethernet_send_frame(uint8_t *frame, size_t length)
 {
+	if (!check_pointer<PermissionSet{Permission::Load}>(frame, length))
+	{
+		// The pointer is unsafe, not point going any further with this
+		// frame.
+		return false;
+	}
 	LockGuard g{sendLock};
 	auto     &ethernet = lazy_network_interface();
 	return ethernet.send_frame(frame, length, packet_filter_egress);

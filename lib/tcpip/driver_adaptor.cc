@@ -65,6 +65,10 @@ namespace
 bool __cheri_compartment("TCPIP")
   ethernet_receive_frame(uint8_t *frame, size_t length)
 {
+	if (!check_pointer<PermissionSet{Permission::Load}>(frame, length))
+	{
+		return false;
+	}
 	if (eConsiderFrameForProcessing(frame) != eProcessBuffer)
 	{
 		//Debug::log("Frame not for us");
