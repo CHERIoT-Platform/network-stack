@@ -68,6 +68,10 @@ namespace
 bool __cheri_compartment("TCPIP")
   ethernet_receive_frame(uint8_t *frame, size_t length)
 {
+	// We do not check the frame pointer and length because this function
+	// can only be called by the firewall and we trust the firewall. See
+	// the compartment call allow list entry of `ethernet_send_frame` in
+	// the policy file (`network_stack.rego`).
 	if (eConsiderFrameForProcessing(frame) != eProcessBuffer)
 	{
 		// Debug::log("Frame not for us");

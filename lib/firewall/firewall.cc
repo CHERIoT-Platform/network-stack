@@ -488,6 +488,9 @@ bool ethernet_driver_start()
 
 bool ethernet_send_frame(uint8_t *frame, size_t length)
 {
+	// We do not check the frame and length here, because we do not use it
+	// in the firewall (we pass it on to untouched to the driver). We
+	// consider it the driver's job to check the pointer before using it.
 	LockGuard g{sendLock};
 	auto     &ethernet = lazy_network_interface();
 	return ethernet.send_frame(frame, length, packet_filter_egress);
