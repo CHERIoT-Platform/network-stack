@@ -35,7 +35,7 @@ struct NetworkAddress
  * Start the network.  This is a temporary API.  It will eventually be replaced
  * by a non-blocking version.
  */
-void __cheri_compartment("TCPIP") network_start();
+void __cheri_compartment("TCPIP") network_start(void);
 
 /**
  * Create a connected TCP socket.

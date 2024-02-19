@@ -21,6 +21,12 @@
  *  - The remote host is not accessible.
  *  - The remote host's certificate is not trusted by the trust anchors.
  *
+ *  This function assumes that the trust anchors are valid and will not be
+ *  freed during the call.  If this is not the case, then this function can
+ *  abort *without* gracefully freeing the resources it has allocated. These
+ *  are allocated with the callee's allocator and so the caller is able to
+ *  mount a denial of service attack on itself via a concurrent free.
+ *
  * Known problems with this API:
  *
  *  - The BearSSL types are leaked into the API.

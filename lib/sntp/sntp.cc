@@ -440,9 +440,7 @@ namespace
 
 int sntp_update(Timeout *timeout)
 {
-	if (heap_address_is_valid(timeout) ||
-	    !CHERI::check_pointer<CHERI::PermissionSet{
-	      CHERI::Permission::Load, CHERI::Permission::Store}>(timeout))
+	if (!check_timeout_pointer(timeout))
 	{
 		Debug::log("Invalid timeout pointer: {}", timeout);
 		return -EINVAL;
@@ -450,7 +448,7 @@ int sntp_update(Timeout *timeout)
 	return ntp_time_update(timeout);
 }
 
-struct SynchronisedTime *sntp_time_get(void)
+struct SynchronisedTime *sntp_time_get()
 {
 	Capability<struct SynchronisedTime> result{&currentUNIXTime};
 	// Strip everything except load and global permission.

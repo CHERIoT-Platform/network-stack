@@ -36,6 +36,10 @@ SObj network_socket_connect_tcp(Timeout *timeout,
                                 SObj     mallocCapability,
                                 SObj     hostCapability)
 {
+	if (!check_timeout_pointer(timeout))
+	{
+		return nullptr;
+	}
 	Sealed<ConnectionCapability> sealedHost{hostCapability};
 	auto *host = token_unseal(host_capability_key(), sealedHost);
 	if (host == nullptr)
@@ -61,7 +65,12 @@ SObj network_socket_connect_tcp(Timeout *timeout,
 	  timeout, mallocCapability, isIPv6, ConnectionTypeTCP);
 	auto kind = network_socket_kind(sealedSocket);
 	// FIXME: IPv6
-	if (!isIPv6)
+	if (isIPv6)
+	{
+		firewall_add_tcpipv6_endpoint(
+		  address.ipv6, kind.localPort, ntohs(host->port));
+	}
+	else
 	{
 		firewall_add_tcpipv4_endpoint(
 		  address.ipv4, kind.localPort, ntohs(host->port));
@@ -89,6 +98,10 @@ NetworkAddress network_socket_udp_authorise_host(Timeout *timeout,
                                                  SObj     socket,
                                                  SObj     hostCapability)
 {
+	if (!check_timeout_pointer(timeout))
+	{
+		return {NetworkAddress::AddressKindInvalid};
+	}
 	NetworkAddress               address{NetworkAddress::AddressKindInvalid};
 	Sealed<ConnectionCapability> sealedHost{hostCapability};
 	auto *host = token_unseal(host_capability_key(), sealedHost);

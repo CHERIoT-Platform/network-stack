@@ -5,6 +5,7 @@
 #include "../firewall/firewall.h"
 #include "FreeRTOS_IP_Private.h"
 #include "cdefs.h"
+#include "cheri.hh"
 #include "network-internal.h"
 #include <NetAPI.h>
 
@@ -184,10 +185,6 @@ namespace
 	static_assert(offsetof(addrinfo_hints, ai_family) ==
 	              offsetof(freertos_addrinfo, ai_family));
 
-} // namespace
-
-namespace
-{
 	/**
 	 * Resolve a hostname to an IP address.  If `useIPv6` is true, then this
 	 * will favour IPv6 addresses, but can still return IPv4 addresses if no
@@ -240,11 +237,39 @@ namespace
 		return address;
 	}
 
+	/**
+	 * Helper to run a FreeRTOS blocking socket call with a CHERIoT RTOS
+	 * timeout.  It's annoying that this needs to query the system tick
+	 * multiple times, but the FreeRTOS APIs are not composable.  This sets the
+	 * timeout on the socket (for the direction identified by `directionFlag`),
+	 * calls `fn`, and then updates the timeout with the number of ticks taken.
+	 */
+	auto with_freertos_timeout(Timeout           *timeout,
+	                           FreeRTOS_Socket_t *socket,
+	                           auto               directionFlag,
+	                           auto             &&fn)
+	{
+		auto       startTick = thread_systemtick_get();
+		TickType_t remaining = timeout->remaining;
+		FreeRTOS_setsockopt(socket, 0, directionFlag, &remaining, 0);
+		// Wait for at least one byte to be available.
+		auto ret = fn();
+		Debug::log("Blocking call returned {}", ret);
+		auto endTick = thread_systemtick_get();
+		timeout->elapse(((uint64_t(endTick.hi) << 32) | endTick.lo) -
+		                ((uint64_t(startTick.hi) << 32) | startTick.lo));
+		return ret;
+	}
+
 	__noinline int network_socket_receive_internal(
 	  Timeout                              *timeout,
 	  SObj                                  sealedSocket,
 	  std::function<void *(int &available)> prepareBuffer)
 	{
+		if (!check_timeout_pointer(timeout))
+		{
+			return -EINVAL;
+		}
 		return with_sealed_socket(
 		  timeout,
 		  [&](SealedSocket *socket) {
@@ -258,7 +283,8 @@ namespace
 				  if (available > 0)
 				  {
 					  void *buffer = prepareBuffer(available);
-					  Debug::log("Receiving {} bytes into {}", available, buffer);
+					  Debug::log(
+					    "Receiving {} bytes into {}", available, buffer);
 					  if (buffer == nullptr)
 					  {
 						  return available;
@@ -284,20 +310,12 @@ namespace
 				  {
 					  return -ETIMEDOUT;
 				  }
-				  // It's annoying that we end up querying the time twice here,
-				  // but FreeRTOS's timeout API is not designed for composition.
-				  auto       startTick = thread_systemtick_get();
-				  TickType_t remaining = timeout->remaining;
-				  FreeRTOS_setsockopt(
-				    socket->socket, 0, FREERTOS_SO_RCVTIMEO, &remaining, 0);
-				  // Wait for at least one byte to be available.
-				  auto ret = FreeRTOS_recv(
-				    socket->socket, nullptr, 1, FREERTOS_MSG_PEEK);
-				  Debug::log("Blocking call returned {}", ret);
-				  auto endTick = thread_systemtick_get();
-				  timeout->elapse(
-				    (((uint64_t)endTick.hi << 32) | endTick.lo) -
-				    (((uint64_t)startTick.hi << 32) | startTick.lo));
+				  auto ret = with_freertos_timeout(
+				    timeout, socket->socket, FREERTOS_SO_RCVTIMEO, [&] {
+					    // Wait for at least one byte to be available.
+					    return FreeRTOS_recv(
+					      socket->socket, nullptr, 1, FREERTOS_MSG_PEEK);
+				    });
 			  } while (timeout->may_block());
 			  return -ETIMEDOUT;
 		  },
@@ -403,12 +421,20 @@ int network_socket_connect_tcp_internal(Timeout       *timeout,
 
 SObj network_socket_udp(Timeout *timeout, SObj mallocCapability, bool isIPv6)
 {
+	if (!check_timeout_pointer(timeout))
+	{
+		return nullptr;
+	}
 	return network_socket_create_and_bind(
 	  timeout, mallocCapability, isIPv6, ConnectionTypeUDP);
 }
 
 int network_socket_close(Timeout *t, SObj mallocCapability, SObj sealedSocket)
 {
+	if (!check_timeout_pointer(t))
+	{
+		return -EINVAL;
+	}
 	return with_sealed_socket(
 	  [=](SealedSocket *socket) {
 		  // Don't use a lock guard here, we don't want to release the lock if
@@ -418,6 +444,7 @@ int network_socket_close(Timeout *t, SObj mallocCapability, SObj sealedSocket)
 		  {
 			  return -ETIMEDOUT;
 		  }
+		  socket->socketLock.upgrade_for_destruction();
 		  // Drop the caller's claim on the socket.
 		  if (heap_free(mallocCapability, socket->socket) != 0)
 		  {
@@ -456,6 +483,9 @@ int network_socket_close(Timeout *t, SObj mallocCapability, SObj sealedSocket)
 		  // Close the socket.  Another thread will actually clean up the
 		  // memory.
 		  FreeRTOS_closesocket(socket->socket);
+		  // Drop the caller's claim on the socket.  The TCP/IP stack retains a
+		  // claim.
+		  heap_free(mallocCapability, socket->socket);
 		  token_obj_destroy(mallocCapability, socket_key(), sealedSocket);
 		  return 0;
 	  },
@@ -474,21 +504,20 @@ NetworkReceiveResult network_socket_receive_from(Timeout *timeout,
 	   [&](SealedSocket *socket) {
           freertos_sockaddr remoteAddress;
           socklen_t         remoteAddressLength = sizeof(remoteAddress);
-          // Set the receive timeout for the socket to our timeout
-          TickType_t remaining = timeout->remaining;
-          FreeRTOS_setsockopt(
-		     socket->socket, 0, FREERTOS_SO_RCVTIMEO, &remaining, 0);
-          uint8_t *unclaimedBuffer = nullptr;
-          // Receive a packet with zero copy.  The zero-copy interface for UDP
-          // returns a pointer to the packet buffer, so we don't end up
-          // claiming a huge stream buffer.
-          int received = FreeRTOS_recvfrom(socket->socket,
-		                                    &unclaimedBuffer,
-		                                    0,
-		                                    FREERTOS_ZERO_COPY,
-		                                    &remoteAddress,
-		                                    &remoteAddressLength);
-          if (received > 0)
+          uint8_t          *unclaimedBuffer     = nullptr;
+          int               received            = with_freertos_timeout(
+		                              timeout, socket->socket, FREERTOS_SO_RCVTIMEO, [&] {
+                // Receive a packet with zero copy.  The zero-copy interface for
+                // UDP returns a pointer to the packet buffer, so we don't end
+                // up claiming a huge stream buffer.
+                return FreeRTOS_recvfrom(socket->socket,
+			                                                       &unclaimedBuffer,
+			                                                       0,
+			                                                       FREERTOS_ZERO_COPY,
+			                                                       &remoteAddress,
+			                                                       &remoteAddressLength);
+            });
+		   if (received > 0)
           {
               ssize_t claimed = heap_claim(mallocCapability, unclaimedBuffer);
               Debug::log(
@@ -632,6 +661,10 @@ NetworkReceiveResult network_socket_receive(Timeout *timeout,
 ssize_t
 network_socket_send(Timeout *timeout, SObj socket, void *buffer, size_t length)
 {
+	if (!check_timeout_pointer(timeout))
+	{
+		return -EINVAL;
+	}
 	return with_sealed_socket(
 	  timeout,
 	  [&](SealedSocket *socket) {
@@ -650,9 +683,19 @@ network_socket_send(Timeout *timeout, SObj socket, void *buffer, size_t length)
 			  return -EPERM;
 		  }
 		  Debug::log("Sending {}-byte TCP packet from {}", length, buffer);
-		  // FIXME: This should use the socket options to set / update
-		  // the timeout.
-		  auto ret = FreeRTOS_send(socket->socket, buffer, length, 0);
+		  int ret = heap_claim_fast(timeout, buffer);
+		  if (ret < 0)
+		  {
+			  return ret;
+		  }
+		  if (!check_pointer<PermissionSet{Permission::Load}>(buffer, length))
+		  {
+			  return -EPERM;
+		  }
+		  ret = with_freertos_timeout(
+		    timeout, socket->socket, FREERTOS_SO_SNDTIMEO, [&] {
+			    return FreeRTOS_send(socket->socket, buffer, length, 0);
+		    });
 		  Debug::log("FreeRTOS_send returned {}", ret);
 		  if (ret >= 0)
 		  {
@@ -676,6 +719,10 @@ ssize_t network_socket_send_to(Timeout              *timeout,
                                const void           *buffer,
                                size_t                length)
 {
+	if (!check_timeout_pointer(timeout))
+	{
+		return -EINVAL;
+	}
 	return with_sealed_socket(
 	  timeout,
 	  [&](SealedSocket *socket) {
@@ -721,8 +768,11 @@ ssize_t network_socket_send_to(Timeout              *timeout,
 		  Debug::log("Sending {}-byte UDP packet", length);
 		  // FIXME: This should use the socket options to set / update
 		  // the timeout.
-		  auto ret = FreeRTOS_sendto(
-		    socket->socket, buffer, length, 0, &server, sizeof(server));
+		  auto ret = with_freertos_timeout(
+		    timeout, socket->socket, FREERTOS_SO_SNDTIMEO, [&] {
+			    return FreeRTOS_sendto(
+			      socket->socket, buffer, length, 0, &server, sizeof(server));
+		    });
 		  Debug::log("Send returned {}", ret);
 		  if (ret >= 0)
 		  {

@@ -3,11 +3,12 @@
  * Internal APIs that the TCP/IP compartment exposes for the wrapper APIs to
  * use.
  *
- * These should be called only from the NetAPI compartment.
+ * These should be called only from the NetAPI compartment (validated by
+ * checking the compartment linkage report).  These APIs trust the caller and
+ * do *not* check arguments.
  */
 
-#include "NetAPI.h"
-#include "cdefs.h"
+#include <NetAPI.h>
 
 /**
  * Resolve a host name to an IPv4 or IPv6 address.  If `useIPv6` is true, then

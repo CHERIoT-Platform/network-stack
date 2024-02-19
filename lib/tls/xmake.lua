@@ -14,6 +14,7 @@ compartment("TLS")
   add_files("x509_minimal_wrapper.c")
   -- Configuration
   add_defines("BR_INT128=0", "BR_UMUL128=0", "BR_USE_UNIX_TIME=1")
+  add_defines("CHERIOT_NO_AMBIENT_MALLOC", "CHERIOT_NO_NEW_DELETE")
   add_includedirs("../../include", "../../third_party/BearSSL/src", "../../third_party/BearSSL/inc")
   -- BearSSL sources:
   -- These must be split up because Lua has a limit to the number of arguments

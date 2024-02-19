@@ -393,6 +393,10 @@ ssize_t tls_connection_send(Timeout *t,
                             size_t   length,
                             int      flags)
 {
+	if (!check_timeout_pointer(t))
+	{
+		return -EINVAL;
+	}
 	return with_sealed_tls_context(
 	  t, sealedConnection, [&](TLSContext *connection) {
 		  auto  *engine    = &connection->clientContext->eng;
@@ -423,6 +427,15 @@ ssize_t tls_connection_send(Timeout *t,
 				  Debug::log("TLS engine can accept {} bytes, sending {} bytes",
 				             readyLength,
 				             toSend);
+				  int ret = heap_claim_fast(t, buffer);
+				  if (ret != 0)
+				  {
+					  return ret;
+				  }
+				  if (!check_pointer<Permission::Load>(buffer, toSend))
+				  {
+					  return -EPERM;
+				  }
 				  memcpy(readyBuffer, buffer, toSend);
 				  br_ssl_engine_sendapp_ack(engine, toSend);
 				  length -= toSend;
@@ -456,6 +469,10 @@ ssize_t tls_connection_send(Timeout *t,
 
 NetworkReceiveResult tls_connection_receive(Timeout *t, SObj sealedConnection)
 {
+	if (!check_timeout_pointer(t))
+	{
+		return {-EINVAL, nullptr};
+	}
 	uint8_t *outBuffer = nullptr;
 	ssize_t  result =
 	  with_sealed_tls_context(t, sealedConnection, [&](TLSContext *connection) {
@@ -516,6 +533,10 @@ NetworkReceiveResult tls_connection_receive(Timeout *t, SObj sealedConnection)
 
 int tls_connection_close(Timeout *t, SObj sealed)
 {
+	if (!check_timeout_pointer(t))
+	{
+		return -EINVAL;
+	}
 	Sealed<TLSContext> sealedContext{sealed};
 	auto              *tls = token_unseal(tls_key(), sealedContext);
 	if (tls == nullptr)
@@ -528,6 +549,7 @@ int tls_connection_close(Timeout *t, SObj sealed)
 		Debug::log("Failed to acquire lock on TLS context during close");
 		return -ETIMEDOUT;
 	}
+	tls->lock.upgrade_for_destruction();
 	auto *engine = &tls->clientContext->eng;
 	br_ssl_engine_close(engine);
 	auto    state = br_ssl_engine_current_state(&tls->clientContext->eng);
