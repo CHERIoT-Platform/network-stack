@@ -7,6 +7,7 @@
 #include <token.h>
 
 using Debug = ConditionalDebug<false, "TLS">;
+using namespace CHERI;
 
 namespace
 {
@@ -185,10 +186,9 @@ namespace
 
 	int receive_records(Timeout *t, TLSContext *connection)
 	{
-		auto		     *engine = &connection->clientContext->eng;
-		size_t            length;
-		CHERI::Capability inputBuffer =
-		  br_ssl_engine_recvrec_buf(engine, &length);
+		auto      *engine = &connection->clientContext->eng;
+		size_t     length;
+		Capability inputBuffer = br_ssl_engine_recvrec_buf(engine, &length);
 		// Bound the input buffer to the length that we expect to
 		// write into, to prevent overwrites of other TLS state.
 		// This may be an awkward size and so allow inexact bounds if necessary.
@@ -197,7 +197,7 @@ namespace
 		inputBuffer.bounds().set_inexact(length);
 		// Remove local so that the network stack cannot capture
 		// this, remove load so that we cannot leak state.
-		inputBuffer.permissions() &= CHERI::Permission::Store;
+		inputBuffer.permissions() &= Permission::Store;
 		Debug::log("Receiving {} bytes into {}", length, inputBuffer);
 		// Pull some data out of the network stack.
 		int received = network_socket_receive_preallocated(
@@ -210,6 +210,44 @@ namespace
 		}
 		br_ssl_engine_recvrec_ack(engine, received);
 		return received;
+	}
+
+	/**
+	 * Helper to send records from the TLS engine to the network stack.
+	 *
+	 * Returns the response from the network stack (zero for a closed
+	 * connection, negative for errors, positive for the number of bytes sent)
+	 * and a boolean indicating whether there are more records to send that
+	 * were not transmitted in this call.
+	 */
+	std::pair<int, bool> send_records(Timeout *t, TLSContext *connection)
+	{
+		auto      *engine = &connection->clientContext->eng;
+		size_t     readyLength;
+		Capability readyBuffer =
+		  br_ssl_engine_sendrec_buf(engine, &readyLength);
+		// Bound the input buffer to the length that we expect to
+		// write into, to prevent overwrites of other TLS state.
+		// This may be an awkward size and so allow inexact bounds if necessary.
+		// TODO: It might be better to round length down to something where
+		// we can do exact bounds.
+		readyBuffer.bounds().set_inexact(readyLength);
+		// Remove local so that the network stack cannot capture
+		// this, remove store so that we cannot leak state.
+		readyBuffer.permissions() &= Permission::Load;
+		Debug::log("Sending {} bytes of records", readyLength);
+		auto sent =
+		  network_socket_send(t, connection->socket, readyBuffer, readyLength);
+		Debug::log("Send returned {}", sent);
+		if (sent > 0)
+		{
+			br_ssl_engine_sendrec_ack(engine, sent);
+		}
+		else
+		{
+			return {sent, false};
+		}
+		return {sent, sent < readyLength};
 	}
 
 } // namespace
@@ -304,17 +342,20 @@ SObj tls_connection_create(Timeout                    *t,
 	                                                x509Context.release(),
 	                                                iobuf_in.release(),
 	                                                iobuf_out.release()};
+	auto        cleanup = [&](auto *) {
+        context->~TLSContext();
+        token_obj_destroy(allocator, tls_key(), sealed);
+	};
+	std::unique_ptr<struct SObjStruct, decltype(cleanup)> sealedContext{
+	  sealed, cleanup};
 
 	// Try to connect to the server.
 	Debug::log("Resetting TLS connection for {}", hostname);
 	br_ssl_client_reset(context->clientContext, hostname, 0);
 
-	// FIXME: Inject some entropy
-
-	auto state = br_ssl_engine_current_state(engine);
-	// Pump the engine until it's ready for data to be sent or until the
-	// connection is closed.
-	while ((state & (BR_SSL_SENDAPP)) == 0)
+	for (auto state = br_ssl_engine_current_state(engine);
+	     ((state & (BR_SSL_SENDAPP)) == 0);
+	     state = br_ssl_engine_current_state(engine))
 	{
 		Debug::log("TLS state: {}", state);
 		Debug::log("Last error: {}", br_ssl_engine_last_error(engine));
@@ -324,43 +365,26 @@ SObj tls_connection_create(Timeout                    *t,
 		{
 			Debug::log("Connection closed, last error: {}",
 			           br_ssl_engine_last_error(engine));
-			context->~TLSContext();
-			token_obj_destroy(allocator, tls_key(), sealed);
 			return nullptr;
 		}
 		// If we need to send records, send them first.
 		if ((state & BR_SSL_SENDREC) == BR_SSL_SENDREC)
 		{
-			size_t readyLength;
-			auto *readyBuffer = br_ssl_engine_sendrec_buf(engine, &readyLength);
-			Debug::log("Sending {} bytes of records", readyLength);
-			auto sent =
-			  network_socket_send(t, context->socket, readyBuffer, readyLength);
-			Debug::log("Send returned {}", sent);
-			if (sent > 0)
+			auto [sent, unfinished] = send_records(t, context);
+			if (sent <= 0)
 			{
-				br_ssl_engine_sendrec_ack(engine, sent);
+				return nullptr;
 			}
-			else
-			{
-				Debug::log("Sending records failed: {}", sent);
-			}
-			// TODO: Handle sending errors.
 		}
 		else if ((state & BR_SSL_RECVREC) == BR_SSL_RECVREC)
 		{
 			if (receive_records(t, context) < 0)
 			{
-				context->~TLSContext();
-				token_obj_destroy(allocator, tls_key(), sealed);
 				return nullptr;
 			}
-			// Next loop iteration, we'll try pulling the data out of
-			// the TLS engine.
 		}
-		state = br_ssl_engine_current_state(engine);
 	}
-	return sealed;
+	return sealedContext.release();
 }
 
 ssize_t tls_connection_send(Timeout *t,
@@ -382,30 +406,12 @@ ssize_t tls_connection_send(Timeout *t,
 			  // sending it
 			  if ((state & BR_SSL_SENDREC) == BR_SSL_SENDREC)
 			  {
-				  size_t readyLength;
-				  auto  *readyBuffer =
-				    br_ssl_engine_sendrec_buf(engine, &readyLength);
-				  Debug::log("TLS engine has {} bytes ready to send, passing "
-				             "to TCP layer",
-				             readyLength);
-				  auto sent = network_socket_send(
-				    t, connection->socket, readyBuffer, readyLength);
-				  Debug::log("TCP sent {} bytes", sent);
-				  if (sent > 0)
+				  auto [sent, unfinished] = send_records(t, connection);
+				  if (sent <= 0)
 				  {
-					  br_ssl_engine_sendrec_ack(engine, sent);
-					  // If we've sent less than the engine is ready to send,
-					  // try again.
-					  if (sent < readyLength)
-					  {
-						  Debug::log("TCP sent {} bytes, TLS engine can still "
-						             "send {} bytes",
-						             sent,
-						             readyLength - sent);
-						  forceLoop = true;
-					  }
+					  return sent;
 				  }
-				  // TODO: Handle sending errors.
+				  forceLoop = unfinished;
 			  }
 			  else if (((state & BR_SSL_SENDAPP) == BR_SSL_SENDAPP) &&
 			           (length > 0))
@@ -444,7 +450,7 @@ ssize_t tls_connection_send(Timeout *t,
 				  }
 			  }
 		  }
-		  return totalSent > 0 ? totalSent : -ETIMEDOUT;
+		  return totalSent > 0 ? int(totalSent) : -ETIMEDOUT;
 	  });
 }
 
@@ -539,21 +545,11 @@ int tls_connection_close(Timeout *t, SObj sealed)
 		}
 		else if ((state & BR_SSL_SENDREC) == BR_SSL_SENDREC)
 		{
-			size_t readyLength;
-			auto *readyBuffer = br_ssl_engine_sendrec_buf(engine, &readyLength);
-			Debug::log("Sending {} bytes of records", readyLength);
-			auto sent = network_socket_send(
-			  &unlimited, tls->socket, readyBuffer, readyLength);
-			Debug::log("Send returned {}", sent);
-			if (sent > 0)
-			{
-				br_ssl_engine_sendrec_ack(engine, sent);
-			}
-			else
+			auto [sent, unfinished] = send_records(t, tls);
+			if (sent < 0)
 			{
 				// Give up and don't gracefully terminate if we failed to
 				// send.
-				Debug::log("Sending records failed: {}", sent);
 				break;
 			}
 		}
