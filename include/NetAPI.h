@@ -123,7 +123,7 @@ struct NetworkReceiveResult
 };
 
 /**
- * Receive data from a socket.  This will block until data is received or the
+ * Receive data from a socket.  This will block until data are received or the
  * timeout expires.  If data are received, they will be stored in a buffer
  * allocated with the given malloc capability, the caller is responsible for
  * freeing this buffer.
@@ -139,6 +139,30 @@ struct NetworkReceiveResult
  */
 NetworkReceiveResult __cheri_compartment("TCPIP")
   network_socket_receive(Timeout *timeout, SObj mallocCapability, SObj socket);
+
+/**
+ * Receive data from a socket into a preallocated buffer.  This will block until
+ * data are received or the timeout expires.  If data are received, they will be
+ * stored in the provided buffer.
+ *
+ * NOTE: Callers should remove global and load permissions from `buffer` before
+ * passing it to this function if they are worried about a potentially
+ * compromised network stack.
+ *
+ * The return value is either the number of bytes received, zero if the
+ * connection is closed, or a negative error code.
+ *
+ * The negative values will be errno values:
+ *
+ *  - `-EINVAL`: The socket is not valid.
+ *  - `-ETIMEDOUT`: The timeout was reached before data could be received.
+ *  - `-ENOTCONN`: The socket is not connected.
+ */
+int __cheri_compartment("TCPIP")
+  network_socket_receive_preallocated(Timeout *timeout,
+                                      SObj     socket,
+                                      void    *buffer,
+                                      size_t   length);
 
 /**
  * Receive data from a UDP socket.  This will block until data is received or
@@ -207,8 +231,7 @@ enum ConnectionType : uint8_t
  * Returns the host name embedded in a host capability or null if this is not a
  * valid host capability.
  */
-const char * __cheri_compartment("NetAPI") network_host_get(SObj hostCapability);
-
+const char *__cheri_compartment("NetAPI") network_host_get(SObj hostCapability);
 
 /**
  * Connection capability contents.  Instances of this sealed with the

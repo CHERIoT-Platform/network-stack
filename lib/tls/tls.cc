@@ -36,16 +36,7 @@ namespace
 		/// The input buffer for the TLS engine.
 		unsigned char *iobuf_in;
 		/// The output buffer for the TLS engine.
-		unsigned char *iobuf_out;
-		/**
-		 * The received data buffer.  If we have received data from the TCP
-		 * socket but not yet processed all of it, it will be stored here.
-		 * This is a buffer allocated by `allocator` and will be freed as soon
-		 * as it is either consumed or the connection is torn down.
-		 */
-		uint8_t                  *received       = nullptr;
-		size_t                    receivedLength = 0;
-		size_t                    receivedOffset = 0;
+		unsigned char            *iobuf_out;
 		FlagLockPriorityInherited lock;
 		TLSContext(SObj                     socket,
 		           SObj                     allocator,
@@ -67,7 +58,6 @@ namespace
 			network_socket_close(&t, allocator, socket);
 			heap_free(allocator, iobuf_in);
 			heap_free(allocator, iobuf_out);
-			heap_free(allocator, received);
 			heap_free(allocator, clientContext);
 			heap_free(allocator, x509Context);
 		}
@@ -193,6 +183,35 @@ namespace
 		br_ssl_engine_set_default_aes_gcm(&cc->eng);
 	}
 
+	int receive_records(Timeout *t, TLSContext *connection)
+	{
+		auto		     *engine = &connection->clientContext->eng;
+		size_t            length;
+		CHERI::Capability inputBuffer =
+		  br_ssl_engine_recvrec_buf(engine, &length);
+		// Bound the input buffer to the length that we expect to
+		// write into, to prevent overwrites of other TLS state.
+		// This may be an awkward size and so allow inexact bounds if necessary.
+		// TODO: It might be better to round length down to something where
+		// we can do exact bounds.
+		inputBuffer.bounds().set_inexact(length);
+		// Remove local so that the network stack cannot capture
+		// this, remove load so that we cannot leak state.
+		inputBuffer.permissions() &= CHERI::Permission::Store;
+		Debug::log("Receiving {} bytes into {}", length, inputBuffer);
+		// Pull some data out of the network stack.
+		int received = network_socket_receive_preallocated(
+		  t, connection->socket, inputBuffer, length);
+		Debug::log("Network stack returned {}", received);
+		// Any failure here is treated the same way: give up.
+		if (received < 0)
+		{
+			return received;
+		}
+		br_ssl_engine_recvrec_ack(engine, received);
+		return received;
+	}
+
 } // namespace
 
 SObj tls_connection_create(Timeout                    *t,
@@ -292,10 +311,7 @@ SObj tls_connection_create(Timeout                    *t,
 
 	// FIXME: Inject some entropy
 
-	auto     state        = br_ssl_engine_current_state(engine);
-	uint8_t *receivedData = nullptr;
-	uint8_t *toProcess    = nullptr;
-	size_t   remaining    = 0;
+	auto state = br_ssl_engine_current_state(engine);
 	// Pump the engine until it's ready for data to be sent or until the
 	// connection is closed.
 	while ((state & (BR_SSL_SENDAPP)) == 0)
@@ -310,7 +326,6 @@ SObj tls_connection_create(Timeout                    *t,
 			           br_ssl_engine_last_error(engine));
 			context->~TLSContext();
 			token_obj_destroy(allocator, tls_key(), sealed);
-			heap_free(allocator, receivedData);
 			return nullptr;
 		}
 		// If we need to send records, send them first.
@@ -334,60 +349,16 @@ SObj tls_connection_create(Timeout                    *t,
 		}
 		else if ((state & BR_SSL_RECVREC) == BR_SSL_RECVREC)
 		{
-			if (remaining == 0)
+			if (receive_records(t, context) < 0)
 			{
-				Debug::log("Receiving records");
-				auto [received, buffer] =
-				  network_socket_receive(t, allocator, context->socket);
-				if (received > 0)
-				{
-					receivedData = buffer;
-					toProcess    = buffer;
-					remaining    = received;
-					Debug::log("Received {} bytes of records", remaining);
-				}
-				else if (received == 0 || received == -ENOTCONN)
-				{
-					// FIXME: Shut down gracefully
-					Debug::log("Connection closed, shutting down");
-				}
-				else
-				{
-					Debug::log("Receive failed: {}", received);
-					continue;
-				}
-				// FIXME: Other errors
-			}
-			Debug::log("{} bytes of records available", remaining);
-			size_t         length;
-			unsigned char *inputBuffer =
-			  br_ssl_engine_recvrec_buf(engine, &length);
-			size_t nextBlockSize = std::min<size_t>(remaining, length);
-			Debug::log("Pushing {} bytes into TLS engine (space for {})",
-			           nextBlockSize,
-			           length);
-			// FIXME: Handle the case where we can't handle as much as
-			// has been received.  We should buffer the remainder of the
-			// received data internally.
-			memcpy(inputBuffer, toProcess, nextBlockSize);
-			br_ssl_engine_recvrec_ack(&context->clientContext->eng,
-			                          nextBlockSize);
-			Debug::log("Finished TLS processing data");
-			remaining -= nextBlockSize;
-			toProcess += nextBlockSize;
-			if (remaining == 0)
-			{
-				Debug::log("Finished processing incoming buffer, freeing");
-				heap_free(allocator, receivedData);
+				context->~TLSContext();
+				token_obj_destroy(allocator, tls_key(), sealed);
+				return nullptr;
 			}
 			// Next loop iteration, we'll try pulling the data out of
 			// the TLS engine.
 		}
 		state = br_ssl_engine_current_state(engine);
-	}
-	if (receivedData != nullptr)
-	{
-		heap_free(allocator, receivedData);
 	}
 	return sealed;
 }
@@ -486,6 +457,7 @@ NetworkReceiveResult tls_connection_receive(Timeout *t, SObj sealedConnection)
 		  while (true)
 		  {
 			  auto state = br_ssl_engine_current_state(engine);
+			  // If there are data ready to receive, return it immediately.
 			  if ((state & BR_SSL_RECVAPP) == BR_SSL_RECVAPP)
 			  {
 				  size_t         length;
@@ -508,56 +480,18 @@ NetworkReceiveResult tls_connection_receive(Timeout *t, SObj sealedConnection)
 				  outBuffer = receivedBuffer;
 				  return ssize_t(length);
 			  }
-			  else if ((state & BR_SSL_RECVREC) == BR_SSL_RECVREC)
+			  if ((state & BR_SSL_RECVREC) == BR_SSL_RECVREC)
 			  {
-				  // Pull some data out of the network stack.
-				  if (connection->received == nullptr)
+				  int received = receive_records(t, connection);
+				  if (received == 0 || received == -ENOTCONN)
 				  {
-					  auto [received, buffer] = network_socket_receive(
-					    t, connection->allocator, connection->socket);
-					  if (received > 0)
-					  {
-						  connection->received       = buffer;
-						  connection->receivedLength = received;
-						  connection->receivedOffset = 0;
-					  }
-					  else if (received == 0 || received == -ENOTCONN)
-					  {
-						  // FIXME: Shut down gracefully
-						  Debug::log("Connection closed, shutting down");
-						  return 0;
-					  }
-					  else if (received == -ETIMEDOUT)
-					  {
-						  return -ETIMEDOUT;
-					  }
+					  // FIXME: Shut down gracefully
+					  Debug::log("Connection closed, shutting down");
+					  return 0;
 				  }
-				  size_t pendingData =
-				    connection->receivedLength - connection->receivedOffset;
-				  size_t         length;
-				  unsigned char *inputBuffer =
-				    br_ssl_engine_recvrec_buf(engine, &length);
-				  Debug::log("TCP provided {} bytes, TLS engine can process {}",
-				             pendingData,
-				             length);
-				  size_t nextBlockSize = std::min<size_t>(pendingData, length);
-				  // FIXME: Handle the case where we can't handle as much as
-				  // has been received.  We should buffer the remainder of
-				  // the received data internally.
-				  memcpy(inputBuffer,
-				         connection->received + connection->receivedOffset,
-				         nextBlockSize);
-				  br_ssl_engine_recvrec_ack(&connection->clientContext->eng,
-				                            nextBlockSize);
-				  connection->receivedOffset += nextBlockSize;
-				  if (connection->receivedOffset == connection->receivedLength)
+				  if (received == -ETIMEDOUT)
 				  {
-					  Debug::log(
-					    "Finished processing incoming buffer, freeing");
-					  heap_free(connection->allocator, connection->received);
-					  connection->received       = nullptr;
-					  connection->receivedLength = 0;
-					  connection->receivedOffset = 0;
+					  return -ETIMEDOUT;
 				  }
 				  // Next loop iteration, we'll try pulling the data out of
 				  // the TLS engine.
@@ -625,30 +559,17 @@ int tls_connection_close(Timeout *t, SObj sealed)
 		}
 		else if ((state & BR_SSL_RECVREC) == BR_SSL_RECVREC)
 		{
-			if (tls->received == nullptr)
+			int received = receive_records(t, tls);
+			if (received == 0 || received == -ENOTCONN)
 			{
-				auto [received, buffer] = network_socket_receive(
-				  &unlimited, tls->allocator, tls->socket);
-				if (received > 0)
-				{
-					tls->received       = buffer;
-					tls->receivedLength = received;
-					tls->receivedOffset = 0;
-				}
-				else
-				{
-					Debug::log("Failed to receive data: {}", received);
-					break;
-				}
+				// FIXME: Shut down gracefully
+				Debug::log("Connection closed, shutting down");
+				return 0;
 			}
-			size_t pendingData = tls->receivedLength - tls->receivedOffset;
-			size_t length;
-			unsigned char *inputBuffer =
-			  br_ssl_engine_recvrec_buf(engine, &length);
-			size_t nextBlockSize = std::min<size_t>(pendingData, length);
-			memcpy(
-			  inputBuffer, tls->received + tls->receivedOffset, nextBlockSize);
-			br_ssl_engine_recvrec_ack(&tls->clientContext->eng, nextBlockSize);
+			if (received == -ETIMEDOUT)
+			{
+				return -ETIMEDOUT;
+			}
 		}
 		state = br_ssl_engine_current_state(&tls->clientContext->eng);
 	} while ((state & BR_SSL_CLOSED) != BR_SSL_CLOSED);

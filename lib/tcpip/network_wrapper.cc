@@ -2,10 +2,11 @@
 #include <FreeRTOS_IP.h>
 #include <FreeRTOS_ND.h>
 
-#include "FreeRTOS_IP_Private.h"
-#include <NetAPI.h>
 #include "../firewall/firewall.h"
+#include "FreeRTOS_IP_Private.h"
+#include "cdefs.h"
 #include "network-internal.h"
+#include <NetAPI.h>
 
 #include <cstddef>
 #include <cstdint>
@@ -237,6 +238,70 @@ namespace
 			}
 		}
 		return address;
+	}
+
+	__noinline int network_socket_receive_internal(
+	  Timeout                              *timeout,
+	  SObj                                  sealedSocket,
+	  std::function<void *(int &available)> prepareBuffer)
+	{
+		return with_sealed_socket(
+		  timeout,
+		  [&](SealedSocket *socket) {
+			  do
+			  {
+				  int available =
+				    FreeRTOS_recv(socket->socket,
+				                  nullptr,
+				                  std::numeric_limits<size_t>::max(),
+				                  FREERTOS_MSG_PEEK | FREERTOS_MSG_DONTWAIT);
+				  if (available > 0)
+				  {
+					  void *buffer = prepareBuffer(available);
+					  Debug::log("Receiving {} bytes into {}", available, buffer);
+					  if (buffer == nullptr)
+					  {
+						  return available;
+					  }
+					  return FreeRTOS_recv(socket->socket,
+					                       buffer,
+					                       available,
+					                       FREERTOS_MSG_DONTWAIT);
+				  }
+				  if (available < 0)
+				  {
+					  if (available == -pdFREERTOS_ERRNO_ENOTCONN)
+					  {
+						  Debug::log("Connection closed, not receiving");
+						  return -ENOTCONN;
+					  }
+					  // Something went wrong?
+					  Debug::log("Receive failed with unexpected error: {}",
+					             available);
+					  return -EINVAL;
+				  }
+				  if (!timeout->may_block())
+				  {
+					  return -ETIMEDOUT;
+				  }
+				  // It's annoying that we end up querying the time twice here,
+				  // but FreeRTOS's timeout API is not designed for composition.
+				  auto       startTick = thread_systemtick_get();
+				  TickType_t remaining = timeout->remaining;
+				  FreeRTOS_setsockopt(
+				    socket->socket, 0, FREERTOS_SO_RCVTIMEO, &remaining, 0);
+				  // Wait for at least one byte to be available.
+				  auto ret = FreeRTOS_recv(
+				    socket->socket, nullptr, 1, FREERTOS_MSG_PEEK);
+				  Debug::log("Blocking call returned {}", ret);
+				  auto endTick = thread_systemtick_get();
+				  timeout->elapse(
+				    (((uint64_t)endTick.hi << 32) | endTick.lo) -
+				    (((uint64_t)startTick.hi << 32) | startTick.lo));
+			  } while (timeout->may_block());
+			  return -ETIMEDOUT;
+		  },
+		  sealedSocket);
 	}
 
 } // namespace
@@ -493,101 +558,74 @@ NetworkReceiveResult network_socket_receive_from(Timeout *timeout,
 	return {result, buffer};
 }
 
-NetworkReceiveResult
-network_socket_receive(Timeout *timeout, SObj mallocCapability, SObj socket)
+int network_socket_receive_preallocated(Timeout *timeout,
+                                        SObj     sealedSocket,
+                                        void    *buffer,
+                                        size_t   length)
+{
+	return network_socket_receive_internal(
+	  timeout, sealedSocket, [&](int &available) -> void * {
+		  int ret = heap_claim_fast(timeout, buffer);
+		  if (ret != 0)
+		  {
+			  available = ret;
+			  return nullptr;
+		  }
+		  if (!check_pointer<PermissionSet{Permission::Store}>(buffer, length))
+		  {
+			  available = -EPERM;
+			  return nullptr;
+		  }
+		  available = length;
+		  return buffer;
+	  });
+}
+
+NetworkReceiveResult network_socket_receive(Timeout *timeout,
+                                            SObj     mallocCapability,
+                                            SObj     sealedSocket)
 {
 	uint8_t *buffer = nullptr;
-	ssize_t  result = with_sealed_socket(
-	   timeout,
-	   [&](SealedSocket *socket) {
+	ssize_t  result = network_socket_receive_internal(
+	   timeout, sealedSocket, [&](int &available) -> void  *{
           do
           {
-              // TODO: It would be nice to use FREERTOS_ZERO_COPY here, but
-              // unfortunately that copies into a ring buffer and returns a
-              // pointer into the ring buffer.  If the FreeRTOS network stack is
-              // ever extended to store lists of incoming packets then we could
-              // use that.
-              //
-              // Read how may bytes are available.
-              int available =
-                FreeRTOS_recv(socket->socket,
-			                   nullptr,
-			                   std::numeric_limits<size_t>::max(),
-			                   FREERTOS_MSG_PEEK | FREERTOS_MSG_DONTWAIT);
-              if (available > 0)
+              Timeout zeroTimeout{0};
+              buffer = static_cast<uint8_t *>(
+                heap_allocate(&zeroTimeout, mallocCapability, available));
+              timeout->elapse(zeroTimeout.elapsed);
+              if (buffer == nullptr)
               {
-                  do
+                  // If there's a lot of data, just try a small
+                  // allocation and see if that works.
+                  if (available > 128)
                   {
-                      Timeout zeroTimeout{0};
-                      buffer = static_cast<uint8_t *>(heap_allocate(
-					     &zeroTimeout, mallocCapability, available));
-                      timeout->elapse(zeroTimeout.elapsed);
-                      if (buffer == nullptr)
-                      {
-                          // If there's a lot of data, just try a small
-                          // allocation and see if that works.
-                          if (available > 128)
-                          {
-                              available = 128;
-                              continue;
-                          }
-                          // If allocation failed and the timeout is zero, give
-                          // up now.
-                          if (!timeout->may_block())
-                          {
-                              return -ETIMEDOUT;
-                          }
-                          // If there's time left, let's try allocating a
-                          // smaller buffer.
-                          auto quota = heap_quota_remaining(mallocCapability);
-                          // Subtract 16 bytes to account for the allocation
-                          // header.
-                          if ((quota < available) && (quota > 16))
-                          {
-                              available = quota - 16;
-                              continue;
-                          }
-                          return -ENOMEM;
-                      }
-                  } while (buffer == nullptr);
-                  // Now do the real receive.
-                  int received = FreeRTOS_recv(
-				     socket->socket, buffer, available, FREERTOS_MSG_DONTWAIT);
-                  return received;
-              }
-              if (available < 0)
-              {
-                  if (available == -pdFREERTOS_ERRNO_ENOTCONN)
-                  {
-                      Debug::log("Connection closed, not receiving");
-                      return -ENOTCONN;
+                      available = 128;
+                      continue;
                   }
-                  // Something went wrong?
-                  Debug::log("Receive failed with unexpected error: {}",
-				              available);
-                  return -EINVAL;
+                  // If allocation failed and the timeout is zero, give
+                  // up now.
+                  if (!timeout->may_block())
+                  {
+                      available = -ETIMEDOUT;
+                      return nullptr;
+                  }
+                  // If there's time left, let's try allocating a
+                  // smaller buffer.
+                  auto quota = heap_quota_remaining(mallocCapability);
+                  // Subtract 16 bytes to account for the allocation
+                  // header.
+                  if ((quota < available) && (quota > 16))
+                  {
+                      available = quota - 16;
+                      continue;
+                  }
+                  available = -ENOMEM;
+                  return nullptr;
               }
-              if (!timeout->may_block())
-              {
-                  return -ETIMEDOUT;
-              }
-              // It's annoying that we end up querying the time twice here, but
-              // FreeRTOS's timeout API is not designed for composition.
-              auto       startTick = thread_systemtick_get();
-              TickType_t remaining = timeout->remaining;
-              FreeRTOS_setsockopt(
-			     socket->socket, 0, FREERTOS_SO_RCVTIMEO, &remaining, 0);
-              // Wait for at least one byte to be available.
-              auto ret =
-                FreeRTOS_recv(socket->socket, nullptr, 1, FREERTOS_MSG_PEEK);
-              Debug::log("Blocking call returned {}", ret);
-              auto endTick = thread_systemtick_get();
-              timeout->elapse((((uint64_t)endTick.hi << 32) | endTick.lo) -
-			                   (((uint64_t)startTick.hi << 32) | startTick.lo));
-          } while (timeout->may_block());
-          return -ETIMEDOUT;
-	   },
-	   socket);
+          } while (buffer == nullptr);
+          return buffer;
+	   });
 	return {result, buffer};
 }
 
