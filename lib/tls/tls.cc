@@ -10,6 +10,13 @@ using Debug = ConditionalDebug<false, "TLS">;
 
 namespace
 {
+	constexpr bool EnableRSA =
+#ifdef CHERIOT_TLS_ENABLE_RSA
+	  true
+#else
+	  false
+#endif
+	  ;
 	/**
 	 * The object for a sealed TLS connection.
 	 */
@@ -118,8 +125,10 @@ namespace
 		static const uint16_t suites[] = {
 		  BR_TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,
 		  BR_TLS_ECDH_ECDSA_WITH_AES_128_GCM_SHA256,
+#ifdef CHERIOT_TLS_ENABLE_RSA
 		  BR_TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
 		  BR_TLS_ECDH_RSA_WITH_AES_128_GCM_SHA256,
+#endif
 		};
 
 		/*
@@ -143,10 +152,13 @@ namespace
 		 */
 		br_ssl_engine_set_suites(
 		  &cc->eng, suites, (sizeof suites) / (sizeof suites[0]));
-		br_ssl_client_set_default_rsapub(cc);
-		br_ssl_engine_set_default_rsavrfy(&cc->eng);
 		br_ssl_engine_set_default_ecdsa(&cc->eng);
-		br_x509_minimal_set_rsa(xc, br_ssl_engine_get_rsavrfy(&cc->eng));
+		if constexpr (EnableRSA)
+		{
+			br_ssl_client_set_default_rsapub(cc);
+			br_ssl_engine_set_default_rsavrfy(&cc->eng);
+			br_x509_minimal_set_rsa(xc, br_ssl_engine_get_rsavrfy(&cc->eng));
+		}
 		br_x509_minimal_set_ecdsa(xc,
 		                          br_ssl_engine_get_ec(&cc->eng),
 		                          br_ssl_engine_get_ecdsa(&cc->eng));
@@ -178,8 +190,6 @@ namespace
 		 * Symmetric encryption. We use the "default" implementations
 		 * (fastest among constant-time implementations).
 		 */
-		br_ssl_engine_set_default_aes_cbc(&cc->eng);
-		br_ssl_engine_set_default_aes_ccm(&cc->eng);
 		br_ssl_engine_set_default_aes_gcm(&cc->eng);
 	}
 

@@ -1,5 +1,12 @@
+option("tls-rsa")
+    set_default(true)
+    set_description("Enable RSA (in addition to ECDSA) for TLS")
+    set_showmenu(true)
+    add_defines("CHERIOT_TLS_ENABLE_RSA")
+
 
 compartment("TLS")
+  add_options("tls-rsa")
   set_default(false)
   -- TLS API
   add_files("tls.cc")
@@ -11,7 +18,7 @@ compartment("TLS")
   -- BearSSL sources:
   -- These must be split up because Lua has a limit to the number of arguments
   -- to a function.
-  add_files( "src/settings.c")
+  add_files("../../third_party/BearSSL/src/settings.c")
   add_files(
     "../../third_party/BearSSL/src/aead/ccm.c",
     "../../third_party/BearSSL/src/aead/eax.c",
