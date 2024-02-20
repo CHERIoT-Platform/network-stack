@@ -1,6 +1,7 @@
 #include "../../third_party/BearSSL/inc/bearssl.h"
 #include <NetAPI.h>
 #include <debug.hh>
+#include <function_wrapper.hh>
 #include <locks.hh>
 #include <platform-entropy.hh>
 #include <tls.h>
@@ -250,6 +251,80 @@ namespace
 		return {sent, sent < readyLength};
 	}
 
+	/**
+	 * Helper to receive data from the TLS connection. This uses the
+	 * `prepareBuffer` function to acquire a buffer for the data.
+	 */
+	__noinline int tls_connection_receive_internal(
+	  Timeout *t,
+	  SObj     sealedConnection,
+	  FunctionWrapper<void *(int &available, SObj &mallocCapability)>
+	    prepareBuffer)
+	{
+		if (!check_timeout_pointer(t))
+		{
+			return -EINVAL;
+		}
+		return with_sealed_tls_context(
+		  t, sealedConnection, [&](TLSContext *connection) {
+			  auto *engine = &connection->clientContext->eng;
+			  while (true)
+			  {
+				  auto state = br_ssl_engine_current_state(engine);
+				  // If there are data ready to receive, return
+				  // it immediately.
+				  if ((state & BR_SSL_RECVAPP) == BR_SSL_RECVAPP)
+				  {
+					  size_t         Llength;
+					  int            length;
+					  unsigned char *inputBuffer =
+					    br_ssl_engine_recvapp_buf(engine, &Llength);
+					  Debug::log("TLS engine has {} bytes ready to receive, "
+					             "returning to caller",
+					             Llength);
+					  length = Llength;
+					  void *receivedBuffer =
+					    prepareBuffer(length, connection->allocator);
+					  if (receivedBuffer == nullptr)
+					  {
+						  // `prepareBuffer` sets length to an
+						  // error code if it cannot supply an
+						  // appropriate buffer
+						  return length;
+					  }
+					  memcpy(receivedBuffer, inputBuffer, length);
+					  br_ssl_engine_recvapp_ack(engine, length);
+					  Debug::log(
+					    "Received {} bytes into {}", length, receivedBuffer);
+					  return ssize_t(length);
+				  }
+				  if ((state & BR_SSL_RECVREC) == BR_SSL_RECVREC)
+				  {
+					  int received = receive_records(t, connection);
+					  if (received == 0 || received == -ENOTCONN)
+					  {
+						  // FIXME: Shut down gracefully
+						  Debug::log("Connection closed, shutting down");
+						  return 0;
+					  }
+					  if (received == -ETIMEDOUT)
+					  {
+						  return -ETIMEDOUT;
+					  }
+					  // Next loop iteration, we'll try pulling the
+					  // data out of the TLS engine.
+				  }
+				  else
+				  {
+					  if (!t->may_block())
+					  {
+						  return -ETIMEDOUT;
+					  }
+				  }
+			  }
+		  });
+	}
+
 } // namespace
 
 SObj tls_connection_create(Timeout                    *t,
@@ -469,66 +544,80 @@ ssize_t tls_connection_send(Timeout *t,
 
 NetworkReceiveResult tls_connection_receive(Timeout *t, SObj sealedConnection)
 {
-	if (!check_timeout_pointer(t))
-	{
-		return {-EINVAL, nullptr};
-	}
-	uint8_t *outBuffer = nullptr;
-	ssize_t  result =
-	  with_sealed_tls_context(t, sealedConnection, [&](TLSContext *connection) {
-		  auto *engine = &connection->clientContext->eng;
-		  while (true)
+	uint8_t *buffer = nullptr;
+	ssize_t  result = tls_connection_receive_internal(
+	   t,
+	   sealedConnection,
+	   [&](int &available, SObj &mallocCapability) -> void  *{
+          do
+          {
+              // Do the initial allocation without timeout: if the quota or the
+              // heap is almost exhausted, we will block until timeout without
+              // achieving anything.
+              Timeout zeroTimeout{0};
+              buffer = static_cast<unsigned char *>(
+                heap_allocate(&zeroTimeout, mallocCapability, available));
+              t->elapse(zeroTimeout.elapsed);
+
+              if (buffer == nullptr)
+              {
+                  // If there's a lot of data, just try a small
+                  // allocation and see if that works.
+                  if (available > 128)
+                  {
+                      available = 128;
+                      continue;
+                  }
+                  // If allocation failed and the timeout is zero, give
+                  // up now.
+                  if (!t->may_block())
+                  {
+                      available = -ETIMEDOUT;
+                      return nullptr;
+                  }
+                  // If there's time left, let's try allocating a
+                  // smaller buffer.
+                  auto quota = heap_quota_remaining(mallocCapability);
+                  // Subtract 16 bytes to account for the allocation
+                  // header.
+                  if ((quota < available) && (quota > 16))
+                  {
+                      available = quota - 16;
+                      continue;
+                  }
+                  available = -ENOMEM;
+                  return nullptr;
+              }
+          } while (buffer == nullptr);
+          return buffer;
+	   });
+	return {result, buffer};
+}
+
+int tls_connection_receive_preallocated(Timeout *t,
+                                        SObj     sealedConnection,
+                                        void    *outputBuffer,
+                                        size_t   outputBufferLength)
+{
+	return tls_connection_receive_internal(
+	  t,
+	  sealedConnection,
+	  [&](int &available, SObj &mallocCapability) -> void * {
+		  int ret = heap_claim_fast(t, outputBuffer);
+		  if (ret != 0)
 		  {
-			  auto state = br_ssl_engine_current_state(engine);
-			  // If there are data ready to receive, return it immediately.
-			  if ((state & BR_SSL_RECVAPP) == BR_SSL_RECVAPP)
-			  {
-				  size_t         length;
-				  unsigned char *inputBuffer =
-				    br_ssl_engine_recvapp_buf(engine, &length);
-				  Debug::log("TLS engine has {} bytes ready to receive, "
-				             "returning to caller",
-				             length);
-				  auto *receivedBuffer = static_cast<unsigned char *>(
-				    heap_allocate(t, connection->allocator, length));
-				  if (receivedBuffer == nullptr)
-				  {
-					  Debug::log("Failed to allocate receive buffer");
-					  return -ENOMEM;
-				  }
-				  memcpy(receivedBuffer, inputBuffer, length);
-				  br_ssl_engine_recvapp_ack(engine, length);
-				  Debug::log(
-				    "Received {} bytes into {}", length, receivedBuffer);
-				  outBuffer = receivedBuffer;
-				  return ssize_t(length);
-			  }
-			  if ((state & BR_SSL_RECVREC) == BR_SSL_RECVREC)
-			  {
-				  int received = receive_records(t, connection);
-				  if (received == 0 || received == -ENOTCONN)
-				  {
-					  // FIXME: Shut down gracefully
-					  Debug::log("Connection closed, shutting down");
-					  return 0;
-				  }
-				  if (received == -ETIMEDOUT)
-				  {
-					  return -ETIMEDOUT;
-				  }
-				  // Next loop iteration, we'll try pulling the data out of
-				  // the TLS engine.
-			  }
-			  else
-			  {
-				  if (!t->may_block())
-				  {
-					  return -ETIMEDOUT;
-				  }
-			  }
+			  available = ret;
+			  return nullptr;
 		  }
+		  if (!check_pointer<PermissionSet{Permission::Store}>(
+		        outputBuffer, outputBufferLength))
+		  {
+			  available = -EPERM;
+			  return nullptr;
+		  }
+		  available = outputBufferLength;
+		  return outputBuffer;
 	  });
-	return {result, outBuffer};
 }
 
 int tls_connection_close(Timeout *t, SObj sealed)

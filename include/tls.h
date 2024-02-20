@@ -73,10 +73,35 @@ ssize_t __cheri_compartment("TLS") tls_connection_send(Timeout *t,
  * (allocated with the allocator provided to `tls_connection_create`)
  * containing the received data along with its length, or null and a negative
  * error code.  The caller is responsible for freeing this buffer.
+ *
+ * The negative values will be errno values:
+ *
+ *  - `-EINVAL`: The socket is not valid.
+ *  - `-ETIMEDOUT`: The timeout was reached before data could be received.
+ *  - `-ENOMEM`: Memory was insufficient to allocate the receive buffer.
  */
 NetworkReceiveResult __cheri_compartment("TLS")
   tls_connection_receive(Timeout *t, SObj sealedConnection);
 
+/**
+ * Receive data from the TLS connection into a preallocated buffer. This will
+ * block until data are received or the timeout expires. If data are received,
+ * they will be stored in the provided buffer.
+ *
+ * The return value is either the number of bytes received, zero if the
+ * connection is closed, or a negative error code.
+ *
+ * The negative values will be errno values:
+ *
+ *  - `-EINVAL`: The socket is not valid.
+ *  - `-ETIMEDOUT`: The timeout was reached before data could be received.
+ *  - `-EPERM`: The receive buffer provided does not feature write permissions.
+ */
+int __cheri_compartment("TLS")
+  tls_connection_receive_preallocated(Timeout *t,
+                                      SObj     sealedConnection,
+                                      void    *buffer,
+                                      size_t   length);
 /**
  * Close a TLS connection.
  */
