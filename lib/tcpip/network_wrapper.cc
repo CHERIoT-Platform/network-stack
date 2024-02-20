@@ -8,6 +8,7 @@
 #include "cheri.hh"
 #include "network-internal.h"
 #include <NetAPI.h>
+#include <function_wrapper.hh>
 
 #include <cstddef>
 #include <cstdint>
@@ -28,6 +29,7 @@ using CHERI::PermissionSet;
 
 namespace
 {
+
 	/**
 	 * The sealed wrapper around a FreeRTOS socket.
 	 */
@@ -262,9 +264,9 @@ namespace
 	}
 
 	__noinline int network_socket_receive_internal(
-	  Timeout                              *timeout,
-	  SObj                                  sealedSocket,
-	  std::function<void *(int &available)> prepareBuffer)
+	  Timeout                                *timeout,
+	  SObj                                    sealedSocket,
+	  FunctionWrapper<void *(int &available)> prepareBuffer)
 	{
 		if (!check_timeout_pointer(timeout))
 		{
