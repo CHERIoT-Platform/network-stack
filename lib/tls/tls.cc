@@ -53,7 +53,7 @@ namespace
 		    iobuf_out{iobuf_out}
 		{
 		}
-		void destroy(SObj allocator)
+		~TLSContext()
 		{
 			Timeout t{UnlimitedTimeout};
 			network_socket_close(&t, allocator, socket);
