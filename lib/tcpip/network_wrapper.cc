@@ -621,6 +621,9 @@ NetworkReceiveResult network_socket_receive(Timeout *timeout,
 	   timeout, sealedSocket, [&](int &available) -> void  *{
           do
           {
+              // Do the initial allocation without timeout: if the quota or the
+              // heap is almost exhausted, we will block until timeout without
+              // achieving anything.
               Timeout zeroTimeout{0};
               buffer = static_cast<uint8_t *>(
                 heap_allocate(&zeroTimeout, mallocCapability, available));
