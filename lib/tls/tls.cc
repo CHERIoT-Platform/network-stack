@@ -275,14 +275,14 @@ namespace
 				  // it immediately.
 				  if ((state & BR_SSL_RECVAPP) == BR_SSL_RECVAPP)
 				  {
-					  size_t         Llength;
+					  size_t         unsignedLength;
 					  int            length;
 					  unsigned char *inputBuffer =
-					    br_ssl_engine_recvapp_buf(engine, &Llength);
+					    br_ssl_engine_recvapp_buf(engine, &unsignedLength);
 					  Debug::log("TLS engine has {} bytes ready to receive, "
 					             "returning to caller",
-					             Llength);
-					  length = Llength;
+					             unsignedLength);
+					  length = unsignedLength;
 					  void *receivedBuffer =
 					    prepareBuffer(length, connection->allocator);
 					  if (receivedBuffer == nullptr)
@@ -290,6 +290,10 @@ namespace
 						  // `prepareBuffer` sets length to an
 						  // error code if it cannot supply an
 						  // appropriate buffer
+						  Debug::log("TLS engine failed to prepare receive "
+						             "buffer, error {}",
+						             length);
+
 						  return length;
 					  }
 					  memcpy(receivedBuffer, inputBuffer, length);
@@ -615,7 +619,10 @@ int tls_connection_receive_preallocated(Timeout *t,
 			  available = -EPERM;
 			  return nullptr;
 		  }
-		  available = outputBufferLength;
+		  // If the requested size is larger than the provided buffer
+		  // size, we need to tell that to the caller
+		  available =
+		    std::min(static_cast<size_t>(available), outputBufferLength);
 		  return outputBuffer;
 	  });
 }
