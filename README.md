@@ -136,14 +136,71 @@ The `network_stack.rego` file also makes it easy to extract connection capabilit
 For example, if you run the following Rego query against the [HTTPS example](examples/03.HTTPS) (after loading `network_stack.rego` with `-m`):
 
 ```rego
-[ { "owner": owner, "capability": data.network_stack.decode_connection_capability(c) } | c = input.compartments[owner].imports[_] ; data.network_stack.is_connection_capability(c) ]
+data.network_stack.all_connection_capabilities
 ```
 
-You should see the following output:
+You should see the following output (piped through `jq` for pretty printing):
 
 ```json
-[{"capability":{"connection_type":"UDP", "host":"pool.ntp.org", "port":123}, "owner":"SNTP"}, {"capability":{"connection_type":"TCP", "host":"example.com", "port":443}, "owner":"https_example"}]
+[
+  {
+    "capability": {
+      "connection_type": "UDP",
+      "host": "pool.ntp.org",
+      "port": 123
+    },
+    "owner": "SNTP"
+  },
+  {
+    "capability": {
+      "connection_type": "TCP",
+      "host": "example.com",
+      "port": 443
+    },
+    "owner": "https_example"
+  }
+]
 ```
 
 This tells you that the SNTP compartment has a capability that allows it to create a UDP socket and communicate with pool.ntp.org and that the `https_example` compartment can make TCP connections to example.com:443.
 No other compartments can make connections and no compartment may communicate with hosts not on this list.
+This can feed into more auditing infrastructure.
+
+Do you want to check that all TLS connections are encrypted?
+Try asking which compartments are calling the TCP connection function:
+
+```rego
+data.compartment.compartments_calling_export_matching("NetAPI", `network_socket_connect_tcp(.*)`)
+```
+
+Hopefully the output is very short:
+
+```json
+["TLS"]
+```
+
+This means that all TCP connections are made via the TLS compartment and, unless the TLS compartment is compromised, no traffic can flow over TCP that is not encrypted.
+Unfortunately, SNTP is unencrypted.
+It can have verified signatures (which you absolutely should use in a real deployment: the current prototype just talks to pool.ntp.org without authentication) though.
+This should be the only thing used with UDP:
+
+```rego
+data.compartment.compartments_calling_export_matching("NetAPI", `network_socket_udp(.*)`)
+```
+
+```json
+["SNTP"]
+```
+
+Now that you know that the SNTP compartment is the only one that can send and receive UDP packets, it's worth checking that it really is talking to the host that you expect:
+
+```rego
+[ data.network_stack.decode_connection_capability(c) | c = input.compartments.SNTP.imports[_] ; data.network_stack.is_connection_capability(c) ]i
+```
+
+```json
+[{"connection_type":"UDP", "host":"pool.ntp.org", "port":123}]
+```
+
+If you've modified the SNTP compartment to point to your NTP service and use its authentication credentials, then this should be different.
+This can all be part of your firmware's auditing policy.
