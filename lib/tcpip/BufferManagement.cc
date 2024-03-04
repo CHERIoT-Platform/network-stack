@@ -1,3 +1,6 @@
+// Copyright SCI Semiconductor and CHERIoT Contributors.
+// SPDX-License-Identifier: MIT
+
 #include "FreeRTOS.h"
 #include "FreeRTOS_IP.h"
 #include <NetworkBufferManagement.h>

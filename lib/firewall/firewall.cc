@@ -1,3 +1,7 @@
+// Copyright SCI Semiconductor and CHERIoT Contributors.
+// SPDX-License-Identifier: MIT
+
+
 #include "firewall.h"
 #include <atomic>
 #include <compartment-macros.h>

@@ -1,3 +1,7 @@
+// Copyright SCI Semiconductor and CHERIoT Contributors.
+// SPDX-License-Identifier: MIT
+
+
 // Native APIs
 #include <atomic>
 #include <compartment-macros.h>

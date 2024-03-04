@@ -1,3 +1,6 @@
+// Copyright SCI Semiconductor and CHERIoT Contributors.
+// SPDX-License-Identifier: MIT
+
 #pragma once
 /**
  * Macro defined to flag that this file has been included.

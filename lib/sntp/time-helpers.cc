@@ -1,9 +1,12 @@
-#include <sntp.h>
+// Copyright SCI Semiconductor and CHERIoT Contributors.
+// SPDX-License-Identifier: MIT
+
 #include <compartment-macros.h>
 #include <cstdint>
 #include <debug.hh>
 #include <futex.h>
 #include <riscvreg.h>
+#include <sntp.h>
 
 using Debug = ConditionalDebug<false, "Time helper">;
 

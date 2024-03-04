@@ -1,19 +1,17 @@
+// Copyright SCI Semiconductor and CHERIoT Contributors.
+// SPDX-License-Identifier: MIT
+
 #include <FreeRTOS.h>
 #include <FreeRTOS_IP.h>
 #include <FreeRTOS_ND.h>
 
 #include "../firewall/firewall.h"
-#include "FreeRTOS_IP_Private.h"
-#include "cdefs.h"
-#include "cheri.hh"
 #include "network-internal.h"
-#include <NetAPI.h>
-#include <function_wrapper.hh>
 
-#include <cstddef>
-#include <cstdint>
-#include <cstdlib>
+#include <FreeRTOS_IP_Private.h>
+#include <NetAPI.h>
 #include <debug.hh>
+#include <function_wrapper.hh>
 #include <limits>
 #include <locks.hh>
 #include <platform-ethernet.hh>

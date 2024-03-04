@@ -1,3 +1,6 @@
+// Copyright SCI Semiconductor and CHERIoT Contributors.
+// SPDX-License-Identifier: MIT
+
 #pragma once
 /**
  * Internal APIs that the TCP/IP compartment exposes for the wrapper APIs to

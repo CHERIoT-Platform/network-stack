@@ -1,6 +1,5 @@
-#ifndef DEBUG_SNTP
-#	define DEBUG_SNTP false
-#endif
+// Copyright SCI Semiconductor and CHERIoT Contributors.
+// SPDX-License-Identifier: MIT
 
 #if DEBUG_SNTP
 #	include <stdio.h>

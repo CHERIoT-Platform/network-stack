@@ -1,3 +1,6 @@
+// Copyright SCI Semiconductor and CHERIoT Contributors.
+// SPDX-License-Identifier: MIT
+
 #pragma once
 #include "cdefs.h"
 #include <compartment-macros.h>

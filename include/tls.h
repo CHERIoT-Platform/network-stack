@@ -1,3 +1,6 @@
+// Copyright SCI Semiconductor and CHERIoT Contributors.
+// SPDX-License-Identifier: MIT
+
 #include "../third_party/BearSSL/inc//bearssl_x509.h"
 #include "NetAPI.h"
 #include <token.h>

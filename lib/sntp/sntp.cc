@@ -1,19 +1,21 @@
-#include "cheri.hh"
-#include "core_sntp_serializer.h"
-#include "tick_macros.h"
-#include <FreeRTOS-Compat/FreeRTOS.h>
+// Copyright SCI Semiconductor and CHERIoT Contributors.
+// SPDX-License-Identifier: MIT
 
 // Uncomment for useful debugging message on CHERI faults.
 //#include <fail-simulator-on-error.h>
 
-#include "sntp.h"
+#include <FreeRTOS-Compat/FreeRTOS.h>
 #include <NetAPI.h>
 #include <algorithm>
+#include <cheri.hh>
 #include <core_sntp_client.h>
 #include <core_sntp_config.h>
+#include <core_sntp_serializer.h>
 #include <debug.hh>
 #include <locks.hh>
+#include <sntp.h>
 #include <stdlib.h>
+#include <tick_macros.h>
 
 using CHERI::Capability;
 
