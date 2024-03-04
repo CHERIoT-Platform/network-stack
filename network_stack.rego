@@ -81,7 +81,7 @@ network_thread_is_valid {
 }
 
 # Helper to dump all connection capabilities and the compartment that owns them
-all_connection_capabilities = [ { "owner": owner, "capability": data.network_stack.decode_connection_capability(c) } | c = input.compartments[owner].imports[_] ; data.network_stack.is_connection_capability(c) ]
+all_connection_capabilities = [ { "owner": owner, "capability": decode_connection_capability(c) } | c = input.compartments[owner].imports[_] ; is_connection_capability(c) ]
 
 # The internal configuration for the network interface is valid.  The parameter
 # is the name of the network device.  For example, "kunyan_ethernet" on the
