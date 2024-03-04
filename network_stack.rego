@@ -1,3 +1,6 @@
+# Copyright SCI Semiconductor and CHERIoT Contributors.
+# SPDX-License-Identifier: MIT
+
 package network_stack
 
 import future.keywords.every
