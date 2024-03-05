@@ -11,6 +11,7 @@
 #include <stdlib.h>
 #include <string_view>
 #include <transport_interface.h>
+#include <fail-simulator-on-error.h>
 
 using CHERI::Capability;
 
@@ -86,7 +87,9 @@ namespace
 		~CHERIoTMqttContext()
 		{
 			Timeout t{UnlimitedTimeout};
+			Debug::log("Closing TLS stream.");
 			tls_connection_close(&t, tlsHandle);
+			Debug::log("Closed TLS stream.");
 		}
 
 		/**
@@ -215,6 +218,7 @@ namespace
 				  "Failed to acquire lock on MQTT context during close");
 				return -ETIMEDOUT;
 			}
+			Debug::log("Upgrading lock for destruction.");
 			unsealed->lock.upgrade_for_destruction();
 			return callback(unsealed);
 		}
@@ -422,7 +426,7 @@ namespace
 		uint64_t currentTime = currentCycle / CyclesPerMilliSecond;
 
 		// Truncate into 32 bit
-		return currentTime & 0xFFFFFFFF;
+		return currentTime;
 	}
 
 	/**
@@ -743,6 +747,7 @@ int mqtt_disconnect(Timeout *t, SObj allocator, SObj mqttHandle)
 				  // `MQTT_ProcessLoop` handles keepalive.
 				  return MQTT_Disconnect(coreMQTTContext);
 			  });
+			  Debug::log("MQTT Disconnect returned, error: {}", status);
 
 			  if (status != MQTTSuccess)
 			  {
@@ -768,6 +773,7 @@ int mqtt_disconnect(Timeout *t, SObj allocator, SObj mqttHandle)
 
 		  if (status != MQTTSuccess)
 		  {
+			  Debug::log("Timed out during disconnect");
 			  return -ETIMEDOUT;
 		  }
 
@@ -776,6 +782,7 @@ int mqtt_disconnect(Timeout *t, SObj allocator, SObj mqttHandle)
 
 	if (ret < 0)
 	{
+		Debug::log("Failed to disconnect from the broker, error {}.", ret);
 		// Disconnecting failed. Leave the TLS link open and return an
 		// error.
 		return ret;
@@ -787,6 +794,7 @@ int mqtt_disconnect(Timeout *t, SObj allocator, SObj mqttHandle)
 	  t,
 	  mqttHandle,
 	  [&](CHERIoTMqttContext *connection) {
+	  Debug::log("Cleaning up MQTT context.");
 		  connection->~CHERIoTMqttContext();
 		  token_obj_destroy(allocator, mqtt_key(), mqttHandle);
 		  return 0;
@@ -1036,8 +1044,7 @@ int mqtt_run(Timeout *t, SObj mqttHandle)
 					  }
 				  }
 				  else if (status == MQTTBadResponse ||
-				           status == MQTTIllegalState ||
-				           status == MQTTKeepAliveTimeout)
+				           status == MQTTIllegalState)
 				  {
 					  // Something is broken in the
 					  // coreMQTT client, or in the broker.
@@ -1054,6 +1061,10 @@ int mqtt_run(Timeout *t, SObj mqttHandle)
 				  }
 				  else
 				  {
+					  if (status == MQTTKeepAliveTimeout)
+					  {
+						  Debug::log("MQTT_ProcessLoop timed out.");
+					  }
 					  Debug::log("MQTT_ProcessLoop gave unknown error.");
 					  return -EAGAIN;
 				  }

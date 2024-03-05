@@ -30,3 +30,5 @@
 	PRINT_LOG_MESSAGE("coreMQTT Info: ", __VA_ARGS__)
 #define LogDebug(...) /*NOLINT*/                                               \
 	PRINT_LOG_MESSAGE("coreMQTT Debug: ", __VA_ARGS__)
+
+#define MQTT_PINGRESP_TIMEOUT_MS 30//000
