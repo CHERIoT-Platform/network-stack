@@ -67,6 +67,8 @@
 #define ipconfigTCP_RX_BUFFER_LENGTH ( 1280 )
 #define ipconfigTCP_TX_BUFFER_LENGTH ( 1280 )
 
+#define ipconfigTCP_MSS 536
+
 #define ipconfigBYTE_ORDER pdFREERTOS_LITTLE_ENDIAN
 #define pvPortMalloc(x) malloc(x)
 #define vPortFree(x) free(x)

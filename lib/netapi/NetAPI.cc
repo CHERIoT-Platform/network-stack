@@ -94,10 +94,15 @@ SObj network_socket_connect_tcp(Timeout *timeout,
 	}
 	else
 	{
+		Debug::log("Adding IPv4 address {}.{}.{}.{} to firewall",
+		           address.ipv4 & 0xFF,
+		           (address.ipv4 >> 8) & 0xFF,
+		           (address.ipv4 >> 16) & 0xFF,
+		           (address.ipv4 >> 24) & 0xFF);
 		firewall_add_tcpipv4_endpoint(
 		  address.ipv4, kind.localPort, ntohs(host->port));
 	}
-
+	Debug::log("Trying to connect");
 	if (network_socket_connect_tcp_internal(
 	      timeout, sealedSocket, address, host->port) != 0)
 	{

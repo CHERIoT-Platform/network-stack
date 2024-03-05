@@ -1,0 +1,14 @@
+[req]
+distinguished_name = req_distinguished_name
+prompt = no
+[req_distinguished_name]
+countryName            = UK
+stateOrProvinceName    = England
+localityName           = Cambridge
+organizationName       = SCI Semiconductor Ltd.
+organizationalUnitName = CHERIoT
+commonName             = localhost
+[ v3_ca ]
+basicConstraints = critical,CA:TRUE
+subjectKeyIdentifier = hash
+authorityKeyIdentifier = keyid:always,issuer:always

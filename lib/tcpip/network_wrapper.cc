@@ -313,6 +313,7 @@ namespace
 				                  nullptr,
 				                  std::numeric_limits<size_t>::max(),
 				                  FREERTOS_MSG_PEEK | FREERTOS_MSG_DONTWAIT);
+				  Debug::log("Non-blocking receive returned {}", available);
 				  if (available > 0)
 				  {
 					  void *buffer = prepareBuffer(available);
@@ -362,6 +363,8 @@ namespace
 					    return FreeRTOS_recv(
 					      socket->socket, nullptr, 1, FREERTOS_MSG_PEEK);
 				    });
+				  Debug::log("After blocking receive, may block? {}",
+				             timeout->may_block());
 			  } while (timeout->may_block());
 			  return -ETIMEDOUT;
 		  },
@@ -527,7 +530,10 @@ int network_socket_connect_tcp_internal(Timeout       *timeout,
 			  server.sin_address.ulIP_IPv4 = address.ipv4;
 		  }
 		  Debug::log("Trying to connect to server");
-		  switch (FreeRTOS_connect(socket->socket, &server, sizeof(server)))
+		  //switch (FreeRTOS_connect(socket->socket, &server, sizeof(server)))
+		  int ret = FreeRTOS_connect(socket->socket, &server, sizeof(server));
+			  Debug::log("Connect returned {}", ret);
+		  switch (ret)
 		  {
 			  default:
 				  return -EINVAL;
@@ -842,12 +848,10 @@ network_socket_send(Timeout *timeout, SObj socket, void *buffer, size_t length)
 	return with_sealed_socket(
 	  timeout,
 	  [&](SealedSocket *socket) {
-		  // Ensure that the buffer is valid for the duration of the send.
-		  Claim claim{MALLOC_CAPABILITY, buffer};
-		  if (!claim)
+		  int ret = heap_claim_fast(timeout, buffer);
+		  if (ret < 0)
 		  {
-			  Debug::log("Failed to claim buffer");
-			  return -ENOMEM;
+			  return ret;
 		  }
 		  // At this point, we know that the buffer can't go away from under us,
 		  // so it's safe to do the checks.
@@ -857,7 +861,7 @@ network_socket_send(Timeout *timeout, SObj socket, void *buffer, size_t length)
 			  return -EPERM;
 		  }
 		  Debug::log("Sending {}-byte TCP packet from {}", length, buffer);
-		  int ret = with_freertos_timeout(
+		  ret = with_freertos_timeout(
 		    timeout, socket->socket, FREERTOS_SO_SNDTIMEO, [&] {
 			    return FreeRTOS_send(socket->socket, buffer, length, 0);
 		    });
@@ -939,8 +943,6 @@ ssize_t network_socket_send_to(Timeout              *timeout,
 			  return -EPERM;
 		  }
 		  Debug::log("Sending {}-byte UDP packet", length);
-		  // FIXME: This should use the socket options to set / update
-		  // the timeout.
 		  auto ret = with_freertos_timeout(
 		    timeout, socket->socket, FREERTOS_SO_SNDTIMEO, [&] {
 			    return FreeRTOS_sendto(
