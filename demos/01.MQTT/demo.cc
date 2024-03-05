@@ -1,0 +1,309 @@
+// Copyright SCI Semiconductor and CHERIoT Contributors.
+// SPDX-License-Identifier: MIT
+
+#include <NetAPI.h>
+#include <cstdlib>
+#include <debug.hh>
+#include <errno.h>
+#include <fail-simulator-on-error.h>
+#include <locks.hh>
+#include <mqtt.h>
+#include <platform-gpio.hh>
+#include <sntp.h>
+#include <tick_macros.h>
+
+//#include "host.cert.h"
+#include "mosquitto.org.h"
+
+using CHERI::Capability;
+
+using Debug            = ConditionalDebug<true, "MQTT demo">;
+constexpr bool UseIPv6 = CHERIOT_RTOS_OPTION_IPv6;
+
+constexpr const char *clientID = "cheriotmqttdemo";
+
+// MQTT network buffer sizes
+constexpr const size_t networkBufferSize    = 1024;
+constexpr const size_t incomingPublishCount = 100;
+constexpr const size_t outgoingPublishCount = 100;
+
+DECLARE_AND_DEFINE_CONNECTION_CAPABILITY(LocalHostMQTT,
+                                         "127.0.0.1",
+                                         8883,
+                                         ConnectionTypeTCP);
+
+DECLARE_AND_DEFINE_CONNECTION_CAPABILITY(MosquittoOrgMQTT,
+                                         "test.mosquitto.org",
+                                         8883,
+                                         ConnectionTypeTCP);
+
+DECLARE_AND_DEFINE_ALLOCATOR_CAPABILITY(mqttTestMalloc, 32 * 1024);
+
+constexpr const char *ledTopic             = "cheri-led";
+constexpr const char *ledPayloadON         = "ON";
+constexpr const char *ledPayloadOFF        = "OFF";
+int32_t               ledSubscribePacketId = -1;
+bool                  ledAckReceived       = false;
+
+constexpr const char *controlTopic             = "cheri-control";
+constexpr const char *controlEND               = "END";
+int32_t               controlSubscribePacketId = -1;
+bool                  controlAckReceived       = false;
+bool                  endDemo                  = false;
+
+constexpr const char *buttonTopic   = "cheri-button";
+int                   buttonCounter = 0;
+
+/// Helpers
+
+/**
+ * Turn an LED on.
+ */
+void gpios_on()
+{
+	MMIO_CAPABILITY(GPIO, gpio_led0)->enable_all();
+}
+
+/**
+ * Turn an LED on.
+ */
+void led_on(int32_t index)
+{
+	MMIO_CAPABILITY(GPIO, gpio_led0)->led_on(index);
+}
+
+/**
+ * Turn an LED off.
+ */
+void led_off(int32_t index)
+{
+	MMIO_CAPABILITY(GPIO, gpio_led0)->led_off(index);
+}
+
+/**
+ * Read a single button.
+ */
+int32_t read_button(int32_t index)
+{
+	return MMIO_CAPABILITY(GPIO, gpio_led0)->button(index);
+}
+
+/// Callbacks
+
+void __cheri_callback ackCallback(uint16_t packetID, bool isReject)
+{
+	if (packetID == ledSubscribePacketId)
+	{
+		ledAckReceived = true;
+	}
+	else if (packetID == controlSubscribePacketId)
+	{
+		controlAckReceived = true;
+	}
+}
+
+void __cheri_callback publishCallback(const char *topicName,
+                                      size_t      topicNameLength,
+                                      const void *payload,
+                                      size_t      payloadLength)
+{
+	// TODO check input pointers
+
+	const char *payloadStr = static_cast<const char *>(payload);
+	size_t      length     = std::min(strlen(ledTopic), topicNameLength);
+	if (strncmp(topicName, ledTopic, length) == 0)
+	{
+		if (payloadLength == strlen(ledPayloadON) &&
+		    strncmp(payloadStr, ledPayloadON, payloadLength) == 0)
+		{
+			// Turn the LED on
+			led_on(0);
+			return;
+		}
+		else if (payloadLength == strlen(ledPayloadOFF) &&
+		         strncmp(payloadStr, ledPayloadOFF, payloadLength) == 0)
+		{
+			// Turn the LED off
+			led_off(0);
+			return;
+		}
+	}
+
+	length = std::min(strlen(controlTopic), topicNameLength);
+	if (strncmp(topicName, controlTopic, length) == 0)
+	{
+		if (payloadLength == strlen(controlEND) &&
+		    strncmp(payloadStr, controlEND, payloadLength) == 0)
+		{
+			// End the demo
+			endDemo = true;
+			return;
+		}
+	}
+
+	Debug::log(
+	  "Received PUBLISH notification with invalid topic ({}) or payload ({}).",
+	  topicName,
+	  payloadStr);
+}
+
+/// Main demo
+
+void __cheri_compartment("mqtt_demo") demo()
+{
+	int     ret;
+	Timeout t{MS_TO_TICKS(5000)};
+
+	gpios_on();
+
+	network_start();
+
+	// SNTP must be run for the TLS stack to be able to check certificate dates.
+	while (sntp_update(&t) != 0)
+	{
+		Debug::log("Failed to update NTP time");
+		Timeout oneSecond{MS_TO_TICKS(1000)};
+	}
+
+	Debug::log("Updating NTP took {} ticks", t.elapsed);
+	t = UnlimitedTimeout;
+
+	{
+		timeval tv;
+		int     ret = gettimeofday(&tv, nullptr);
+		if (ret != 0)
+		{
+			Debug::log("Failed to get time of day: {}", ret);
+		}
+		else
+		{
+			// Truncate the epoch time to 32 bits for printing.
+			Debug::log("Current UNIX epoch time: {}", (int32_t)tv.tv_sec);
+		}
+	}
+
+	Debug::log("Connecting to MQTT broker...");
+
+	SObj handle = mqtt_connect(&t,
+	                           STATIC_SEALED_VALUE(mqttTestMalloc),
+	                           STATIC_SEALED_VALUE(MosquittoOrgMQTT),
+	                           // STATIC_SEALED_VALUE(LocalHostMQTT),
+	                           publishCallback,
+	                           ackCallback,
+	                           TAs,
+	                           TAs_NUM,
+	                           networkBufferSize,
+	                           incomingPublishCount,
+	                           outgoingPublishCount,
+	                           clientID,
+	                           strlen(clientID));
+
+	if (!Capability{handle}.is_valid())
+	{
+		Debug::log("Failed to connect.");
+		return;
+	}
+
+	Debug::log("Connected to MQTT broker!");
+
+	Debug::log("Subscribing to LED topic '{}'.", ledTopic);
+
+	ret = mqtt_subscribe(&t,
+	                     handle,
+	                     1, // QoS 1 = delivered at least once
+	                     ledTopic,
+	                     strlen(ledTopic));
+
+	if (ret < 0)
+	{
+		Debug::log("Failed to subscribe, error {}.", ret);
+		return;
+	}
+
+	ledSubscribePacketId = ret;
+
+	Debug::log("Subscribing to CONTROL topic '{}'.", controlTopic);
+
+	ret = mqtt_subscribe(&t,
+	                     handle,
+	                     1, // QoS 1 = delivered at least once
+	                     controlTopic,
+	                     strlen(controlTopic));
+
+	if (ret < 0)
+	{
+		Debug::log("Failed to subscribe, error {}.", ret);
+		return;
+	}
+
+	controlSubscribePacketId = ret;
+
+	Debug::log("Now fetching the SUBACKs.");
+
+	while (!ledAckReceived && !controlAckReceived)
+	{
+		t   = Timeout{MS_TO_TICKS(100)};
+		ret = mqtt_run(&t, handle);
+
+		if (ret < 0)
+		{
+			Debug::log("Failed to wait for the SUBACK, error {}.", ret);
+			return;
+		}
+	}
+
+	Timeout coolDown{0};
+	Debug::log("Now entering the main loop.");
+	while (!endDemo)
+	{
+		SystickReturn timestampBefore = thread_systemtick_get();
+
+		// Check for PUBLISHes
+		t   = Timeout{MS_TO_TICKS(10)};
+		ret = mqtt_run(&t, handle);
+
+		if (ret < 0)
+		{
+			Debug::log("Failed to wait for PUBLISHes, error {}.", ret);
+			return;
+		}
+
+		// Check the button
+		if (read_button(0) && !coolDown.remaining)
+		{
+			Debug::log("Publishing {} to button topic '{}'.",
+			           buttonCounter,
+			           buttonTopic);
+
+			char num_char[20] = {0};
+			snprintf(num_char, 20, "%lu", buttonCounter);
+
+			t   = Timeout{MS_TO_TICKS(5000)};
+			ret = mqtt_publish(&t,
+			                   handle,
+			                   0, // Don't want acks for this one
+			                   buttonTopic,
+			                   strlen(buttonTopic),
+			                   static_cast<const void *>(num_char),
+			                   strlen(num_char));
+
+			if (ret < 0)
+			{
+				Debug::log("Failed to publish, error {}.", ret);
+				return;
+			}
+
+			buttonCounter++;
+
+			// Set cool down timer
+			coolDown = Timeout{MS_TO_TICKS(500)};
+			continue;
+		}
+
+		SystickReturn timestampAfter = thread_systemtick_get();
+		// Timeouts should not overflow a 32 bit value
+		coolDown.elapse(timestampAfter.lo - timestampBefore.lo);
+	}
+
+	Debug::log("Done. Exiting.");
+}
