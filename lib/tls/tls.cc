@@ -188,17 +188,57 @@ namespace
 		br_ssl_engine_set_default_aes_gcm(&cc->eng);
 	}
 
+	/**
+	 * Set the bounds on `buffer` to `length` if `length` is representable with
+	 * the current alignment of `buffer`. If not, then reduce `length` until it
+	 * is representable.  This ensures that we call the TCP/IP stack with a
+	 * precisely bounded buffer, rather than one that is slightly larger,
+	 * avoiding potential corruption or information leaks if the TCP/IP stack
+	 * is compromised, at the expense of more cross-compartment calls.
+	 */
+	void precisely_bound_buffer(Capability<uint8_t> &buffer, size_t &length)
+	{
+		// Make sure that the bounds are precisely representable by doing a
+		// smaller copy.
+		ptraddr_t alignmentMask = representable_alignment_mask(length);
+		ptraddr_t baseAddress =
+		  static_cast<ptraddr_t>(reinterpret_cast<uintptr_t>(buffer.get()));
+		if ((baseAddress & alignmentMask) != baseAddress)
+		{
+			Debug::log("Buffer is not precisely representable. Base: {}, "
+			           "alignment mask: {}, length: {}",
+			           baseAddress,
+			           alignmentMask,
+			           length);
+			// The number of bits in the capability encoding mantissa bits.
+			// This is part of the capability encoding and so, ideally,
+			// wouldn't be hard coded here.
+			static constexpr size_t MantissaBits = 9;
+			// Shrink the length to the largest representable length that we
+			// can fit.
+			length = std::min<size_t>(
+			  length, ((1 << MantissaBits) - 1) << __builtin_ctz(baseAddress));
+			Debug::log("Reducing length to {}", length);
+			Debug::Assert(
+			  [=]() {
+				  return (baseAddress & representable_alignment_mask(length)) ==
+				         baseAddress;
+			  },
+			  "Reduced buffer length is not representable. Length: {}, base: "
+			  "{}",
+			  length,
+			  baseAddress);
+		}
+		buffer.bounds() = length;
+	}
+
 	int receive_records(Timeout *t, TLSContext *connection)
 	{
 		auto      *engine = &connection->clientContext->eng;
 		size_t     length;
 		Capability inputBuffer = br_ssl_engine_recvrec_buf(engine, &length);
-		// Bound the input buffer to the length that we expect to
-		// write into, to prevent overwrites of other TLS state.
-		// This may be an awkward size and so allow inexact bounds if necessary.
-		// TODO: It might be better to round length down to something where
-		// we can do exact bounds.
-		inputBuffer.bounds().set_inexact(length);
+		precisely_bound_buffer(inputBuffer, length);
+
 		// Remove local so that the network stack cannot capture
 		// this, remove load so that we cannot leak state.
 		inputBuffer.permissions() &= Permission::Store;
@@ -230,12 +270,8 @@ namespace
 		size_t     readyLength;
 		Capability readyBuffer =
 		  br_ssl_engine_sendrec_buf(engine, &readyLength);
-		// Bound the input buffer to the length that we expect to
-		// write into, to prevent overwrites of other TLS state.
-		// This may be an awkward size and so allow inexact bounds if necessary.
-		// TODO: It might be better to round length down to something where
-		// we can do exact bounds.
-		readyBuffer.bounds().set_inexact(readyLength);
+		precisely_bound_buffer(readyBuffer, readyLength);
+
 		// Remove local so that the network stack cannot capture
 		// this, remove store so that we cannot leak state.
 		readyBuffer.permissions() &= Permission::Load;
