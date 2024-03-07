@@ -1,13 +1,8 @@
 // Copyright SCI Semiconductor and CHERIoT Contributors.
 // SPDX-License-Identifier: MIT
 
-#include <FreeRTOS-Compat/FreeRTOS.h>
-#include <cheri.hh>
-
-// Uncomment for useful debugging message on CHERI faults.
-//#include <fail-simulator-on-error.h>
-
 #include <NetAPI.h>
+#include <cheri.hh>
 #include <core_mqtt.h>
 #include <debug.hh>
 #include <locks.hh>
@@ -27,11 +22,6 @@ constexpr bool DebugMQTT =
   ;
 
 using Debug = ConditionalDebug<DebugMQTT, "MQTT Client">;
-
-// TODO Ultimately it would be nice to remove this entirely and perform all
-// allocations with the caller's capabilities. We need to determine if coreMQTT
-// supports this.
-DEFINE_ALLOCATOR_CAPABILITY(__default_malloc_capability, 16 * 1024)
 
 struct NetworkContext
 {
