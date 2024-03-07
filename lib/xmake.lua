@@ -5,6 +5,7 @@ option("IPv6")
 includes("tcpip",
          "netapi",
          "sntp",
+         "mqtt",
          "tls",
          "firewall")
 

@@ -7,3 +7,6 @@
 [submodule "third_party/BearSSL"]
 	path = third_party/BearSSL
 	url = https://www.bearssl.org/git/BearSSL
+[submodule "third_party/coreMQTT"]
+	path = third_party/coreMQTT
+	url = https://github.com/FreeRTOS/coreMQTT
