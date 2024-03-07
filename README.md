@@ -16,6 +16,7 @@ The network stack includes components from a variety of third parties:
 
  - [FreeRTOS-Plus-TCP](https://github.com/FreeRTOS/FreeRTOS-Plus-TCP) provides the TCP/IP implementation.
  - [FreeRTOS coreSNTP](https://github.com/FreeRTOS/coreSNTP) provides the SNTP client.
+ - [FreeRTOS coreMQTT](https://github.com/FreeRTOS/coreMQTT) provides the MQTT client.
  - [BearSSL](https://www.bearssl.org) provides the TLS 1.2 stack.
 
 This demonstrates the CHERIoT platform's ability to adopt existing codebases.
@@ -56,13 +57,16 @@ graph TD
   NetAPI["Network API"]
   SNTP:::ThirdParty
   TLS:::ThirdParty
+  MQTT:::ThirdParty
   DeviceDriver <-- "Network traffic" --> Network
   TCPIP <-- "Send and receive Ethernet frames" --> Firewall
   NetAPI -- "Add and remove rules" --> Firewall
   TLS -- "Request network connections" --> NetAPI
   TLS -- "Send and receive" --> TCPIP
   NetAPI -- "Create connections and perform DNS requests" --> TCPIP
-  User -- "Create TLS connections and exchange data" --> TLS
+  MQTT -- "Create TLS connections and exchange data" --> TLS
+  User -- "Create connections to MQTT server and publish / subscribe" --> MQTT
+  MQTT -- "Callbacks for acknowledgements and subscription notifications" --> User
   SNTP -- "Create UDP socket, authorise endpoints" --> NetAPI
   SNTP -- "Send and receive SNTP (UDP) packets" --> TCPIP
   TLS -- "Request wall-clock time for certificate checks" --> SNTP
