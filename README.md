@@ -37,6 +37,7 @@ Three are mostly existing third-party code with thin wrappers:
    The FreeRTOS code was originally written on the assumption of a single security domain and separating it would require refactoring that would be hard to keep up to date.
  - The SNTP compartment is mostly just another consumer of the network stack, but it provides a real-time clock that is used by the TLS stack.
  - The TLS stack is, again, mostly unmodified BearSSL code, with just some thin wrappers added around the edges.
+ - The MQTT compartment, like the SNTP compartment, is just another consumer of the network stack (the TLS layer, specifically) and provides a simple interface for connecting to MQTT servers, publishing messages and receiving notifications of publish events.
 
 These are joined by two new compartments:
 
