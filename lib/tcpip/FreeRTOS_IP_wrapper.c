@@ -21,7 +21,7 @@ struct FlagLockState ipThreadLockState;
 
 void ip_thread_start(void)
 {
-	FreeRTOS_printf("ip_thread_start\n");
+	FreeRTOS_printf(("ip_thread_start\n"));
 	threadEntryGuard = 1;
 	futex_wake(&threadEntryGuard, 1);
 }
@@ -31,7 +31,7 @@ void __cheri_compartment("TCPIP") ip_thread_entry(void)
 	FreeRTOS_printf(("ip_thread_entry\n"));
 	while (threadEntryGuard == 0)
 	{
-		FreeRTOS_printf("Sleeping until the IP task is supposed to start\n");
+		FreeRTOS_printf(("Sleeping until the IP task is supposed to start\n"));
 		futex_wait(&threadEntryGuard, 0);
 	}
 	xIPTaskHandle = thread_id_get();

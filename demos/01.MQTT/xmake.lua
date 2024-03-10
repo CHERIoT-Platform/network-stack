@@ -42,14 +42,14 @@ firmware("01.mqtt_demo")
         entry_point = "demo",
         -- TLS requires *huge* stacks!
         stack_size = 8160,
-        trusted_stack_frames = 6
+        trusted_stack_frames = 7
       },
       {
         -- TCP/IP stack thread.
         compartment = "TCPIP",
         priority = 1,
         entry_point = "ip_thread_entry",
-        stack_size = 0xe00,
+        stack_size = 0x1000,
         trusted_stack_frames = 5
       },
       {

@@ -75,6 +75,7 @@ pxGetNetworkBufferWithDescriptor(size_t     xRequestedSizeBytes,
 	if (descriptor == nullptr)
 	{
 		Debug::log("Failed to allocate descriptor");
+		ConditionalDebug<true, "Buffer Management">::log("Failed to allocate descriptor");
 		return nullptr;
 	}
 	auto *buffer = static_cast<uint8_t *>(heap_allocate(
@@ -82,6 +83,7 @@ pxGetNetworkBufferWithDescriptor(size_t     xRequestedSizeBytes,
 	if (buffer == nullptr)
 	{
 		Debug::log("Failed to allocate {} byte buffer", xRequestedSizeBytes);
+		ConditionalDebug<true, "Buffer Management">::log("Failed to allocate {} byte buffer", xRequestedSizeBytes);
 		return nullptr;
 	}
 	Debug::log("Allocated {} byte buffer: {}, descriptor: {}",

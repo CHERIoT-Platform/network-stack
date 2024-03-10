@@ -12,8 +12,10 @@
 #include <sntp.h>
 #include <tick_macros.h>
 
-//#include "host.cert.h"
-#include "mosquitto.org.h"
+#include "host.cert.h"
+#include "thread.h"
+#include "timeout.h"
+//#include "mosquitto.org.h"
 
 using CHERI::Capability;
 
@@ -27,8 +29,8 @@ constexpr const size_t networkBufferSize    = 1024;
 constexpr const size_t incomingPublishCount = 100;
 constexpr const size_t outgoingPublishCount = 100;
 
-DECLARE_AND_DEFINE_CONNECTION_CAPABILITY(LocalHostMQTT,
-                                         "127.0.0.1",
+DECLARE_AND_DEFINE_CONNECTION_CAPABILITY(DemoHost,
+                                         "demo.cheriot",
                                          8883,
                                          ConnectionTypeTCP);
 
@@ -156,13 +158,24 @@ void __cheri_compartment("mqtt_demo") demo()
 
 	gpios_on();
 
+	Debug::log("Starting MQTT demo...");
 	network_start();
+	Debug::log("Network is ready...");
+
+	// systemd decides to restart the ntp server when it detects a new
+	// interface.  If we try to get NTP time too quickly, the server isn't
+	// ready.  Wait one second to give it time to stabilise.
+	{
+		Timeout oneSecond(MS_TO_TICKS(1000));
+		thread_sleep(&oneSecond);
+	}
 
 	// SNTP must be run for the TLS stack to be able to check certificate dates.
+	Debug::log("Fetching NTP time...");
 	while (sntp_update(&t) != 0)
 	{
 		Debug::log("Failed to update NTP time");
-		Timeout oneSecond{MS_TO_TICKS(1000)};
+		t = Timeout{MS_TO_TICKS(5000)};
 	}
 
 	Debug::log("Updating NTP took {} ticks", t.elapsed);
@@ -182,128 +195,141 @@ void __cheri_compartment("mqtt_demo") demo()
 		}
 	}
 
-	Debug::log("Connecting to MQTT broker...");
-
-	SObj handle = mqtt_connect(&t,
-	                           STATIC_SEALED_VALUE(mqttTestMalloc),
-	                           STATIC_SEALED_VALUE(MosquittoOrgMQTT),
-	                           // STATIC_SEALED_VALUE(LocalHostMQTT),
-	                           publishCallback,
-	                           ackCallback,
-	                           TAs,
-	                           TAs_NUM,
-	                           networkBufferSize,
-	                           incomingPublishCount,
-	                           outgoingPublishCount,
-	                           clientID,
-	                           strlen(clientID));
-
-	if (!Capability{handle}.is_valid())
+	while (true)
 	{
-		Debug::log("Failed to connect.");
-		return;
-	}
+		Debug::log("Connecting to MQTT broker...");
+		Debug::log("Quota left: {}", heap_quota_remaining(MALLOC_CAPABILITY));
+		SObj handle = mqtt_connect(&t,
+		                           STATIC_SEALED_VALUE(mqttTestMalloc),
+		                           STATIC_SEALED_VALUE(DemoHost),
+		                           publishCallback,
+		                           ackCallback,
+		                           TAs,
+		                           TAs_NUM,
+		                           networkBufferSize,
+		                           incomingPublishCount,
+		                           outgoingPublishCount,
+		                           clientID,
+		                           strlen(clientID));
 
-	Debug::log("Connected to MQTT broker!");
-
-	Debug::log("Subscribing to LED topic '{}'.", ledTopic);
-
-	ret = mqtt_subscribe(&t,
-	                     handle,
-	                     1, // QoS 1 = delivered at least once
-	                     ledTopic,
-	                     strlen(ledTopic));
-
-	if (ret < 0)
-	{
-		Debug::log("Failed to subscribe, error {}.", ret);
-		return;
-	}
-
-	ledSubscribePacketId = ret;
-
-	Debug::log("Subscribing to CONTROL topic '{}'.", controlTopic);
-
-	ret = mqtt_subscribe(&t,
-	                     handle,
-	                     1, // QoS 1 = delivered at least once
-	                     controlTopic,
-	                     strlen(controlTopic));
-
-	if (ret < 0)
-	{
-		Debug::log("Failed to subscribe, error {}.", ret);
-		return;
-	}
-
-	controlSubscribePacketId = ret;
-
-	Debug::log("Now fetching the SUBACKs.");
-
-	while (!ledAckReceived && !controlAckReceived)
-	{
-		t   = Timeout{MS_TO_TICKS(100)};
-		ret = mqtt_run(&t, handle);
-
-		if (ret < 0)
+		if (!Capability{handle}.is_valid())
 		{
-			Debug::log("Failed to wait for the SUBACK, error {}.", ret);
-			return;
-		}
-	}
-
-	Timeout coolDown{0};
-	Debug::log("Now entering the main loop.");
-	while (!endDemo)
-	{
-		SystickReturn timestampBefore = thread_systemtick_get();
-
-		// Check for PUBLISHes
-		t   = Timeout{MS_TO_TICKS(10)};
-		ret = mqtt_run(&t, handle);
-
-		if (ret < 0)
-		{
-			Debug::log("Failed to wait for PUBLISHes, error {}.", ret);
-			return;
-		}
-
-		// Check the button
-		if (read_button(0) && !coolDown.remaining)
-		{
-			Debug::log("Publishing {} to button topic '{}'.",
-			           buttonCounter,
-			           buttonTopic);
-
-			char num_char[20] = {0};
-			snprintf(num_char, 20, "%lu", buttonCounter);
-
-			t   = Timeout{MS_TO_TICKS(5000)};
-			ret = mqtt_publish(&t,
-			                   handle,
-			                   0, // Don't want acks for this one
-			                   buttonTopic,
-			                   strlen(buttonTopic),
-			                   static_cast<const void *>(num_char),
-			                   strlen(num_char));
-
-			if (ret < 0)
-			{
-				Debug::log("Failed to publish, error {}.", ret);
-				return;
-			}
-
-			buttonCounter++;
-
-			// Set cool down timer
-			coolDown = Timeout{MS_TO_TICKS(500)};
+			Debug::log("Failed to connect, retrying...");
+			Timeout pause{MS_TO_TICKS(1000)};
+			thread_sleep(&pause);
 			continue;
 		}
 
-		SystickReturn timestampAfter = thread_systemtick_get();
-		// Timeouts should not overflow a 32 bit value
-		coolDown.elapse(timestampAfter.lo - timestampBefore.lo);
-	}
+		Debug::log("Connected to MQTT broker!");
 
-	Debug::log("Done. Exiting.");
+		Debug::log("Subscribing to LED topic '{}'.", ledTopic);
+
+		ret = mqtt_subscribe(&t,
+		                     handle,
+		                     1, // QoS 1 = delivered at least once
+		                     ledTopic,
+		                     strlen(ledTopic));
+
+		if (ret < 0)
+		{
+			Debug::log("Failed to subscribe, error {}.", ret);
+			mqtt_disconnect(&t, handle);
+			continue;
+		}
+
+		ledSubscribePacketId = ret;
+
+		Debug::log("Subscribing to CONTROL topic '{}'.", controlTopic);
+
+		ret = mqtt_subscribe(&t,
+		                     handle,
+		                     1, // QoS 1 = delivered at least once
+		                     controlTopic,
+		                     strlen(controlTopic));
+
+		if (ret < 0)
+		{
+			Debug::log("Failed to subscribe, error {}.", ret);
+			mqtt_disconnect(&t, handle);
+			continue;
+		}
+
+		controlSubscribePacketId = ret;
+
+		Debug::log("Now fetching the SUBACKs.");
+
+		while (!ledAckReceived && !controlAckReceived)
+		{
+			t   = Timeout{MS_TO_TICKS(100)};
+			ret = mqtt_run(&t, handle);
+
+			if (ret < 0)
+			{
+				Debug::log("Failed to wait for the SUBACK, error {}.", ret);
+				mqtt_disconnect(&t, handle);
+				continue;
+			}
+		}
+
+		Timeout coolDown{0};
+		Debug::log("Now entering the main loop.");
+		// Hugo: If I comment out the next line, it will try a reconnect immediately.
+		// For some reason that I haven't been able to track down yet, this
+		// fails 100% of the time.
+		while (true)
+		{
+			SystickReturn timestampBefore = thread_systemtick_get();
+
+			// Check for PUBLISHes
+			t   = Timeout{MS_TO_TICKS(10)};
+			ret = mqtt_run(&t, handle);
+
+			if (ret < 0)
+			{
+				Debug::log("Failed to wait for PUBLISHes, error {}.", ret);
+				break;
+			}
+
+			// Check the button
+			if (read_button(0) && !coolDown.remaining)
+			{
+				Debug::log("Publishing {} to button topic '{}'.",
+				           buttonCounter,
+				           buttonTopic);
+
+				char num_char[20] = {0};
+				snprintf(num_char, 20, "%lu", buttonCounter);
+
+				t   = Timeout{MS_TO_TICKS(5000)};
+				ret = mqtt_publish(&t,
+				                   handle,
+				                   0, // Don't want acks for this one
+				                   buttonTopic,
+				                   strlen(buttonTopic),
+				                   static_cast<const void *>(num_char),
+				                   strlen(num_char));
+
+				if (ret < 0)
+				{
+					Debug::log("Failed to publish, error {}.", ret);
+					break;
+				}
+
+				buttonCounter++;
+
+				// Set cool down timer
+				coolDown = Timeout{MS_TO_TICKS(500)};
+				continue;
+			}
+
+			SystickReturn timestampAfter = thread_systemtick_get();
+			// Timeouts should not overflow a 32 bit value
+			coolDown.elapse(timestampAfter.lo - timestampBefore.lo);
+		}
+		Debug::log("Exiting main loop, cleaning up.");
+		mqtt_disconnect(&t, handle);
+		// Sleep for a second to allow the network stack to clean up any outstanding allocations
+		Timeout oneSecond{MS_TO_TICKS(1000)};
+		thread_sleep(&oneSecond);
+	}
 }
