@@ -10,6 +10,7 @@
 #include <platform-entropy.hh>
 #include <stdlib.h>
 #include <transport_interface.h>
+#include <fail-simulator-on-error.h>
 
 using CHERI::Capability;
 
@@ -40,6 +41,11 @@ struct NetworkContext
 	 * `MQTT_Init`.
 	 */
 	MQTTAckCallback ackCallback;
+
+	/**
+	 * Flag set when the connection is terminated.
+	 */
+	bool isDisconnected;
 };
 
 namespace
@@ -86,7 +92,9 @@ namespace
 		~CHERIoTMqttContext()
 		{
 			Timeout t{UnlimitedTimeout};
+			Debug::log("Closing TLS stream.");
 			tls_connection_close(&t, tlsHandle);
+			Debug::log("Closed TLS stream.");
 		}
 
 		/**
@@ -105,22 +113,6 @@ namespace
 
 	{
 		return STATIC_SEALING_TYPE(MQTTHandle);
-	}
-
-	/**
-	 * Helper to determine if a passed TLS connection is terminated. This
-	 * is useful to diagnose coreMQTT failures and return a clear error
-	 * code to the caller.
-	 */
-	bool is_tls_terminated(SObj tlsHandle)
-	{
-		// If the link fails with -ENOTCONN as part of `transport_recv`
-		// or `transport_send`, the `tlsHandle` is invalidated.
-		if (!Capability{tlsHandle}.is_valid())
-		{
-			return true;
-		}
-		return false;
 	}
 
 	/**
@@ -163,7 +155,7 @@ namespace
 				{
 					// If the TLS link is still live, try
 					// again until we are out of time.
-					if (is_tls_terminated(connection->tlsHandle))
+					if (connection->networkContext.isDisconnected)
 					{
 						return -ECONNABORTED;
 					}
@@ -222,9 +214,12 @@ namespace
 				  "Failed to acquire lock on MQTT context during close");
 				return -ETIMEDOUT;
 			}
+			Debug::log("Upgrading lock for destruction.");
 			unsealed->lock.upgrade_for_destruction();
 			ssize_t ret = callback(unsealed);
+			Debug::log("Destroying sealed allocation.");
 			token_obj_destroy(unsealed->allocator, mqtt_key(), sealed);
+			Debug::log("Destroyed.");
 			return ret;
 		}
 		else if (LockGuard g{unsealed->lock, timeout})
@@ -286,6 +281,10 @@ namespace
 			// retried.
 			received = 0;
 		}
+		else if (received == -ENOTCONN)
+		{
+			networkContext->isDisconnected = true;
+		}
 
 		// TODO The TLS layer currently return 0 when the link fails.
 		// This is not great, because it prevents us from cleanly
@@ -338,6 +337,10 @@ namespace
 			// retried.
 			sent = 0;
 		}
+		else if (sent == -ENOTCONN)
+		{
+			networkContext->isDisconnected = true;
+		}
 
 		// TODO Same comment here regarding `-ENOTCONN` as for
 		// `transport_recv`.
@@ -374,7 +377,7 @@ namespace
 		uint64_t currentTime = currentCycle / cyclesPerMilliSecond;
 
 		// Truncate into 32 bit
-		return currentTime & 0xFFFFFFFF;
+		return currentTime;
 	}
 
 	/**
@@ -660,10 +663,17 @@ int mqtt_disconnect(Timeout *t, SObj mqttHandle)
 		  MQTTStatus_t   status;
 		  do
 		  {
+			  // If the connection is dropped, nothing to do here other than
+			  // tear it down.
+			  if (connection->networkContext.isDisconnected)
+			  {
+				  return 0;
+			  }
 			  status = with_elapse_timeout(t, [&]() {
 				  // `MQTT_ProcessLoop` handles keepalive.
 				  return MQTT_Disconnect(coreMQTTContext);
 			  });
+			  Debug::log("MQTT Disconnect returned, error: {}", status);
 
 			  if (status != MQTTSuccess)
 			  {
@@ -672,20 +682,6 @@ int mqtt_disconnect(Timeout *t, SObj mqttHandle)
 				  if (status == MQTTNoMemory)
 				  {
 					  return -ENOMEM;
-				  }
-				  else if (status == MQTTSendFailed)
-				  {
-					  if (is_tls_terminated(connection->tlsHandle))
-					  {
-						  // This is a special case.
-						  // `MQTT_Disconnect` failed to
-						  // disconnect us, but we realized
-						  // that the TLS link is dead anyways.
-						  // In that case, we can consider the
-						  // connection successfully terminated
-						  // and proceed freeing resources.
-						  return 0;
-					  }
 				  }
 				  else if (status == MQTTBadParameter)
 				  {
@@ -705,6 +701,7 @@ int mqtt_disconnect(Timeout *t, SObj mqttHandle)
 
 		  if (status != MQTTSuccess)
 		  {
+			  Debug::log("Timed out during disconnect");
 			  return -ETIMEDOUT;
 		  }
 
@@ -713,6 +710,7 @@ int mqtt_disconnect(Timeout *t, SObj mqttHandle)
 
 	if (ret < 0)
 	{
+		Debug::log("Failed to disconnect from the broker, error {}.", ret);
 		// Disconnecting failed. Leave the TLS link open and return an
 		// error.
 		return ret;
@@ -724,7 +722,9 @@ int mqtt_disconnect(Timeout *t, SObj mqttHandle)
 	  t,
 	  mqttHandle,
 	  [&](CHERIoTMqttContext *connection) {
+	  Debug::log("Cleaning up MQTT context. {}");
 		  connection->~CHERIoTMqttContext();
+		  Debug::log("Run context destructor."); 
 		  return 0;
 	  },
 	  true /* grab the context in destruct mode */);
@@ -916,14 +916,13 @@ int mqtt_run(Timeout *t, SObj mqttHandle)
 				  {
 					  // If the TLS link is still live, try
 					  // again until we are out of time.
-					  if (is_tls_terminated(connection->tlsHandle))
+					  if (connection->networkContext.isDisconnected)
 					  {
 						  return -ECONNABORTED;
 					  }
 				  }
 				  else if (status == MQTTBadResponse ||
-				           status == MQTTIllegalState ||
-				           status == MQTTKeepAliveTimeout)
+				           status == MQTTIllegalState)
 				  {
 					  // Something is broken in the
 					  // coreMQTT client, or in the broker.
@@ -940,6 +939,10 @@ int mqtt_run(Timeout *t, SObj mqttHandle)
 				  }
 				  else
 				  {
+					  if (status == MQTTKeepAliveTimeout)
+					  {
+						  Debug::log("MQTT_ProcessLoop timed out.");
+					  }
 					  Debug::log("MQTT_ProcessLoop gave unknown error.");
 					  return -EAGAIN;
 				  }

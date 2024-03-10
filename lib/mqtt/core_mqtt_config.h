@@ -24,3 +24,5 @@
 #define LogWarn(...) LogFunction("coreMQTT Warn: ", __VA_ARGS__);
 #define LogInfo(...) LogFunction("coreMQTT Info: ", __VA_ARGS__);
 #define LogDebug(...) LogFunction("coreMQTT Debug: ", __VA_ARGS__);
+
+#define MQTT_PINGRESP_TIMEOUT_MS 30//000

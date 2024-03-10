@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 #include "../../third_party/BearSSL/inc/bearssl.h"
+#include "timeout.h"
 #include <NetAPI.h>
 #include <debug.hh>
 #include <function_wrapper.hh>
@@ -684,8 +685,8 @@ int tls_connection_close(Timeout *t, SObj sealed)
 		Debug::log("Failed to acquire lock on TLS context during close");
 		return -ETIMEDOUT;
 	}
-	tls->lock.upgrade_for_destruction();
 	auto *engine = &tls->clientContext->eng;
+	Debug::log("br_ssl_engine_close");
 	br_ssl_engine_close(engine);
 	auto    state = br_ssl_engine_current_state(&tls->clientContext->eng);
 	Timeout unlimited{UnlimitedTimeout};
@@ -694,17 +695,29 @@ int tls_connection_close(Timeout *t, SObj sealed)
 		// Silently discard any pending app data
 		if ((state & BR_SSL_RECVAPP) == BR_SSL_RECVAPP)
 		{
+			Debug::log("Incoming data on closed connection, discarding");
 			size_t length;
 			if (br_ssl_engine_recvapp_buf(engine, &length) != nullptr)
 			{
+				Debug::log("Discarding {} bytes of incoming data", length);
 				br_ssl_engine_recvapp_ack(engine, length);
 			}
 		}
 		else if ((state & BR_SSL_SENDREC) == BR_SSL_SENDREC)
 		{
-			auto [sent, unfinished] = send_records(t, tls);
+			Debug::log("Sending records for graceful close");
+			Timeout shortTimeout{std::min<Ticks>(1000, t->remaining)};
+			auto [sent, unfinished] = send_records(&shortTimeout, tls);
+			t->elapse(shortTimeout.elapsed);
+			Debug::log("Sent {} bytes of records", sent);
 			if (sent < 0)
 			{
+				Debug::log("Failed to send records, error {}", sent);
+				if (sent == -ETIMEDOUT)
+				{
+					return -ETIMEDOUT;
+				}
+				Debug::log("Failed to send records for graceful close");
 				// Give up and don't gracefully terminate if we failed to
 				// send.
 				break;
@@ -712,20 +725,28 @@ int tls_connection_close(Timeout *t, SObj sealed)
 		}
 		else if ((state & BR_SSL_RECVREC) == BR_SSL_RECVREC)
 		{
-			int received = receive_records(t, tls);
-			if (received == 0 || received == -ENOTCONN)
-			{
-				// FIXME: Shut down gracefully
-				Debug::log("Connection closed, shutting down");
-				return 0;
-			}
+			Timeout shortTimeout{std::min<Ticks>(1000, t->remaining)};
+			int received = receive_records(&shortTimeout, tls);
+			t->elapse(shortTimeout.elapsed);
 			if (received == -ETIMEDOUT)
 			{
 				return -ETIMEDOUT;
 			}
+			// If we failed for any reason other than timeout, give up and just
+			// close the socket.
+			if (received < 0)
+			{
+				Debug::log("Failed to receive records for graceful close: {}",
+				           received);
+				break;
+			}
 		}
 		state = br_ssl_engine_current_state(&tls->clientContext->eng);
 	} while ((state & BR_SSL_CLOSED) != BR_SSL_CLOSED);
+	// At this point, we have shut down the TLS connection.  We can now close
+	// the socket and free memory.  This is the point of no return, so upgrade
+	// the lock for destruction.
+	tls->lock.upgrade_for_destruction();
 	auto allocator = tls->allocator;
 	tls->~TLSContext();
 	token_obj_destroy(allocator, tls_key(), sealed);
