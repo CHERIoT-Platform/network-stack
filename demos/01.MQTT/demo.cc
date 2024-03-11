@@ -28,141 +28,146 @@ constexpr const size_t networkBufferSize    = 1024;
 constexpr const size_t incomingPublishCount = 100;
 constexpr const size_t outgoingPublishCount = 100;
 
-DECLARE_AND_DEFINE_CONNECTION_CAPABILITY(DemoHost,
-                                         "demo.cheriot",
-                                         8883,
-                                         ConnectionTypeTCP);
-
-DECLARE_AND_DEFINE_CONNECTION_CAPABILITY(MosquittoOrgMQTT,
-                                         "test.mosquitto.org",
-                                         8883,
-                                         ConnectionTypeTCP);
-
-DECLARE_AND_DEFINE_ALLOCATOR_CAPABILITY(mqttTestMalloc, 32 * 1024);
-
-constexpr const char *ledTopic             = "cheri-led";
-constexpr const char *ledPayloadON         = "ON";
-constexpr const char *ledPayloadOFF        = "OFF";
-int32_t               ledSubscribePacketId = -1;
-bool                  ledAckReceived       = false;
-
-constexpr const char *buttonTopic   = "cheri-button";
-int                   buttonCounter = 0;
-
-/// Helpers
-
-/// Returns a weak pseudo-random number.
-uint64_t rand()
+namespace
 {
-	EntropySource rng;
-	return rng();
-}
 
-/**
- * Note from the MQTT 3.1.1 spec:
- * The Server MUST allow ClientIds which are between 1 and 23 UTF-8 encoded
- * bytes in length, and that contain only the characters
- * "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
- *
- * Note from us:
- * UTF-8 encoding of 0-9, a-z, A-Z, is 1 Byte per character, so we should be
- * able to do up to a length of 22 characters + zero byte.
- */
-constexpr const int clientIDlength = 23;
-char                clientID[clientIDlength];
+	DECLARE_AND_DEFINE_CONNECTION_CAPABILITY(DemoHost,
+	                                         "demo.cheriot",
+	                                         8883,
+	                                         ConnectionTypeTCP);
 
-static void randomize_string(char *string, size_t size)
-{
-	// MQTT 3.1.1 alphabet
-	const char characters[] =
-	  "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
-	if (size)
+	DECLARE_AND_DEFINE_CONNECTION_CAPABILITY(MosquittoOrgMQTT,
+	                                         "test.mosquitto.org",
+	                                         8883,
+	                                         ConnectionTypeTCP);
+
+	DECLARE_AND_DEFINE_ALLOCATOR_CAPABILITY(mqttTestMalloc, 32 * 1024);
+
+	constexpr const char *ledTopic             = "cheri-led";
+	constexpr const char *ledPayloadON         = "ON";
+	constexpr const char *ledPayloadOFF        = "OFF";
+	int32_t               ledSubscribePacketId = -1;
+	bool                  ledAckReceived       = false;
+
+	constexpr const char *buttonTopic   = "cheri-button";
+	int                   buttonCounter = 0;
+
+	/// Helpers
+
+	/// Returns a weak pseudo-random number.
+	uint64_t rand()
 	{
-		--size;
-		for (size_t i = 0; i < size; i++)
-		{
-			// Select a character at random.
-			string[i] =
-			  characters[rand() % static_cast<int>(sizeof(characters) - 1)];
-		}
-		string[size] = '\0';
+		EntropySource rng;
+		return rng();
 	}
-}
 
-/**
- * Turn an LED on.
- */
-void gpios_on()
-{
-	MMIO_CAPABILITY(GPIO, gpio_led0)->enable_all();
-}
+	/**
+	 * Note from the MQTT 3.1.1 spec:
+	 * The Server MUST allow ClientIds which are between 1 and 23 UTF-8 encoded
+	 * bytes in length, and that contain only the characters
+	 * "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+	 *
+	 * Note from us:
+	 * UTF-8 encoding of 0-9, a-z, A-Z, is 1 Byte per character, so we should be
+	 * able to do up to a length of 22 characters + zero byte.
+	 */
+	constexpr const int clientIDlength = 23;
+	char                clientID[clientIDlength];
 
-/**
- * Turn an LED on.
- */
-void led_on(int32_t index)
-{
-	MMIO_CAPABILITY(GPIO, gpio_led0)->led_on(index);
-}
-
-/**
- * Turn an LED off.
- */
-void led_off(int32_t index)
-{
-	MMIO_CAPABILITY(GPIO, gpio_led0)->led_off(index);
-}
-
-/**
- * Read a single button.
- */
-int32_t read_button(int32_t index)
-{
-	return MMIO_CAPABILITY(GPIO, gpio_led0)->button(index);
-}
-
-/// Callbacks
-
-void __cheri_callback ackCallback(uint16_t packetID, bool isReject)
-{
-	if (packetID == ledSubscribePacketId)
+	void randomize_string(char *string, size_t size)
 	{
-		ledAckReceived = true;
-	}
-}
-
-void __cheri_callback publishCallback(const char *topicName,
-                                      size_t      topicNameLength,
-                                      const void *payload,
-                                      size_t      payloadLength)
-{
-	// TODO check input pointers
-
-	const char *payloadStr = static_cast<const char *>(payload);
-	size_t      length     = std::min(strlen(ledTopic), topicNameLength);
-	if (strncmp(topicName, ledTopic, length) == 0)
-	{
-		if (payloadLength == strlen(ledPayloadON) &&
-		    strncmp(payloadStr, ledPayloadON, payloadLength) == 0)
+		// MQTT 3.1.1 alphabet
+		const char characters[] =
+		  "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
+		if (size)
 		{
-			// Turn the LED on
-			led_on(0);
-			return;
-		}
-		else if (payloadLength == strlen(ledPayloadOFF) &&
-		         strncmp(payloadStr, ledPayloadOFF, payloadLength) == 0)
-		{
-			// Turn the LED off
-			led_off(0);
-			return;
+			--size;
+			for (size_t i = 0; i < size; i++)
+			{
+				// Select a character at random.
+				string[i] =
+				  characters[rand() % static_cast<int>(sizeof(characters) - 1)];
+			}
+			string[size] = '\0';
 		}
 	}
 
-	Debug::log(
-	  "Received PUBLISH notification with invalid topic ({}) or payload ({}).",
-	  topicName,
-	  payloadStr);
-}
+	/**
+	 * Turn an LED on.
+	 */
+	void gpios_on()
+	{
+		MMIO_CAPABILITY(GPIO, gpio_led0)->enable_all();
+	}
+
+	/**
+	 * Turn an LED on.
+	 */
+	void led_on(int32_t index)
+	{
+		MMIO_CAPABILITY(GPIO, gpio_led0)->led_on(index);
+	}
+
+	/**
+	 * Turn an LED off.
+	 */
+	void led_off(int32_t index)
+	{
+		MMIO_CAPABILITY(GPIO, gpio_led0)->led_off(index);
+	}
+
+	/**
+	 * Read a single button.
+	 */
+	int32_t read_button(int32_t index)
+	{
+		return MMIO_CAPABILITY(GPIO, gpio_led0)->button(index);
+	}
+
+	/// Callbacks
+
+	void __cheri_callback ackCallback(uint16_t packetID, bool isReject)
+	{
+		if (packetID == ledSubscribePacketId)
+		{
+			ledAckReceived = true;
+		}
+	}
+
+	void __cheri_callback publishCallback(const char *topicName,
+	                                      size_t      topicNameLength,
+	                                      const void *payload,
+	                                      size_t      payloadLength)
+	{
+		// TODO check input pointers
+
+		const char *payloadStr = static_cast<const char *>(payload);
+		size_t      length     = std::min(strlen(ledTopic), topicNameLength);
+		if (strncmp(topicName, ledTopic, length) == 0)
+		{
+			if (payloadLength == strlen(ledPayloadON) &&
+			    strncmp(payloadStr, ledPayloadON, payloadLength) == 0)
+			{
+				// Turn the LED on
+				led_on(0);
+				return;
+			}
+			else if (payloadLength == strlen(ledPayloadOFF) &&
+			         strncmp(payloadStr, ledPayloadOFF, payloadLength) == 0)
+			{
+				// Turn the LED off
+				led_off(0);
+				return;
+			}
+		}
+
+		Debug::log("Received PUBLISH notification with invalid topic ({}) or "
+		           "payload ({}).",
+		           topicName,
+		           payloadStr);
+	}
+
+} // namespace
 
 /// Main demo
 
@@ -274,9 +279,9 @@ void __cheri_compartment("mqtt_demo") demo()
 
 		Timeout coolDown{0};
 		Debug::log("Now entering the main loop.");
-		// Hugo: If I comment out the next line, it will try a reconnect immediately.
-		// For some reason that I haven't been able to track down yet, this
-		// fails 100% of the time.
+		// Hugo: If I comment out the next line, it will try a reconnect
+		// immediately. For some reason that I haven't been able to track down
+		// yet, this fails 100% of the time.
 		while (true)
 		{
 			SystickReturn timestampBefore = thread_systemtick_get();
