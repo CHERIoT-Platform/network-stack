@@ -46,12 +46,6 @@ constexpr const char *ledPayloadOFF        = "OFF";
 int32_t               ledSubscribePacketId = -1;
 bool                  ledAckReceived       = false;
 
-constexpr const char *controlTopic             = "cheri-control";
-constexpr const char *controlEND               = "END";
-int32_t               controlSubscribePacketId = -1;
-bool                  controlAckReceived       = false;
-bool                  endDemo                  = false;
-
 constexpr const char *buttonTopic   = "cheri-button";
 int                   buttonCounter = 0;
 
@@ -135,10 +129,6 @@ void __cheri_callback ackCallback(uint16_t packetID, bool isReject)
 	{
 		ledAckReceived = true;
 	}
-	else if (packetID == controlSubscribePacketId)
-	{
-		controlAckReceived = true;
-	}
 }
 
 void __cheri_callback publishCallback(const char *topicName,
@@ -164,18 +154,6 @@ void __cheri_callback publishCallback(const char *topicName,
 		{
 			// Turn the LED off
 			led_off(0);
-			return;
-		}
-	}
-
-	length = std::min(strlen(controlTopic), topicNameLength);
-	if (strncmp(topicName, controlTopic, length) == 0)
-	{
-		if (payloadLength == strlen(controlEND) &&
-		    strncmp(payloadStr, controlEND, payloadLength) == 0)
-		{
-			// End the demo
-			endDemo = true;
 			return;
 		}
 	}
@@ -279,26 +257,9 @@ void __cheri_compartment("mqtt_demo") demo()
 
 		ledSubscribePacketId = ret;
 
-		Debug::log("Subscribing to CONTROL topic '{}'.", controlTopic);
-
-		ret = mqtt_subscribe(&t,
-		                     handle,
-		                     1, // QoS 1 = delivered at least once
-		                     controlTopic,
-		                     strlen(controlTopic));
-
-		if (ret < 0)
-		{
-			Debug::log("Failed to subscribe, error {}.", ret);
-			mqtt_disconnect(&t, handle);
-			continue;
-		}
-
-		controlSubscribePacketId = ret;
-
 		Debug::log("Now fetching the SUBACKs.");
 
-		while (!ledAckReceived && !controlAckReceived)
+		while (!ledAckReceived)
 		{
 			t   = Timeout{MS_TO_TICKS(100)};
 			ret = mqtt_run(&t, handle);
