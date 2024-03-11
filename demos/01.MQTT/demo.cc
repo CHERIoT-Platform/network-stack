@@ -44,8 +44,6 @@ namespace
 	DECLARE_AND_DEFINE_ALLOCATOR_CAPABILITY(mqttTestMalloc, 32 * 1024);
 
 	constexpr const char *ledTopic             = "cheri-led";
-	constexpr const char *ledPayloadON         = "ON";
-	constexpr const char *ledPayloadOFF        = "OFF";
 	int32_t               ledSubscribePacketId = -1;
 	bool                  ledAckReceived       = false;
 
@@ -124,6 +122,11 @@ namespace
 		return MMIO_CAPABILITY(GPIO, gpio_led0)->button(index);
 	}
 
+	uint32_t read_switches()
+	{
+		return MMIO_CAPABILITY(GPIO, gpio_led0)->switches();
+	}
+
 	/// Callbacks
 
 	void __cheri_callback ackCallback(uint16_t packetID, bool isReject)
@@ -145,27 +148,37 @@ namespace
 		size_t      length     = std::min(strlen(ledTopic), topicNameLength);
 		if (strncmp(topicName, ledTopic, length) == 0)
 		{
-			if (payloadLength == strlen(ledPayloadON) &&
-			    strncmp(payloadStr, ledPayloadON, payloadLength) == 0)
+			if (payloadLength >= 1)
 			{
-				// Turn the LED on
-				led_on(0);
-				return;
-			}
-			else if (payloadLength == strlen(ledPayloadOFF) &&
-			         strncmp(payloadStr, ledPayloadOFF, payloadLength) == 0)
-			{
-				// Turn the LED off
-				led_off(0);
-				return;
+				switch (static_cast<const char *>(payload)[0])
+				{
+					case '0':
+						led_off(0);
+						led_off(1);
+						return;
+					case '1':
+						led_on(0);
+						led_off(1);
+						return;
+					case '2':
+						led_off(0);
+						led_on(1);
+						return;
+					case '3':
+						led_on(0);
+						led_on(1);
+						return;
+				}
 			}
 		}
 
 		Debug::log("Received PUBLISH notification with invalid topic ({}) or "
 		           "payload ({}).",
-		           topicName,
-		           payloadStr);
+		           std::string_view{topicName, topicNameLength},
+		           std::string_view{payloadStr, payloadLength});
 	}
+
+	uint32_t switches;
 
 } // namespace
 
@@ -192,13 +205,12 @@ void __cheri_compartment("mqtt_demo") demo()
 
 	// SNTP must be run for the TLS stack to be able to check certificate dates.
 	Debug::log("Fetching NTP time...");
+	t = Timeout{MS_TO_TICKS(1000)};
 	while (sntp_update(&t) != 0)
 	{
 		Debug::log("Failed to update NTP time");
-		t = Timeout{MS_TO_TICKS(5000)};
+		t = Timeout{MS_TO_TICKS(1000)};
 	}
-
-	Debug::log("Updating NTP took {} ticks", t.elapsed);
 
 	{
 		timeval tv;
@@ -294,6 +306,37 @@ void __cheri_compartment("mqtt_demo") demo()
 			{
 				Debug::log("Failed to wait for PUBLISHes, error {}.", ret);
 				break;
+			}
+
+			uint32_t newSwitches = read_switches();
+			if (newSwitches != switches)
+			{
+				for (int i = 0; i < 8; i++)
+				{
+					bool newSwitch = (newSwitches & (1 << i)) != 0;
+					bool oldSwitch = (switches & (1 << i)) != 0;
+					if (newSwitch != oldSwitch)
+					{
+						char topic[]             = "cheri-switch-X";
+						topic[sizeof(topic) - 2] = '0' + i;
+						t                        = Timeout{MS_TO_TICKS(5000)};
+						ret                      = mqtt_publish(&t,
+						                                        handle,
+						                                        0, // Don't want acks for this one
+						                                        topic,
+						                                        sizeof(topic) - 1,
+                                           newSwitch ? "ON" : "OFF",
+                                           newSwitch ? 2 : 3);
+						if (ret < 0)
+						{
+							Debug::log(
+							  "Failed to publish button change, error {}.",
+							  ret);
+							break;
+						}
+					}
+				}
+				switches = newSwitches;
 			}
 
 			// Check the button
