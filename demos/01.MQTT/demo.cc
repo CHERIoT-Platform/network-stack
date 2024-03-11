@@ -8,6 +8,7 @@
 #include <fail-simulator-on-error.h>
 #include <locks.hh>
 #include <mqtt.h>
+#include <platform-entropy.hh>
 #include <platform-gpio.hh>
 #include <sntp.h>
 #include <tick_macros.h>
@@ -21,8 +22,6 @@ using CHERI::Capability;
 
 using Debug            = ConditionalDebug<true, "MQTT demo">;
 constexpr bool UseIPv6 = CHERIOT_RTOS_OPTION_IPv6;
-
-constexpr const char *clientID = "cheriotmqttdemo";
 
 // MQTT network buffer sizes
 constexpr const size_t networkBufferSize    = 1024;
@@ -57,6 +56,44 @@ constexpr const char *buttonTopic   = "cheri-button";
 int                   buttonCounter = 0;
 
 /// Helpers
+
+/// Returns a weak pseudo-random number.
+uint64_t rand()
+{
+	EntropySource rng;
+	return rng();
+}
+
+/**
+ * Note from the MQTT 3.1.1 spec:
+ * The Server MUST allow ClientIds which are between 1 and 23 UTF-8 encoded
+ * bytes in length, and that contain only the characters
+ * "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+ *
+ * Note from us:
+ * UTF-8 encoding of 0-9, a-z, A-Z, is 1 Byte per character, so we should be
+ * able to do up to a length of 22 characters + zero byte.
+ */
+constexpr const int clientIDlength = 23;
+char                clientID[clientIDlength];
+
+static void randomize_string(char *string, size_t size)
+{
+	// MQTT 3.1.1 alphabet
+	const char characters[] =
+	  "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
+	if (size)
+	{
+		--size;
+		for (size_t i = 0; i < size; i++)
+		{
+			// Select a character at random.
+			string[i] =
+			  characters[rand() % static_cast<int>(sizeof(characters) - 1)];
+		}
+		string[size] = '\0';
+	}
+}
 
 /**
  * Turn an LED on.
@@ -179,7 +216,6 @@ void __cheri_compartment("mqtt_demo") demo()
 	}
 
 	Debug::log("Updating NTP took {} ticks", t.elapsed);
-	t = UnlimitedTimeout;
 
 	{
 		timeval tv;
@@ -197,8 +233,12 @@ void __cheri_compartment("mqtt_demo") demo()
 
 	while (true)
 	{
+		Debug::log("Generating client ID...");
+		randomize_string(clientID, clientIDlength);
+
 		Debug::log("Connecting to MQTT broker...");
 		Debug::log("Quota left: {}", heap_quota_remaining(MALLOC_CAPABILITY));
+		t           = UnlimitedTimeout;
 		SObj handle = mqtt_connect(&t,
 		                           STATIC_SEALED_VALUE(mqttTestMalloc),
 		                           STATIC_SEALED_VALUE(DemoHost),
@@ -328,7 +368,8 @@ void __cheri_compartment("mqtt_demo") demo()
 		}
 		Debug::log("Exiting main loop, cleaning up.");
 		mqtt_disconnect(&t, handle);
-		// Sleep for a second to allow the network stack to clean up any outstanding allocations
+		// Sleep for a second to allow the network stack to clean up any
+		// outstanding allocations
 		Timeout oneSecond{MS_TO_TICKS(1000)};
 		thread_sleep(&oneSecond);
 	}
