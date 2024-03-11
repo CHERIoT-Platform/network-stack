@@ -1,7 +1,6 @@
 // Copyright SCI Semiconductor and CHERIoT Contributors.
 // SPDX-License-Identifier: MIT
 
-
 #include "firewall.h"
 #include <atomic>
 #include <compartment-macros.h>
@@ -290,13 +289,7 @@ namespace
 				           ipv4Header->protocol);
 				return false;
 			case IPProtocolNumber::UDP:
-				// If we haven't finished doing DHCP, permit all UDP packets
-				// (we don't know the address of the DHCP server yet, so
-				// IP-based filtering is not going to be reliable).
-				if (__predict_false(dnsServerAddress == 0))
-				{
-					return true;
-				}
+
 				// Permit DNS requests during a DNS query.
 				if (dnsIsPermitted > 0)
 				{
@@ -352,6 +345,17 @@ namespace
 					           (int)(endpoint >> 16) & 0xff,
 					           (int)(endpoint >> 24) & 0xff);
 					return true;
+				}
+				// Permit DHCP replies.
+				if ((ipv4Header->protocol == IPProtocolNumber::UDP) &&
+				    (remoteAddress == &IPv4Header::sourceAddress))
+				{
+					// DHCP server port is 67, client port is 68, in network byte order.
+					// FIXME: We should check the host endian and not hard-code these.
+					if ((remotePortNumber ==  0x4300) && (localPortNumber == 0x4400))
+					{
+						return true;
+					}
 				}
 				return false;
 			}
