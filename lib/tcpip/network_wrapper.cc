@@ -483,9 +483,6 @@ int network_socket_close(Timeout *t, SObj mallocCapability, SObj sealedSocket)
 		  // Close the socket.  Another thread will actually clean up the
 		  // memory.
 		  FreeRTOS_closesocket(socket->socket);
-		  // Drop the caller's claim on the socket.  The TCP/IP stack retains a
-		  // claim.
-		  heap_free(mallocCapability, socket->socket);
 		  token_obj_destroy(mallocCapability, socket_key(), sealedSocket);
 		  return 0;
 	  },
