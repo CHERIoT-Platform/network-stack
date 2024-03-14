@@ -499,7 +499,8 @@ SObj mqtt_connect(Timeout                    *t,
                   size_t                      incomingPublishCount,
                   size_t                      outgoingPublishCount,
                   const char                 *clientID,
-                  size_t                      clientIDLength)
+                  size_t                      clientIDLength,
+                  bool                        newSession)
 {
 	// Note: do not check trustAnchors because we don't use technically use
 	// it. We only pass it on to the TLS compartment which we assume will
@@ -640,9 +641,7 @@ SObj mqtt_connect(Timeout                    *t,
 	// Prepare the low-level MQTT API connect call.
 	MQTTConnectInfo_t connectInfo = {0};
 
-	// We want to create a new session with the broker.
-	connectInfo.cleanSession = true;
-
+	connectInfo.cleanSession           = newSession;
 	connectInfo.pClientIdentifier      = clientID;
 	connectInfo.clientIdentifierLength = clientIDLength;
 
@@ -694,10 +693,18 @@ SObj mqtt_connect(Timeout                    *t,
 		return nullptr;
 	}
 
-	// Since we requested a clean session, sessionPresent should be false
-	Debug::Assert(sessionPresent == false,
-	              "Successfully connected, but a previous session was "
-	              "unexpectedly present.");
+	if (newSession)
+	{
+		Debug::Assert(sessionPresent == false,
+		              "Successfully connected, but a previous session was "
+		              "unexpectedly present (client ID re-used?).");
+	}
+	else
+	{
+		Debug::Assert(
+		  sessionPresent == true,
+		  "Successfully connected, but there was no previous session.");
+	}
 
 	Debug::log("Connected to the broker {}.", hostCapability);
 

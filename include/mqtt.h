@@ -51,6 +51,11 @@ typedef void __cheri_callback (*MQTTAckCallback)(uint16_t packetID,
  * as the broker will terminate the connection with the client which previously
  * using this ID.
  *
+ * If `newSession` is set to `true`, a new session will be started with the
+ * broker. When `false`, the broker will be asked to resume a session
+ * previously started under the same client ID. Only in this case can a client
+ * ID be safely re-used. This parameter is `true` by default in the C++ API.
+ *
  * `networkBufferSize` represents the total size of send and receive buffers.
  *
  * `incomingPublishCount` and `outgoingPublishCount` are relevant for QoS
@@ -90,7 +95,8 @@ SObj __cheri_compartment("MQTT")
                size_t                      incomingPublishCount,
                size_t                      outgoingPublishCount,
                const char                 *clientID,
-               size_t                      clientIDLength);
+               size_t                      clientIDLength,
+               bool newSession             __if_cxx(= true));
 
 // TODO add an API to connect to a broker with a client certificate.
 
