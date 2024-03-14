@@ -45,9 +45,11 @@ typedef void __cheri_callback (*MQTTAckCallback)(uint16_t packetID,
  * to an array of `trustAnchorsCount` trust anchors.
  *
  * The client will be identified by the broker as `clientID` (of length
- * `clientIDLength`), which must be unique for the broker. Do not launch
- * multiple clients with the same client ID (the broker will terminate the
- * connection with the client which previously claimed with this ID).
+ * `clientIDLength`), which must be unique for the broker. `clientID` must be a
+ * valid MQTT 3.1.1 client ID (no null terminator, only characters of a-z, A-Z,
+ * 0-9, length <= 23). Do not launch multiple clients with the same client ID,
+ * as the broker will terminate the connection with the client which previously
+ * using this ID.
  *
  * `networkBufferSize` represents the total size of send and receive buffers.
  *
@@ -57,7 +59,8 @@ typedef void __cheri_callback (*MQTTAckCallback)(uint16_t packetID,
  *
  * The client ID must remain valid during the execution of function. Freeing
  * the buffer concurrently may result in caller data being leaked to the broker
- * through the client ID.
+ * through the client ID. The client ID does not need to be valid across calls
+ * to this API and can therefore be freed after `mqtt_connect` returned.
  *
  * This function can fail if, among others:
  *
@@ -257,3 +260,27 @@ int __cheri_compartment("MQTT") mqtt_unsubscribe(Timeout    *t,
  *               library. Try again.
  */
 int __cheri_compartment("MQTT") mqtt_run(Timeout *t, SObj mqttHandle);
+
+/**
+ * Generate a valid, random MQTT 3.1.1 client ID of length `length` into
+ * `buffer`, for passing to `mqtt_connect`.
+ *
+ * `length` must be > 0 and <= 23. Note that the smaller `length` is, the
+ * higher the risk of client ID collisions, which, depending on the broker
+ * implementation of MQTT, may result in arbitrary termination of clients.
+ *
+ * Note that the random output of this function may not be evenly distributed
+ * over the allowed character set of client IDs.
+ *
+ * Note that client IDs are NOT zero-terminated, following the MQTT 3.1.1
+ * specification.
+ *
+ * The return value is zero if the client ID was successfully generated, or a
+ * negative error code.
+ *
+ * The negative values will be errno values:
+ *
+ *  - `-EINVAL`: A parameter is not valid.
+ */
+int __cheri_compartment("MQTT")
+  mqtt_generate_client_id(char *buffer, size_t length);
