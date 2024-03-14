@@ -123,7 +123,9 @@ int __cheri_compartment("MQTT")
  * Publish on a given MQTT connection.
  *
  * The parameters `topic` and `payload` (and related lengths `topicLength` and
- * `payloadLength`) indicate the topic and payload.
+ * `payloadLength`) indicate the topic and payload. `topic` must be a valid
+ * MQTT 3.1.1 topic (i.e., it must not include the zero terminator and must be
+ * at least one-character long).
  *
  * `qos` indicates the level of QoS (0, 1, or 2).
  *
@@ -165,7 +167,9 @@ int __cheri_compartment("MQTT") mqtt_publish(Timeout    *t,
 /**
  * Subscribe on a given MQTT connection.
  *
- * The parameters `filter` indicates on which topic to subscribe.
+ * The parameter `filter` (of length `filterLength`) indicates on which topic
+ * to subscribe. `filter` must be a valid MQTT 3.1.1 filter (i.e., it must not
+ * include the zero terminator and must be at least one-character long).
  *
  * `qos` indicates the level of QoS (0, 1, or 2).
  *
@@ -204,7 +208,9 @@ int __cheri_compartment("MQTT") mqtt_subscribe(Timeout    *t,
 /**
  * Unsubscribe on a given MQTT connection.
  *
- * The parameters `filter` indicates on which topic to unsubscribe.
+ * The parameter `filter` (of length `filterLength`) indicates on which topic
+ * to unsubscribe. `filter` must be a valid MQTT 3.1.1 filter (i.e., it must
+ * not include the zero terminator and must be at least one-character long).
  *
  * `qos` indicates the level of QoS (0, 1, or 2).
  *

@@ -267,6 +267,23 @@ namespace
 	}
 
 	/**
+	 * Helper to check if a buffer contains a \0 character.
+	 */
+	bool has_null_character(const char *buffer, size_t length)
+	{
+		// TODO use `memchr` (or a string view and `find`) when
+		// available
+		for (size_t i = 0; i < length; i++)
+		{
+			if (buffer[i] == '\0')
+			{
+				return true;
+			}
+		}
+		return false;
+	}
+
+	/**
 	 * Callback provided to coreMQTT.
 	 *
 	 * Provides transport interface for receiving data on the network.
@@ -800,6 +817,31 @@ int mqtt_publish(Timeout    *t,
 		return -EINVAL;
 	}
 
+	/**
+	 * Validate the topic (done similarly with the filter in
+	 * `mqtt_subscribe` and `mqtt_unsubscribe`). Without these checks, we
+	 * would send an invalid PUBLISH to the broker, causing our connection
+	 * to be terminated. Since these are only there for convenience / not
+	 * security-relevant, only enable in debug mode.
+	 */
+
+	if constexpr (DebugMQTT)
+	{
+		// Note from the MQTT 3.1.1 spec: 'All Topic Names and Topic Filters
+		// MUST be at least one character long'
+		if (topicLength < 1)
+		{
+			return -EINVAL;
+		}
+
+		// Note from the MQTT 3.1.1 spec: 'Topic Names and Topic Filters MUST
+		// NOT include the null character'
+		if (has_null_character(topic, topicLength))
+		{
+			return -EINVAL;
+		}
+	}
+
 	return with_sealed_mqtt_context(
 	  t, mqttHandle, [&](CHERIoTMqttContext *connection) {
 		  MQTTContext_t    *coreMQTTContext = &connection->coreMQTTContext;
@@ -848,6 +890,19 @@ int mqtt_subscribe(Timeout    *t,
 		return -EINVAL;
 	}
 
+	if constexpr (DebugMQTT)
+	{
+		if (filterLength < 1)
+		{
+			return -EINVAL;
+		}
+
+		if (has_null_character(filter, filterLength))
+		{
+			return -EINVAL;
+		}
+	}
+
 	return with_sealed_mqtt_context(
 	  t, mqttHandle, [&](CHERIoTMqttContext *connection) {
 		  MQTTContext_t *coreMQTTContext = &connection->coreMQTTContext;
@@ -894,6 +949,19 @@ int mqtt_unsubscribe(Timeout    *t,
 	if (qos > MQTTQoS2)
 	{
 		return -EINVAL;
+	}
+
+	if constexpr (DebugMQTT)
+	{
+		if (filterLength < 1)
+		{
+			return -EINVAL;
+		}
+
+		if (has_null_character(filter, filterLength))
+		{
+			return -EINVAL;
+		}
 	}
 
 	return with_sealed_mqtt_context(
