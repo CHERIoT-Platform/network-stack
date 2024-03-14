@@ -58,12 +58,6 @@ namespace
 		SObj tlsHandle;
 
 		/**
-		 * The allocator used to allocate memory for this object.  Needed for
-		 * freeing it and for allocating internal buffers.
-		 */
-		SObj allocator;
-
-		/**
 		 * MQTT internal buffers. We must keep a link to them here for
 		 * freeing.
 		 */
@@ -80,7 +74,7 @@ namespace
 		 * track of all allocated objects to free them later on.
 		 */
 		CHERIoTMqttContext(SObj tlsHandle, SObj allocator)
-		  : tlsHandle{tlsHandle}, allocator{allocator}
+		  : tlsHandle{tlsHandle}
 		{
 		}
 
@@ -212,9 +206,7 @@ namespace
 				return -ETIMEDOUT;
 			}
 			unsealed->lock.upgrade_for_destruction();
-			ssize_t ret = callback(unsealed);
-			token_obj_destroy(unsealed->allocator, mqtt_key(), sealed);
-			return ret;
+			return callback(unsealed);
 		}
 		else if (LockGuard g{unsealed->lock, timeout})
 		{
@@ -628,7 +620,7 @@ SObj mqtt_connect(Timeout                    *t,
 	return sealedContext.release();
 }
 
-int mqtt_disconnect(Timeout *t, SObj mqttHandle)
+int mqtt_disconnect(Timeout *t, SObj allocator, SObj mqttHandle)
 {
 	if (!check_timeout_pointer(t))
 	{
@@ -707,6 +699,7 @@ int mqtt_disconnect(Timeout *t, SObj mqttHandle)
 	  mqttHandle,
 	  [&](CHERIoTMqttContext *connection) {
 		  connection->~CHERIoTMqttContext();
+		  token_obj_destroy(allocator, mqtt_key(), mqttHandle);
 		  return 0;
 	  },
 	  true /* grab the context in destruct mode */);

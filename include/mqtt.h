@@ -94,6 +94,8 @@ SObj __cheri_compartment("MQTT")
 /**
  * Close a TLS-tunneled MQTT connection.
  *
+ * The state for the MQTT connection will be deallocated with `allocator`.
+ *
  * The return value is zero if the connection was successfully terminated, or a
  * negative error code.
  *
@@ -111,7 +113,8 @@ SObj __cheri_compartment("MQTT")
  * Note that, in the case of a negative error return value, the connection has
  * *not* been terminated, and the resources *not* freed.
  */
-int __cheri_compartment("MQTT") mqtt_disconnect(Timeout *t, SObj mqttHandle);
+int __cheri_compartment("MQTT")
+  mqtt_disconnect(Timeout *t, SObj allocator, SObj mqttHandle);
 
 /**
  * Publish on a given MQTT connection.

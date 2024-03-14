@@ -227,7 +227,7 @@ void __cheri_compartment("mqtt_example") example()
 	Debug::log("Disconnecting from the broker.", testTopic);
 
 	t   = Timeout{MS_TO_TICKS(5000)};
-	ret = mqtt_disconnect(&t, handle);
+	ret = mqtt_disconnect(&t, STATIC_SEALED_VALUE(mqttTestMalloc), handle);
 
 	if (ret < 0)
 	{
