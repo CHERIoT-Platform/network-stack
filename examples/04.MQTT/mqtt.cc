@@ -17,12 +17,14 @@ using CHERI::Capability;
 using Debug            = ConditionalDebug<true, "MQTT example">;
 constexpr bool UseIPv6 = CHERIOT_RTOS_OPTION_IPv6;
 
-// The client ID is used by the broker to identify the client. It should be
-// unique per client. Since this is hard-coded, this means we cannot launch
-// multiple concurrent instances of this example on a same test server.
-// TODO it would be nice to generate automatically.
-constexpr const char  *clientID       = "anoncheri42";
-constexpr const size_t clientIDLength = sizeof(clientID);
+/// Maximum permitted MQTT client identifier length (from the MQTT
+/// specification)
+constexpr size_t MQTTMaximumClientLength = 23;
+/// Prefix for MQTT client identifier
+constexpr std::string_view clientIDPrefix{"cheriotMQTT"};
+/// Space for the random client ID.
+std::array<char, MQTTMaximumClientLength> clientID;
+static_assert(clientIDPrefix.size() < clientID.size());
 
 // MQTT network buffer sizes
 constexpr const size_t networkBufferSize    = 1024;
@@ -114,6 +116,13 @@ void __cheri_compartment("mqtt_example") example()
 	auto heapAtStart =
 	  heap_quota_remaining(STATIC_SEALED_VALUE(mqttTestMalloc));
 
+	Debug::log("Generating client ID...");
+	// Prefix with something recognizable, for convenience.
+	memcpy(clientID.data(), clientIDPrefix.data(), clientIDPrefix.size());
+	// Suffix with random character chain.
+	mqtt_generate_client_id(clientID.data() + clientIDPrefix.size(),
+	                        clientID.size() - clientIDPrefix.size());
+
 	Debug::log("Connecting to MQTT broker...");
 
 	SObj handle = mqtt_connect(&t,
@@ -126,8 +135,8 @@ void __cheri_compartment("mqtt_example") example()
 	                           networkBufferSize,
 	                           incomingPublishCount,
 	                           outgoingPublishCount,
-	                           clientID,
-	                           clientIDLength);
+	                           clientID.data(),
+	                           clientID.size());
 
 	if (!Capability{handle}.is_valid())
 	{

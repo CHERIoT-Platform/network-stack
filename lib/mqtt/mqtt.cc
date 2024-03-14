@@ -9,6 +9,7 @@
 #include <mqtt.h>
 #include <platform-entropy.hh>
 #include <stdlib.h>
+#include <string_view>
 #include <transport_interface.h>
 
 using CHERI::Capability;
@@ -104,6 +105,15 @@ namespace
 
 	{
 		return STATIC_SEALING_TYPE(MQTTHandle);
+	}
+
+	/**
+	 * Returns a weak pseudo-random number.
+	 */
+	uint64_t rand()
+	{
+		static EntropySource rng;
+		return rng();
 	}
 
 	/**
@@ -214,6 +224,46 @@ namespace
 		}
 		Debug::log("Failed to acquire lock on MQTT context");
 		return -ETIMEDOUT;
+	}
+
+	/**
+	 * Note from the MQTT 3.1.1 spec:
+	 * The Server MUST allow ClientIds which are between 1 and 23 UTF-8 encoded
+	 * bytes in length, and that contain only the characters
+	 * "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+	 *
+	 * Note from us: UTF-8 encoding of 0-9, a-z, A-Z, is 1 Byte per
+	 * character.
+	 */
+	constexpr const char clientIDCharacters[] =
+	  "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
+	constexpr const int MQTTMaximumClientIDSize = 23;
+
+	/**
+	 * Helper to check if a client ID is valid according to the MQTT
+	 * specification.
+	 */
+	bool is_valid_client_id(std::string_view id)
+	{
+		if (id.size() > MQTTMaximumClientIDSize || id.size() == 0)
+		{
+			return false;
+		}
+
+		for (char c : id)
+		{
+			switch (c)
+			{
+				default:
+					return false;
+				case '0' ... '9':
+				case 'a' ... 'z':
+				case 'A' ... 'Z':
+					continue;
+			}
+		}
+
+		return true;
 	}
 
 	/**
@@ -452,6 +502,15 @@ SObj mqtt_connect(Timeout                    *t,
 		return nullptr;
 	}
 
+	if constexpr (DebugMQTT)
+	{
+		if (!is_valid_client_id({clientID, clientIDLength}))
+		{
+			Debug::log("Passed invalid client ID.");
+			return nullptr;
+		}
+	}
+
 	// Allocate MQTT internal buffers as part of the sealed allocation.
 	// Note: no explicit zero-ing needed here (unlike suggested by
 	// coreMQTT), we can assume that the allocator zeroes out for us.
@@ -570,7 +629,8 @@ SObj mqtt_connect(Timeout                    *t,
 	connectInfo.pClientIdentifier      = clientID;
 	connectInfo.clientIdentifierLength = clientIDLength;
 
-	Debug::log("Using client ID {}", connectInfo.pClientIdentifier);
+	Debug::log("Using client ID {}",
+	           std::string_view(clientID, clientIDLength));
 
 	// Note: there are a number of optional fields in connectInfo to
 	// specify a keepalive (`connectInfo.keepAliveSeconds`), a username
@@ -928,4 +988,32 @@ int mqtt_run(Timeout *t, SObj mqttHandle)
 
 		  return 0;
 	  });
+}
+
+int mqtt_generate_client_id(char *buffer, size_t length)
+{
+	auto characters =
+	  std::string_view(clientIDCharacters, sizeof(clientIDCharacters) - 1);
+
+	if ((length > MQTTMaximumClientIDSize) || (length == 0))
+	{
+		return -EINVAL;
+	}
+
+	if (!CHERI::check_pointer(buffer, length))
+	{
+		return -EINVAL;
+	}
+
+	for (size_t i = 0; i < length; i++)
+	{
+		// Select a character at random.
+		// Note: biased because of the modulo, see API documentation
+		buffer[i] = characters[rand() % characters.size()];
+	}
+
+	Debug::Assert(is_valid_client_id({buffer, length}),
+	              "`mqtt_generate_client_id` generated an invalid client ID.");
+
+	return 0;
 }
