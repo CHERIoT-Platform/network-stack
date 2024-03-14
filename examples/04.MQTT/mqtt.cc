@@ -40,8 +40,8 @@ DECLARE_AND_DEFINE_CONNECTION_CAPABILITY(MosquittoOrgMQTT,
 
 DECLARE_AND_DEFINE_ALLOCATOR_CAPABILITY(mqttTestMalloc, 32 * 1024);
 
-const char *testTopic   = "cherries";
-const int   testPayload = 42;
+constexpr std::string_view testTopic{"cherries"};
+constexpr std::string_view testPayload{"MORELLO"};
 
 static int ackReceived     = 0;
 static int publishReceived = 0;
@@ -151,8 +151,8 @@ void __cheri_compartment("mqtt_example") example()
 	ret = mqtt_subscribe(&t,
 	                     handle,
 	                     1, // QoS 1 = delivered at least once
-	                     testTopic,
-	                     sizeof(testTopic));
+	                     testTopic.data(),
+	                     testTopic.size());
 
 	if (ret < 0)
 	{
@@ -180,10 +180,10 @@ void __cheri_compartment("mqtt_example") example()
 	ret = mqtt_publish(&t,
 	                   handle,
 	                   1, // QoS 1 = delivered at least once
-	                   testTopic,
-	                   sizeof(testTopic),
-	                   static_cast<const void *>(&testPayload),
-	                   sizeof(testPayload));
+	                   testTopic.data(),
+	                   testTopic.size(),
+	                   static_cast<const void *>(testPayload.data()),
+	                   testPayload.size());
 
 	if (ret < 0)
 	{
@@ -212,8 +212,8 @@ void __cheri_compartment("mqtt_example") example()
 	ret = mqtt_unsubscribe(&t,
 	                       handle,
 	                       1, // QoS 1 = delivered at least once
-	                       testTopic,
-	                       sizeof(testTopic));
+	                       testTopic.data(),
+	                       testTopic.size());
 
 	if (ret < 0)
 	{
@@ -233,7 +233,7 @@ void __cheri_compartment("mqtt_example") example()
 		}
 	}
 
-	Debug::log("Disconnecting from the broker.", testTopic);
+	Debug::log("Disconnecting from the broker.");
 
 	t   = Timeout{MS_TO_TICKS(5000)};
 	ret = mqtt_disconnect(&t, STATIC_SEALED_VALUE(mqttTestMalloc), handle);
