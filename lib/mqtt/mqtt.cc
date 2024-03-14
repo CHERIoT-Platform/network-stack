@@ -40,6 +40,11 @@ struct NetworkContext
 	 * `MQTT_Init`.
 	 */
 	MQTTAckCallback ackCallback;
+
+	/**
+	 * Flag set when the connection is terminated.
+	 */
+	bool isDisconnected;
 };
 
 namespace
@@ -108,22 +113,6 @@ namespace
 	}
 
 	/**
-	 * Helper to determine if a passed TLS connection is terminated. This
-	 * is useful to diagnose coreMQTT failures and return a clear error
-	 * code to the caller.
-	 */
-	bool is_tls_terminated(SObj tlsHandle)
-	{
-		// If the link fails with -ENOTCONN as part of `transport_recv`
-		// or `transport_send`, the `tlsHandle` is invalidated.
-		if (!Capability{tlsHandle}.is_valid())
-		{
-			return true;
-		}
-		return false;
-	}
-
-	/**
 	 * Helper to run a callback, accounting for its runtime in the timeout
 	 * object.
 	 */
@@ -163,7 +152,7 @@ namespace
 				{
 					// If the TLS link is still live, try
 					// again until we are out of time.
-					if (is_tls_terminated(connection->tlsHandle))
+					if (connection->networkContext.isDisconnected)
 					{
 						return -ECONNABORTED;
 					}
@@ -286,13 +275,11 @@ namespace
 			// retried.
 			received = 0;
 		}
-
-		// TODO The TLS layer currently return 0 when the link fails.
-		// This is not great, because it prevents us from cleanly
-		// determining whether or not the link is still live. We should
-		// modify TLS to return `-ENOTCONN` in that case, and add a
-		// check for that error here afterwards. If the link is dead,
-		// we should close and null out the `tlsHandle` field.
+		else if (received == -ENOTCONN)
+		{
+			// The TCP/TLS link is dead
+			networkContext->isDisconnected = true;
+		}
 
 		return received;
 	}
@@ -338,9 +325,11 @@ namespace
 			// retried.
 			sent = 0;
 		}
-
-		// TODO Same comment here regarding `-ENOTCONN` as for
-		// `transport_recv`.
+		else if (sent == -ENOTCONN)
+		{
+			// The TCP/TLS link is dead
+			networkContext->isDisconnected = true;
+		}
 
 		return sent;
 	}
@@ -660,6 +649,13 @@ int mqtt_disconnect(Timeout *t, SObj mqttHandle)
 		  MQTTStatus_t   status;
 		  do
 		  {
+			  if (connection->networkContext.isDisconnected)
+			  {
+				  // If the connection is dropped, nothing to
+				  // do here other than tear it down.
+				  return 0;
+			  }
+
 			  status = with_elapse_timeout(t, [&]() {
 				  // `MQTT_ProcessLoop` handles keepalive.
 				  return MQTT_Disconnect(coreMQTTContext);
@@ -672,20 +668,6 @@ int mqtt_disconnect(Timeout *t, SObj mqttHandle)
 				  if (status == MQTTNoMemory)
 				  {
 					  return -ENOMEM;
-				  }
-				  else if (status == MQTTSendFailed)
-				  {
-					  if (is_tls_terminated(connection->tlsHandle))
-					  {
-						  // This is a special case.
-						  // `MQTT_Disconnect` failed to
-						  // disconnect us, but we realized
-						  // that the TLS link is dead anyways.
-						  // In that case, we can consider the
-						  // connection successfully terminated
-						  // and proceed freeing resources.
-						  return 0;
-					  }
 				  }
 				  else if (status == MQTTBadParameter)
 				  {
@@ -916,7 +898,7 @@ int mqtt_run(Timeout *t, SObj mqttHandle)
 				  {
 					  // If the TLS link is still live, try
 					  // again until we are out of time.
-					  if (is_tls_terminated(connection->tlsHandle))
+					  if (connection->networkContext.isDisconnected)
 					  {
 						  return -ECONNABORTED;
 					  }
