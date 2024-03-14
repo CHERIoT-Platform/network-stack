@@ -662,6 +662,13 @@ SObj mqtt_connect(Timeout                    *t,
 			// likely a bug in this code), retrying won't help.
 			break;
 		}
+
+		if (context->networkContext.isDisconnected)
+		{
+			// If the link died, retrying won't help.
+			Debug::log("Connection aborted while connecting.");
+			break;
+		}
 	} while (t->remaining > 0 && ret != MQTTSuccess);
 
 	if (ret != MQTTSuccess)
