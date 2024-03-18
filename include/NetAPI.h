@@ -152,8 +152,8 @@ NetworkReceiveResult __cheri_compartment("TCPIP")
  * passing it to this function if they are worried about a potentially
  * compromised network stack.
  *
- * The return value is either the number of bytes received, zero if the
- * connection is closed, or a negative error code.
+ * The return value is either the number of bytes received, or a negative error
+ * code.
  *
  * The negative values will be errno values:
  *
