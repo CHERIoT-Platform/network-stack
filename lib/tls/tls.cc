@@ -314,6 +314,10 @@ namespace
 			  while (true)
 			  {
 				  auto state = br_ssl_engine_current_state(engine);
+				  if ((state & BR_SSL_CLOSED) == BR_SSL_CLOSED)
+				  {
+					  return -ENOTCONN;
+				  }
 				  // If there are data ready to receive, return
 				  // it immediately.
 				  if ((state & BR_SSL_RECVAPP) == BR_SSL_RECVAPP)
@@ -528,6 +532,10 @@ ssize_t tls_connection_send(Timeout *t,
 		  {
 			  forceLoop  = false;
 			  auto state = br_ssl_engine_current_state(engine);
+			  if ((state & BR_SSL_CLOSED) == BR_SSL_CLOSED)
+			  {
+				  return -ENOTCONN;
+			  }
 			  // If there's data ready to send over the network, prioritise
 			  // sending it
 			  if ((state & BR_SSL_SENDREC) == BR_SSL_SENDREC)
