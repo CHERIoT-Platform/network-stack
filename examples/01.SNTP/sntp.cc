@@ -5,7 +5,6 @@
 #include <errno.h>
 #include <fail-simulator-on-error.h>
 #include <memory>
-#include <string_view>
 #include <thread.h>
 #include <tick_macros.h>
 
