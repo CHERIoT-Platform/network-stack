@@ -248,7 +248,11 @@ namespace
 		  t, connection->socket, inputBuffer, length);
 		Debug::log("Network stack returned {}", received);
 		// Any failure here is treated the same way: give up.
-		if (received < 0)
+		// Note: the BearSSL documentation says 'The len value MUST NOT
+		// be 0', so we treat it as an error too. Still, assuming
+		// `network_socket_receive_preallocated` is correctly
+		// implemented, 0 should never be returned.
+		if (received <= 0)
 		{
 			return received;
 		}
