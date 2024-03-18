@@ -264,7 +264,8 @@ namespace
 	__noinline int network_socket_receive_internal(
 	  Timeout                                *timeout,
 	  SObj                                    sealedSocket,
-	  FunctionWrapper<void *(int &available)> prepareBuffer)
+	  FunctionWrapper<void *(int &available)> prepareBuffer,
+	  FunctionWrapper<void(void *buffer)>     freeBuffer)
 	{
 		if (!check_timeout_pointer(timeout))
 		{
@@ -289,10 +290,23 @@ namespace
 					  {
 						  return available;
 					  }
-					  return FreeRTOS_recv(socket->socket,
-					                       buffer,
-					                       available,
-					                       FREERTOS_MSG_DONTWAIT);
+					  // Although FreeRTOS_recv returned a
+					  // positive `available` previously,
+					  // we are not guaranteed that it will
+					  // do so in the second call. Check
+					  // the return value before returning.
+					  int ret = FreeRTOS_recv(socket->socket,
+					                          buffer,
+					                          available,
+					                          FREERTOS_MSG_DONTWAIT);
+					  if (ret > 0)
+					  {
+						  return ret;
+					  }
+
+					  Debug::log("Second recv failed with {}.", ret);
+
+					  freeBuffer(buffer);
 				  }
 				  if (available < 0)
 				  {
@@ -590,7 +604,9 @@ int network_socket_receive_preallocated(Timeout *timeout,
                                         size_t   length)
 {
 	return network_socket_receive_internal(
-	  timeout, sealedSocket, [&](int &available) -> void * {
+	  timeout,
+	  sealedSocket,
+	  [&](int &available) -> void * {
 		  int ret = heap_claim_fast(timeout, buffer);
 		  if (ret != 0)
 		  {
@@ -604,7 +620,8 @@ int network_socket_receive_preallocated(Timeout *timeout,
 		  }
 		  available = length;
 		  return buffer;
-	  });
+	  },
+	  [&](void *buffer) -> void { return; });
 }
 
 NetworkReceiveResult network_socket_receive(Timeout *timeout,
@@ -613,7 +630,9 @@ NetworkReceiveResult network_socket_receive(Timeout *timeout,
 {
 	uint8_t *buffer = nullptr;
 	ssize_t  result = network_socket_receive_internal(
-	   timeout, sealedSocket, [&](int &available) -> void  *{
+	   timeout,
+	   sealedSocket,
+	   [&](int &available) -> void  *{
           do
           {
               // Do the initial allocation without timeout: if the quota or the
@@ -654,7 +673,8 @@ NetworkReceiveResult network_socket_receive(Timeout *timeout,
               }
           } while (buffer == nullptr);
           return buffer;
-	   });
+	   },
+	   [&](void *buffer) -> void { heap_free(mallocCapability, buffer); });
 	return {result, buffer};
 }
 
