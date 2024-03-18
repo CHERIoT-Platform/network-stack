@@ -52,7 +52,7 @@ namespace
 	/// Returns a weak pseudo-random number.
 	uint64_t rand()
 	{
-		EntropySource rng;
+		static EntropySource rng;
 		return rng();
 	}
 
