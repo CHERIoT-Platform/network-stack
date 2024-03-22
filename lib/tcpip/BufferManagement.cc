@@ -93,11 +93,21 @@ void vReleaseNetworkBufferAndDescriptor(
 {
 	if (pxNetworkBuffer != nullptr)
 	{
+		uint8_t *bufferWithoutOffset =
+		  pxNetworkBuffer->pucEthernetBuffer - ipBUFFER_PADDING;
+
 		Debug::log("Freeing descriptor: {} and buffer {}",
 		           pxNetworkBuffer,
-		           pxNetworkBuffer->pucEthernetBuffer);
-		free(pxNetworkBuffer->pucEthernetBuffer);
-		free(pxNetworkBuffer);
+		           bufferWithoutOffset);
+
+		int ret = heap_free(MALLOC_CAPABILITY, bufferWithoutOffset);
+		ret |= heap_free(MALLOC_CAPABILITY, pxNetworkBuffer);
+
+		if (ret != 0)
+		{
+			// This is not supposed to happen.
+			Debug::log("Failed to free network buffer or descriptor.");
+		}
 	}
 }
 
