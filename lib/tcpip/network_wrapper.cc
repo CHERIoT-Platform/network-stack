@@ -496,7 +496,8 @@ int network_socket_connect_tcp_internal(Timeout       *timeout,
 		  {
 			  default:
 				  return -EINVAL;
-			  case 0:
+			  case 0: // success
+			  case -pdFREERTOS_ERRNO_EISCONN: // already connected
 				  Debug::log("Successfully connected to server");
 				  return 0;
 			  case -pdFREERTOS_ERRNO_EWOULDBLOCK:
