@@ -205,6 +205,7 @@ namespace
 		                       &results);
 		if (ret != 0)
 		{
+			// Try with IPv4 if the lookup failed with IPv6
 			if (useIPv6)
 			{
 				return host_resolve(hostname, false);
@@ -237,6 +238,8 @@ namespace
 				           (int)r->ai_addr->sin_address.ulIP_IPv4 >> 24 & 0xff);
 			}
 		}
+
+		FreeRTOS_freeaddrinfo(results);
 		return address;
 	}
 
