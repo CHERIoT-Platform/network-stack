@@ -819,16 +819,7 @@ network_socket_send(Timeout *timeout, SObj socket, void *buffer, size_t length)
 			  return -EPERM;
 		  }
 		  Debug::log("Sending {}-byte TCP packet from {}", length, buffer);
-		  int ret = heap_claim_fast(timeout, buffer);
-		  if (ret < 0)
-		  {
-			  return ret;
-		  }
-		  if (!check_pointer<PermissionSet{Permission::Load}>(buffer, length))
-		  {
-			  return -EPERM;
-		  }
-		  ret = with_freertos_timeout(
+		  int ret = with_freertos_timeout(
 		    timeout, socket->socket, FREERTOS_SO_SNDTIMEO, [&] {
 			    return FreeRTOS_send(socket->socket, buffer, length, 0);
 		    });
