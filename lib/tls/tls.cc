@@ -696,7 +696,6 @@ int tls_connection_close(Timeout *t, SObj sealed)
 		Debug::log("Failed to acquire lock on TLS context during close");
 		return -ETIMEDOUT;
 	}
-	tls->lock.upgrade_for_destruction();
 	auto *engine = &tls->clientContext->eng;
 	br_ssl_engine_close(engine);
 	auto    state = br_ssl_engine_current_state(&tls->clientContext->eng);
@@ -738,6 +737,10 @@ int tls_connection_close(Timeout *t, SObj sealed)
 		}
 		state = br_ssl_engine_current_state(&tls->clientContext->eng);
 	} while ((state & BR_SSL_CLOSED) != BR_SSL_CLOSED);
+	// At this point, we have shut down the TLS connection.  We can now
+	// close the socket and free memory.  This is the point of no return,
+	// so upgrade the lock for destruction.
+	tls->lock.upgrade_for_destruction();
 	auto allocator = tls->allocator;
 	tls->~TLSContext();
 	token_obj_destroy(allocator, tls_key(), sealed);
