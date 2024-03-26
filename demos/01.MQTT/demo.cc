@@ -59,36 +59,14 @@ namespace
 		return rng();
 	}
 
-	/**
-	 * Note from the MQTT 3.1.1 spec:
-	 * The Server MUST allow ClientIds which are between 1 and 23 UTF-8 encoded
-	 * bytes in length, and that contain only the characters
-	 * "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
-	 *
-	 * Note from us:
-	 * UTF-8 encoding of 0-9, a-z, A-Z, is 1 Byte per character, so we should be
-	 * able to do up to a length of 22 characters + zero byte.
-	 */
-	constexpr const int clientIDlength = 23;
-	char                clientID[clientIDlength];
-
-	void randomize_string(char *string, size_t size)
-	{
-		// MQTT 3.1.1 alphabet
-		const char characters[] =
-		  "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
-		if (size)
-		{
-			--size;
-			for (size_t i = 0; i < size; i++)
-			{
-				// Select a character at random.
-				string[i] =
-				  characters[rand() % static_cast<int>(sizeof(characters) - 1)];
-			}
-			string[size] = '\0';
-		}
-	}
+	/// Maximum permitted MQTT client identifier length (from the MQTT
+	/// specification)
+	constexpr size_t MQTTMaximumClientLength = 23;
+	/// Prefix for MQTT client identifier
+	constexpr std::string_view clientIDPrefix{"cherIoTdemo"};
+	/// Space for the random client ID.
+	std::array<char, MQTTMaximumClientLength> clientID;
+	static_assert(clientIDPrefix.size() < clientID.size());
 
 	/**
 	 * Turn an LED on.
@@ -226,10 +204,15 @@ void __cheri_compartment("mqtt_demo") demo()
 		}
 	}
 
+	// Prefix client ID with something recognizable, for convenience.
+	memcpy(clientID.data(), clientIDPrefix.data(), clientIDPrefix.size());
+
 	while (true)
 	{
 		Debug::log("Generating client ID...");
-		randomize_string(clientID, clientIDlength);
+		// Suffix with random character chain.
+		mqtt_generate_client_id(clientID.data() + clientIDPrefix.size(),
+		                        clientID.size() - clientIDPrefix.size());
 
 		Debug::log("Connecting to MQTT broker...");
 		Debug::log("Quota left: {}", heap_quota_remaining(MALLOC_CAPABILITY));
@@ -244,8 +227,8 @@ void __cheri_compartment("mqtt_demo") demo()
 		                           networkBufferSize,
 		                           incomingPublishCount,
 		                           outgoingPublishCount,
-		                           clientID,
-		                           strlen(clientID));
+		                           clientID.data(),
+		                           clientID.size());
 
 		if (!Capability{handle}.is_valid())
 		{
@@ -268,7 +251,7 @@ void __cheri_compartment("mqtt_demo") demo()
 		if (ret < 0)
 		{
 			Debug::log("Failed to subscribe, error {}.", ret);
-			mqtt_disconnect(&t, handle);
+			mqtt_disconnect(&t, STATIC_SEALED_VALUE(mqttTestMalloc), handle);
 			continue;
 		}
 
@@ -284,7 +267,8 @@ void __cheri_compartment("mqtt_demo") demo()
 			if (ret < 0)
 			{
 				Debug::log("Failed to wait for the SUBACK, error {}.", ret);
-				mqtt_disconnect(&t, handle);
+				mqtt_disconnect(
+				  &t, STATIC_SEALED_VALUE(mqttTestMalloc), handle);
 				continue;
 			}
 		}
@@ -376,7 +360,7 @@ void __cheri_compartment("mqtt_demo") demo()
 			coolDown.elapse(timestampAfter.lo - timestampBefore.lo);
 		}
 		Debug::log("Exiting main loop, cleaning up.");
-		mqtt_disconnect(&t, handle);
+		mqtt_disconnect(&t, STATIC_SEALED_VALUE(mqttTestMalloc), handle);
 		// Sleep for a second to allow the network stack to clean up any
 		// outstanding allocations
 		Timeout oneSecond{MS_TO_TICKS(1000)};
