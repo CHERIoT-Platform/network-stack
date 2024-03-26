@@ -724,15 +724,19 @@ int tls_connection_close(Timeout *t, SObj sealed)
 		else if ((state & BR_SSL_RECVREC) == BR_SSL_RECVREC)
 		{
 			int received = receive_records(t, tls);
-			if (received == 0 || received == -ENOTCONN)
-			{
-				// FIXME: Shut down gracefully
-				Debug::log("Connection closed, shutting down");
-				return 0;
-			}
 			if (received == -ETIMEDOUT)
 			{
 				return -ETIMEDOUT;
+			}
+			else if (received <= 0)
+			{
+				// If we failed for any reason other than
+				// timeout, the socket is likely unusable
+				// already.  There will be no graceful cleanup,
+				// give up and just close the connection.
+				Debug::log("Failed to receive records for graceful close: {}",
+				           received);
+				break;
 			}
 		}
 		state = br_ssl_engine_current_state(&tls->clientContext->eng);
