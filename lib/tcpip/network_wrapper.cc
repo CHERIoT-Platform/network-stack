@@ -828,9 +828,17 @@ network_socket_send(Timeout *timeout, SObj socket, void *buffer, size_t length)
 		  {
 			  return ret;
 		  }
-		  if (ret == -pdFREERTOS_ERRNO_ENOTCONN)
+		  else if (ret == -pdFREERTOS_ERRNO_ENOTCONN)
 		  {
 			  return -ENOTCONN;
+		  }
+		  else if (ret == -pdFREERTOS_ERRNO_ENOMEM)
+		  {
+			  return -ENOMEM;
+		  }
+		  else if (ret == -pdFREERTOS_ERRNO_ENOSPC)
+		  {
+			  return -ETIMEDOUT;
 		  }
 		  // Catchall
 		  Debug::log("Send failed with unexpected error: {}", ret);
