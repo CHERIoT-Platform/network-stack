@@ -7,6 +7,7 @@
 #include <function_wrapper.hh>
 #include <locks.hh>
 #include <platform-entropy.hh>
+#include <timeout.h>
 #include <tls.h>
 #include <token.h>
 
@@ -318,10 +319,10 @@ namespace
 				  {
 					  return -ENOTCONN;
 				  }
-				  // If there are data ready to receive, return
-				  // it immediately.
-				  if ((state & BR_SSL_RECVAPP) == BR_SSL_RECVAPP)
+				  else if ((state & BR_SSL_RECVAPP) == BR_SSL_RECVAPP)
 				  {
+					  // If there are data ready to receive, return
+					  // it immediately.
 					  size_t         unsignedLength;
 					  int            length;
 					  unsigned char *inputBuffer =
@@ -349,7 +350,7 @@ namespace
 					    "Received {} bytes into {}", length, receivedBuffer);
 					  return ssize_t(length);
 				  }
-				  if ((state & BR_SSL_RECVREC) == BR_SSL_RECVREC)
+				  else if ((state & BR_SSL_RECVREC) == BR_SSL_RECVREC)
 				  {
 					  int received = receive_records(t, connection);
 					  if (received == 0 || received == -ENOTCONN)
@@ -479,6 +480,9 @@ SObj tls_connection_create(Timeout                    *t,
 	Debug::log("Resetting TLS connection for {}", hostname);
 	br_ssl_client_reset(context->clientContext, hostname, 0);
 
+	// Note from the BearSSL API spec: 'The first time the sendapp channel
+	// opens marks the completion of the initial handshake'. We are thus
+	// safe to return as soon as we see the first `BR_SSL_SENDAPP` flag.
 	for (auto state = br_ssl_engine_current_state(engine);
 	     ((state & (BR_SSL_SENDAPP)) == 0);
 	     state = br_ssl_engine_current_state(engine))
@@ -493,9 +497,9 @@ SObj tls_connection_create(Timeout                    *t,
 			           br_ssl_engine_last_error(engine));
 			return nullptr;
 		}
-		// If we need to send records, send them first.
-		if ((state & BR_SSL_SENDREC) == BR_SSL_SENDREC)
+		else if ((state & BR_SSL_SENDREC) == BR_SSL_SENDREC)
 		{
+			// If we need to send records, send them first.
 			auto [sent, unfinished] = send_records(t, context);
 			if (sent <= 0)
 			{
@@ -536,10 +540,10 @@ ssize_t tls_connection_send(Timeout *t,
 			  {
 				  return -ENOTCONN;
 			  }
-			  // If there's data ready to send over the network, prioritise
-			  // sending it
-			  if ((state & BR_SSL_SENDREC) == BR_SSL_SENDREC)
+			  else if ((state & BR_SSL_SENDREC) == BR_SSL_SENDREC)
 			  {
+				  // If there's data ready to send over the network, prioritise
+				  // sending it
 				  auto [sent, unfinished] = send_records(t, connection);
 				  if (sent <= 0)
 				  {
@@ -587,8 +591,12 @@ ssize_t tls_connection_send(Timeout *t,
 					  thread_sleep(&shortSleep);
 					  t->elapse(shortSleep.elapsed);
 				  }
+				  // Check for timeout. Note that we want to
+				  // run this after the short sleep as we may
+				  // now have timed out.
 				  if (!t->may_block())
 				  {
+					  // Timed out.
 					  break;
 				  }
 			  }
@@ -698,8 +706,7 @@ int tls_connection_close(Timeout *t, SObj sealed)
 	}
 	auto *engine = &tls->clientContext->eng;
 	br_ssl_engine_close(engine);
-	auto    state = br_ssl_engine_current_state(&tls->clientContext->eng);
-	Timeout unlimited{UnlimitedTimeout};
+	auto state = br_ssl_engine_current_state(&tls->clientContext->eng);
 	do
 	{
 		// Silently discard any pending app data

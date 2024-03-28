@@ -458,7 +458,11 @@ SObj network_socket_create_and_bind(Timeout       *timeout,
 
 	freertos_sockaddr localAddress;
 	memset(&localAddress, 0, sizeof(localAddress));
-	localAddress.sin_len    = sizeof(localAddress);
+	localAddress.sin_len = sizeof(localAddress);
+	// Note from the FreeRTOS API spec: 'Specifying a port number of 0 or
+	// passing pxAddress as NULL will result in the socket being bound to a
+	// port number from the private range'. Here, `localPort` will be 0 if
+	// the caller wants to bind to any port.
 	localAddress.sin_port   = FreeRTOS_htons(localPort);
 	localAddress.sin_family = Family;
 	auto bindResult =
