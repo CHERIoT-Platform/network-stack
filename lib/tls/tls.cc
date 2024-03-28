@@ -7,6 +7,7 @@
 #include <function_wrapper.hh>
 #include <locks.hh>
 #include <platform-entropy.hh>
+#include <timeout.h>
 #include <tls.h>
 #include <token.h>
 
@@ -318,10 +319,10 @@ namespace
 				  {
 					  return -ENOTCONN;
 				  }
-				  // If there are data ready to receive, return
-				  // it immediately.
-				  if ((state & BR_SSL_RECVAPP) == BR_SSL_RECVAPP)
+				  else if ((state & BR_SSL_RECVAPP) == BR_SSL_RECVAPP)
 				  {
+					  // If there are data ready to receive, return
+					  // it immediately.
 					  size_t         unsignedLength;
 					  int            length;
 					  unsigned char *inputBuffer =
@@ -349,16 +350,18 @@ namespace
 					    "Received {} bytes into {}", length, receivedBuffer);
 					  return ssize_t(length);
 				  }
-				  if ((state & BR_SSL_RECVREC) == BR_SSL_RECVREC)
+				  else if ((state & BR_SSL_RECVREC) == BR_SSL_RECVREC)
 				  {
 					  int received = receive_records(t, connection);
 					  if (received == 0 || received == -ENOTCONN)
 					  {
-						  // FIXME: Shut down gracefully
-						  Debug::log("Connection closed, shutting down");
-						  return 0;
+						  // The link died. After
+						  // getting -ENOTCONN, the
+						  // caller should close the
+						  // TLS socket.
+						  return -ENOTCONN;
 					  }
-					  if (received == -ETIMEDOUT)
+					  else if (received == -ETIMEDOUT)
 					  {
 						  return -ETIMEDOUT;
 					  }
@@ -479,23 +482,24 @@ SObj tls_connection_create(Timeout                    *t,
 	Debug::log("Resetting TLS connection for {}", hostname);
 	br_ssl_client_reset(context->clientContext, hostname, 0);
 
+	// Note from the BearSSL API spec: 'The first time the sendapp channel
+	// opens marks the completion of the initial handshake'. We are thus
+	// safe to return as soon as we see the first `BR_SSL_SENDAPP` flag.
 	for (auto state = br_ssl_engine_current_state(engine);
 	     ((state & (BR_SSL_SENDAPP)) == 0);
 	     state = br_ssl_engine_current_state(engine))
 	{
 		Debug::log("TLS state: {}", state);
 		Debug::log("Last error: {}", br_ssl_engine_last_error(engine));
-		// FIXME: This will do the wrong thing if we time out during TLS
-		// negotiation.
 		if ((state & BR_SSL_CLOSED) == BR_SSL_CLOSED)
 		{
 			Debug::log("Connection closed, last error: {}",
 			           br_ssl_engine_last_error(engine));
 			return nullptr;
 		}
-		// If we need to send records, send them first.
-		if ((state & BR_SSL_SENDREC) == BR_SSL_SENDREC)
+		else if ((state & BR_SSL_SENDREC) == BR_SSL_SENDREC)
 		{
+			// If we need to send records, send them first.
 			auto [sent, unfinished] = send_records(t, context);
 			if (sent <= 0)
 			{
@@ -504,7 +508,14 @@ SObj tls_connection_create(Timeout                    *t,
 		}
 		else if ((state & BR_SSL_RECVREC) == BR_SSL_RECVREC)
 		{
-			if (receive_records(t, context) < 0)
+			if (receive_records(t, context) <= 0)
+			{
+				return nullptr;
+			}
+		}
+		else
+		{
+			if (!t->may_block())
 			{
 				return nullptr;
 			}
@@ -536,10 +547,10 @@ ssize_t tls_connection_send(Timeout *t,
 			  {
 				  return -ENOTCONN;
 			  }
-			  // If there's data ready to send over the network, prioritise
-			  // sending it
-			  if ((state & BR_SSL_SENDREC) == BR_SSL_SENDREC)
+			  else if ((state & BR_SSL_SENDREC) == BR_SSL_SENDREC)
 			  {
+				  // If there's data ready to send over the network, prioritise
+				  // sending it
 				  auto [sent, unfinished] = send_records(t, connection);
 				  if (sent <= 0)
 				  {
@@ -587,8 +598,9 @@ ssize_t tls_connection_send(Timeout *t,
 					  thread_sleep(&shortSleep);
 					  t->elapse(shortSleep.elapsed);
 				  }
-				  if (!t->may_block())
+				  else
 				  {
+					  // Timed out.
 					  break;
 				  }
 			  }
@@ -696,11 +708,9 @@ int tls_connection_close(Timeout *t, SObj sealed)
 		Debug::log("Failed to acquire lock on TLS context during close");
 		return -ETIMEDOUT;
 	}
-	tls->lock.upgrade_for_destruction();
 	auto *engine = &tls->clientContext->eng;
 	br_ssl_engine_close(engine);
-	auto    state = br_ssl_engine_current_state(&tls->clientContext->eng);
-	Timeout unlimited{UnlimitedTimeout};
+	auto state = br_ssl_engine_current_state(&tls->clientContext->eng);
 	do
 	{
 		// Silently discard any pending app data
@@ -725,19 +735,27 @@ int tls_connection_close(Timeout *t, SObj sealed)
 		else if ((state & BR_SSL_RECVREC) == BR_SSL_RECVREC)
 		{
 			int received = receive_records(t, tls);
-			if (received == 0 || received == -ENOTCONN)
-			{
-				// FIXME: Shut down gracefully
-				Debug::log("Connection closed, shutting down");
-				return 0;
-			}
 			if (received == -ETIMEDOUT)
 			{
 				return -ETIMEDOUT;
 			}
+			else if (received <= 0)
+			{
+				// If we failed for any reason other than
+				// timeout, the socket is likely unusable
+				// already.  There will be no graceful cleanup,
+				// give up and just close the connection.
+				Debug::log("Failed to receive records for graceful close: {}",
+				           received);
+				break;
+			}
 		}
 		state = br_ssl_engine_current_state(&tls->clientContext->eng);
 	} while ((state & BR_SSL_CLOSED) != BR_SSL_CLOSED);
+	// At this point, we have shut down the TLS connection.  We can now
+	// close the socket and free memory.  This is the point of no return,
+	// so upgrade the lock for destruction.
+	tls->lock.upgrade_for_destruction();
 	auto allocator = tls->allocator;
 	tls->~TLSContext();
 	token_obj_destroy(allocator, tls_key(), sealed);

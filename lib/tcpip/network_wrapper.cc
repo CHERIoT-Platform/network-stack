@@ -455,6 +455,10 @@ SObj network_socket_create_and_bind(Timeout       *timeout,
 	freertos_sockaddr localAddress;
 	memset(&localAddress, 0, sizeof(localAddress));
 	localAddress.sin_len    = sizeof(localAddress);
+	// Note from the FreeRTOS API spec: 'Specifying a port number of 0 or
+	// passing pxAddress as NULL will result in the socket being bound to a
+	// port number from the private range'. Here, `localPort` will be 0 if
+	// the caller wants to bind to any port.
 	localAddress.sin_port   = FreeRTOS_htons(localPort);
 	localAddress.sin_family = Family;
 	auto bindResult =
@@ -815,16 +819,7 @@ network_socket_send(Timeout *timeout, SObj socket, void *buffer, size_t length)
 			  return -EPERM;
 		  }
 		  Debug::log("Sending {}-byte TCP packet from {}", length, buffer);
-		  int ret = heap_claim_fast(timeout, buffer);
-		  if (ret < 0)
-		  {
-			  return ret;
-		  }
-		  if (!check_pointer<PermissionSet{Permission::Load}>(buffer, length))
-		  {
-			  return -EPERM;
-		  }
-		  ret = with_freertos_timeout(
+		  int ret = with_freertos_timeout(
 		    timeout, socket->socket, FREERTOS_SO_SNDTIMEO, [&] {
 			    return FreeRTOS_send(socket->socket, buffer, length, 0);
 		    });
@@ -833,9 +828,17 @@ network_socket_send(Timeout *timeout, SObj socket, void *buffer, size_t length)
 		  {
 			  return ret;
 		  }
-		  if (ret == -pdFREERTOS_ERRNO_ENOTCONN)
+		  else if (ret == -pdFREERTOS_ERRNO_ENOTCONN)
 		  {
 			  return -ENOTCONN;
+		  }
+		  else if (ret == -pdFREERTOS_ERRNO_ENOMEM)
+		  {
+			  return -ENOMEM;
+		  }
+		  else if (ret == -pdFREERTOS_ERRNO_ENOSPC)
+		  {
+			  return -ETIMEDOUT;
 		  }
 		  // Catchall
 		  Debug::log("Send failed with unexpected error: {}", ret);
