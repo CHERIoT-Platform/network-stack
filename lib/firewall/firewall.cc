@@ -1,7 +1,6 @@
 // Copyright SCI Semiconductor and CHERIoT Contributors.
 // SPDX-License-Identifier: MIT
 
-
 #include "firewall.h"
 #include <atomic>
 #include <compartment-macros.h>
@@ -134,7 +133,7 @@ namespace
 		/**
 		 * Returns the offset of the start of the body of this packet.
 		 */
-		size_t body_offset() const
+		[[nodiscard]] size_t body_offset() const
 		{
 			return (versionAndHeaderLength & 0xf) * 4;
 		}
@@ -171,7 +170,9 @@ namespace
 			Address  remoteAddress;
 			uint16_t localPort;
 			uint16_t remotePort;
-			auto     operator<=>(const ConnectionTuple &) const = default;
+			// A clang-tidy bug thinks that this should be = nullptr instead of
+			// = default.
+			auto operator<=>(const ConnectionTuple &) const = default; // NOLINT
 		};
 		std::vector<ConnectionTuple> permittedTCPEndpoints;
 		std::vector<ConnectionTuple> permittedUDPEndpoints;
@@ -192,8 +193,7 @@ namespace
 			                protocol == IPProtocolNumber::UDP,
 			              "Invalid protocol for firewall: {}",
 			              protocol);
-			LockGuard g{permittedEndpointsLock};
-			return GuardedTable(std::move(g),
+			return GuardedTable(LockGuard{permittedEndpointsLock},
 			                    protocol == IPProtocolNumber::TCP
 			                      ? permittedTCPEndpoints
 			                      : permittedUDPEndpoints);
@@ -347,10 +347,10 @@ namespace
 					           remoteAddress == &IPv4Header::destinationAddress
 					             ? "to"
 					             : "from",
-					           (int)endpoint & 0xff,
-					           (int)(endpoint >> 8) & 0xff,
-					           (int)(endpoint >> 16) & 0xff,
-					           (int)(endpoint >> 24) & 0xff);
+					           static_cast<int>(endpoint) & 0xff,
+					           static_cast<int>(endpoint >> 8) & 0xff,
+					           static_cast<int>(endpoint >> 16) & 0xff,
+					           static_cast<int>(endpoint >> 24) & 0xff);
 					return true;
 				}
 				return false;
@@ -592,12 +592,14 @@ namespace
 		/**
 		 * Returns the size of an address.
 		 */
-		size_t size() const
+		[[nodiscard]] size_t size() const
 		{
 			return sizeof(bytes);
 		}
 		/// Comparison operator.
-		auto operator<=>(const IPv6Address &) const = default;
+		// A clang-tidy bug thinks that this should be = nullptr instead of =
+		// default.
+		auto operator<=>(const IPv6Address &) const = default; // NOLINT
 	};
 
 	/**

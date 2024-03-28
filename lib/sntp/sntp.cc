@@ -4,6 +4,13 @@
 // Uncomment for useful debugging message on CHERI faults.
 //#include <fail-simulator-on-error.h>
 
+/**
+ * Size of our malloc quota.
+ *
+ * TODO: Figure out how big this actually needs to be.
+ */
+#define MALLOC_QUOTA (16 * 1024)
+
 #include <FreeRTOS-Compat/FreeRTOS.h>
 #include <NetAPI.h>
 #include <algorithm>
@@ -32,13 +39,6 @@ DECLARE_AND_DEFINE_CONNECTION_CAPABILITY(NtpPool,
                                          "pool.ntp.org",
                                          123,
                                          ConnectionType::ConnectionTypeUDP);
-
-/**
- * Out malloc capability.
- *
- * TODO: Figure out how big this actually needs to be.
- */
-DEFINE_ALLOCATOR_CAPABILITY(__default_malloc_capability, 16 * 1024)
 
 struct NetworkContext
 {
@@ -252,7 +252,7 @@ namespace
 		currentUNIXTime.updatingEpoch++;
 		Debug::log("Updated UNIX time");
 		Debug::log("Current UNIX time: {}.{}",
-		           (uint64_t)currentUNIXTime.time.tv_sec,
+		           static_cast<uint64_t>(currentUNIXTime.time.tv_sec),
 		           currentUNIXTime.time.tv_usec);
 	}
 

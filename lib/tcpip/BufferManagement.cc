@@ -89,19 +89,19 @@ pxGetNetworkBufferWithDescriptor(size_t     xRequestedSizeBytes,
  * Free a descriptor and its associated buffer.
  */
 void vReleaseNetworkBufferAndDescriptor(
-  NetworkBufferDescriptor_t *const pxNetworkBuffer)
+  NetworkBufferDescriptor_t *const networkBuffer)
 {
-	if (pxNetworkBuffer != nullptr)
+	if (networkBuffer != nullptr)
 	{
 		uint8_t *bufferWithoutOffset =
-		  pxNetworkBuffer->pucEthernetBuffer - ipBUFFER_PADDING;
+		  networkBuffer->pucEthernetBuffer - ipBUFFER_PADDING;
 
 		Debug::log("Freeing descriptor: {} and buffer {}",
-		           pxNetworkBuffer,
+		           networkBuffer,
 		           bufferWithoutOffset);
 
 		int ret = heap_free(MALLOC_CAPABILITY, bufferWithoutOffset);
-		ret |= heap_free(MALLOC_CAPABILITY, pxNetworkBuffer);
+		ret |= heap_free(MALLOC_CAPABILITY, networkBuffer);
 
 		if (ret != 0)
 		{
@@ -125,9 +125,9 @@ NetworkBufferDescriptor_t *pxNetworkBufferGetFromISR(size_t xRequestedSizeBytes)
  * function is redundant.
  */
 BaseType_t
-vNetworkBufferReleaseFromISR(NetworkBufferDescriptor_t *const pxNetworkBuffer)
+vNetworkBufferReleaseFromISR(NetworkBufferDescriptor_t *const networkBuffer)
 {
-	vReleaseNetworkBufferAndDescriptor(pxNetworkBuffer);
+	vReleaseNetworkBufferAndDescriptor(networkBuffer);
 	return pdTRUE;
 }
 

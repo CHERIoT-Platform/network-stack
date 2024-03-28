@@ -7,20 +7,21 @@
 /**
  * coreSNTP calls the logging macros with parameters wrapped in double
  * parentheses, which explains why we need an indirection (`LogError` redirects
- * to `LogFunction`) and call the second printf without parentheses.
+ * to `PRINT_LOG_MESSAGE`) and call the second printf without parentheses.
  */
-#	define LogFunction(LEVEL, ...)                                            \
+#	define PRINT_LOG_MESSAGE(LEVEL, ...)                                      \
 		printf(LEVEL);                                                         \
 		printf __VA_ARGS__;                                                    \
 		printf("\n");
 #else
-#	define LogFunction(LEVEL, ...)                                            \
+#	define PRINT_LOG_MESSAGE(LEVEL, ...)                                      \
 		do                                                                     \
 		{                                                                      \
 		} while (0)
 #endif
 
-#define LogError(...) LogFunction("SNTP Error: ", __VA_ARGS__);
-#define LogWarn(...) LogFunction("SNTP Warn: ", __VA_ARGS__);
-#define LogInfo(...) LogFunction("SNTP Info: ", __VA_ARGS__);
-#define LogDebug(...) LogFunction("SNTP Debug: ", __VA_ARGS__);
+// These macros must match the coreSNTP naming conventions, so don't lint them.
+#define LogError(...) /*NOLINT*/ PRINT_LOG_MESSAGE("SNTP Error: ", __VA_ARGS__)
+#define LogWarn(...) /*NOLINT*/ PRINT_LOG_MESSAGE("SNTP Warn: ", __VA_ARGS__)
+#define LogInfo(...) /*NOLINT*/ PRINT_LOG_MESSAGE("SNTP Info: ", __VA_ARGS__)
+#define LogDebug(...) /*NOLINT*/ PRINT_LOG_MESSAGE("SNTP Debug: ", __VA_ARGS__)

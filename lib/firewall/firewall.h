@@ -98,7 +98,6 @@ void __cheri_compartment("Firewall")
                                           uint16_t localPort,
                                           uint16_t remotePort);
 
-
 /**
  * Open a hole in the firewall for TCP packets to and from the given endpoint.
  * This permits inbound packets to, and outbound packets from, the specified
@@ -107,7 +106,7 @@ void __cheri_compartment("Firewall")
  * This should be called only by the NetAPI compartment.
  */
 void __cheri_compartment("Firewall")
-  firewall_add_tcpipv6_endpoint(uint8_t * remoteAddress,
+  firewall_add_tcpipv6_endpoint(uint8_t *remoteAddress,
                                 uint16_t localPort,
                                 uint16_t remotePort);
 
@@ -119,7 +118,7 @@ void __cheri_compartment("Firewall")
  * This should be called only by the NetAPI compartment.
  */
 void __cheri_compartment("Firewall")
-  firewall_add_udpipv6_endpoint(uint8_t * remoteAddress,
+  firewall_add_udpipv6_endpoint(uint8_t *remoteAddress,
                                 uint16_t localPort,
                                 uint16_t remotePort);
 
@@ -149,7 +148,6 @@ void __cheri_compartment("Firewall")
  * Remove a specific remote UDP endpoint from the firewall.
  */
 void __cheri_compartment("Firewall")
-  firewall_remove_udpipv6_remote_endpoint(uint8_t * remoteAddress,
+  firewall_remove_udpipv6_remote_endpoint(uint8_t *remoteAddress,
                                           uint16_t localPort,
                                           uint16_t remotePort);
-
