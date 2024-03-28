@@ -491,8 +491,6 @@ SObj tls_connection_create(Timeout                    *t,
 	{
 		Debug::log("TLS state: {}", state);
 		Debug::log("Last error: {}", br_ssl_engine_last_error(engine));
-		// FIXME: This will do the wrong thing if we time out during TLS
-		// negotiation.
 		if ((state & BR_SSL_CLOSED) == BR_SSL_CLOSED)
 		{
 			Debug::log("Connection closed, last error: {}",
@@ -511,6 +509,13 @@ SObj tls_connection_create(Timeout                    *t,
 		else if ((state & BR_SSL_RECVREC) == BR_SSL_RECVREC)
 		{
 			if (receive_records(t, context) <= 0)
+			{
+				return nullptr;
+			}
+		}
+		else
+		{
+			if (!t->may_block())
 			{
 				return nullptr;
 			}
