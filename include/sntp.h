@@ -11,13 +11,13 @@
 #include <stdint.h>
 #include <timeout.h>
 
-typedef int64_t  time_t;
-typedef uint32_t suseconds_t;
+typedef int64_t  time_t;      // NOLINT
+typedef uint32_t suseconds_t; // NOLINT
 
-struct timeval
+struct timeval // NOLINT
 {
-	time_t      tv_sec;
-	suseconds_t tv_usec;
+	time_t      tv_sec;  // NOLINT
+	suseconds_t tv_usec; // NOLINT
 };
 
 /**
@@ -51,9 +51,8 @@ struct SynchronisedTime *__cheri_compartment("SNTP") sntp_time_get(void);
  * not desired, but must be initialised to either NULL or the return value from
  * `sntp_time_get`.
  */
-int __cheri_libcall
-timeval_calculate(struct timeval *__restrict tp,
-                  struct SynchronisedTime **sntp_time_cache);
+int __cheri_libcall timeval_calculate(struct timeval *__restrict tp,
+                                      struct SynchronisedTime **sntpTimeCache);
 
 /**
  * POSIX-compatible gettimeofday() implementation that uses the SNTP time.
@@ -65,8 +64,8 @@ static inline int gettimeofday(struct timeval *__restrict tp,
                                void *__restrict tzp)
 {
 	(void)tzp;
-	static struct SynchronisedTime *sntp_time = NULL;
-	return timeval_calculate(tp, &sntp_time);
+	static struct SynchronisedTime *sntpTime = NULL;
+	return timeval_calculate(tp, &sntpTime);
 }
 
 /**
@@ -80,7 +79,8 @@ static inline time_t time(time_t *tloc)
 	struct timeval tv;
 	if (gettimeofday(&tv, NULL) == -1)
 	{
-		return (time_t)-1;
+		// C-style cast required because this file can be included in C.
+		return (time_t)-1; // NOLINT
 	}
 	if (tloc != NULL)
 	{

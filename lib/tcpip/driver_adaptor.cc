@@ -1,7 +1,6 @@
 // Copyright SCI Semiconductor and CHERIoT Contributors.
 // SPDX-License-Identifier: MIT
 
-
 // Native APIs
 #include <atomic>
 #include <compartment-macros.h>
@@ -49,7 +48,7 @@ namespace
 	                        BaseType_t                       xReleaseAfterSend)
 	{
 		bool sent = ethernet_send_frame(pxNetworkBuffer->pucEthernetBuffer,
-		                    pxNetworkBuffer->xDataLength);
+		                                pxNetworkBuffer->xDataLength);
 		if (xReleaseAfterSend)
 		{
 			vReleaseNetworkBufferAndDescriptor(pxNetworkBuffer);
@@ -71,7 +70,7 @@ bool __cheri_compartment("TCPIP")
 {
 	if (eConsiderFrameForProcessing(frame) != eProcessBuffer)
 	{
-		//Debug::log("Frame not for us");
+		// Debug::log("Frame not for us");
 		return false;
 	}
 	NetworkBufferDescriptor_t *descriptor =
@@ -93,7 +92,7 @@ bool __cheri_compartment("TCPIP")
 	  FreeRTOS_MatchingEndpoint(thisInterface, descriptor->pucEthernetBuffer);
 	if (descriptor->pxEndPoint == nullptr)
 	{
-		//Debug::log("Failed to find endpoint for frame\n");
+		// Debug::log("Failed to find endpoint for frame\n");
 		vReleaseNetworkBufferAndDescriptor(descriptor);
 		return false;
 	}
@@ -114,9 +113,8 @@ bool __cheri_compartment("TCPIP")
 	return true;
 }
 
-extern "C" NetworkInterface_t *
-pxCHERIoT_FillInterfaceDescriptor(BaseType_t          xEMACIndex,
-                                  NetworkInterface_t *pxInterface)
+NetworkInterface_t *fill_interface_descriptor(BaseType_t          xEMACIndex,
+                                              NetworkInterface_t *pxInterface)
 {
 	memset(pxInterface, '\0', sizeof(*pxInterface));
 	// Name. Used only for debugging.

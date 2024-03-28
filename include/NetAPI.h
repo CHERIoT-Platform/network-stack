@@ -266,7 +266,7 @@ struct ConnectionCapability
 	 * The hostname that this capability authorises.  This is a null-terminated
 	 * string.
 	 */
-	const char hostname[];
+	char hostname[];
 };
 
 /**

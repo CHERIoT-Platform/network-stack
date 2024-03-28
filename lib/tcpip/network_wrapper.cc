@@ -180,12 +180,12 @@ namespace
 	 * hints, only the second field is referenced.  This means that we can use
 	 * the prefix.
 	 */
-	struct addrinfo_hints
+	struct AddrinfoHints
 	{
-		BaseType_t ai_flags;
-		BaseType_t ai_family;
+		BaseType_t flags;
+		BaseType_t family;
 	};
-	static_assert(offsetof(addrinfo_hints, ai_family) ==
+	static_assert(offsetof(AddrinfoHints, family) ==
 	              offsetof(freertos_addrinfo, ai_family));
 
 	/**
@@ -195,8 +195,8 @@ namespace
 	 */
 	NetworkAddress host_resolve(const char *hostname, bool useIPv6 = UseIPv6)
 	{
-		struct addrinfo_hints hints;
-		hints.ai_family = useIPv6 ? FREERTOS_AF_INET6 : FREERTOS_AF_INET;
+		struct AddrinfoHints hints;
+		hints.family = useIPv6 ? FREERTOS_AF_INET6 : FREERTOS_AF_INET;
 		struct freertos_addrinfo *results = nullptr;
 		auto                      ret =
 		  FreeRTOS_getaddrinfo(hostname,
@@ -231,11 +231,15 @@ namespace
 				address.ipv4 = r->ai_addr->sin_address.ulIP_IPv4;
 				address.kind = NetworkAddress::AddressKindIPv4;
 				Debug::log("Got IPv4 address");
-				Debug::log("Got address: {}.{}.{}.{}",
-				           (int)r->ai_addr->sin_address.ulIP_IPv4 & 0xff,
-				           (int)r->ai_addr->sin_address.ulIP_IPv4 >> 8 & 0xff,
-				           (int)r->ai_addr->sin_address.ulIP_IPv4 >> 16 & 0xff,
-				           (int)r->ai_addr->sin_address.ulIP_IPv4 >> 24 & 0xff);
+				Debug::log(
+				  "Got address: {}.{}.{}.{}",
+				  static_cast<int>(r->ai_addr->sin_address.ulIP_IPv4) & 0xff,
+				  static_cast<int>(r->ai_addr->sin_address.ulIP_IPv4) >> 8 &
+				    0xff,
+				  static_cast<int>(r->ai_addr->sin_address.ulIP_IPv4) >> 16 &
+				    0xff,
+				  static_cast<int>(r->ai_addr->sin_address.ulIP_IPv4) >> 24 &
+				    0xff);
 			}
 		}
 
@@ -368,8 +372,8 @@ namespace
 				// space in the message queue before re-running
 				// `FreeRTOS_closesocket` .
 				Timeout one_tick_t{1};
-				if (flaglock_priority_inheriting_trylock(&one_tick_t,
-				                                         &ipThreadLockState) == 0)
+				if (flaglock_priority_inheriting_trylock(
+				      &one_tick_t, &ipThreadLockState) == 0)
 				{
 					Debug::log(
 					  "Acquired the IP thread lock, this should not succeed.");
@@ -499,7 +503,7 @@ int network_socket_connect_tcp_internal(Timeout       *timeout,
 		  {
 			  default:
 				  return -EINVAL;
-			  case 0: // success
+			  case 0:                         // success
 			  case -pdFREERTOS_ERRNO_EISCONN: // already connected
 				  Debug::log("Successfully connected to server");
 				  return 0;

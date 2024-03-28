@@ -19,9 +19,8 @@ using Debug = ConditionalDebug<false, "TCP/IP Stack startup">;
  * Exposed by the driver adaptor.  Uses a CHERIoT driver to provide a FreeRTOS
  * driver interface.
  */
-extern "C" NetworkInterface_t *
-pxCHERIoT_FillInterfaceDescriptor(BaseType_t          xEMACIndex,
-                                  NetworkInterface_t *pxInterface);
+NetworkInterface_t *fill_interface_descriptor(BaseType_t          xEMACIndex,
+                                              NetworkInterface_t *pxInterface);
 namespace
 {
 	/**
@@ -64,10 +63,10 @@ namespace
 
 	// Default values for the network configuration.  These will be overridden
 	// by DHCP.
-	const uint8_t ucIPAddress[4]        = {192, 168, 1, 248};
-	const uint8_t ucNetMask[4]          = {255, 255, 255, 0};
-	const uint8_t ucGatewayAddress[4]   = {192, 168, 0, 1};
-	const uint8_t ucDNSServerAddress[4] = {8, 8, 8, 8};
+	const uint8_t IPAddress[4]        = {192, 168, 1, 248};
+	const uint8_t NetMask[4]          = {255, 255, 255, 0};
+	const uint8_t GatewayAddress[4]   = {192, 168, 0, 1};
+	const uint8_t DNSServerAddress[4] = {8, 8, 8, 8};
 
 } // namespace
 
@@ -81,15 +80,16 @@ void __cheri_compartment("TCPIP") network_start()
 	}
 
 	Debug::log("Initialising network adaptor");
-	pxCHERIoT_FillInterfaceDescriptor(0, &interface);
-	Debug::log("Output function: {}", (void *)interface.pfOutput);
+	fill_interface_descriptor(0, &interface);
+	Debug::log("Output function: {}",
+	           reinterpret_cast<void *>(interface.pfOutput));
 	Debug::log("Setting up endpointIPv4");
 	FreeRTOS_FillEndPoint(&interface,
 	                      &endpointIPv4,
-	                      ucIPAddress,
-	                      ucNetMask,
-	                      ucGatewayAddress,
-	                      ucDNSServerAddress,
+	                      IPAddress,
+	                      NetMask,
+	                      GatewayAddress,
+	                      DNSServerAddress,
 	                      KunyanEthernet::mac_address_default().data());
 	// Enable DHCP
 	endpointIPv4.bits.bWantDHCP = pdTRUE;

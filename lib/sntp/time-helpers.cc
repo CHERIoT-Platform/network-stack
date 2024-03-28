@@ -11,16 +11,16 @@
 using Debug = ConditionalDebug<false, "Time helper">;
 
 int timeval_calculate(struct timeval *__restrict tp,
-                      struct SynchronisedTime **sntp_time_cache)
+                      struct SynchronisedTime **sntpTimeCache)
 {
-	struct SynchronisedTime *sntp_time = *sntp_time_cache;
-	if (sntp_time == NULL)
+	struct SynchronisedTime *sntpTime = *sntpTimeCache;
+	if (sntpTime == nullptr)
 	{
-		sntp_time        = sntp_time_get();
-		*sntp_time_cache = sntp_time;
-		Debug::log("Got SNTP time {}", sntp_time);
+		sntpTime       = sntp_time_get();
+		*sntpTimeCache = sntpTime;
+		Debug::log("Got SNTP time {}", sntpTime);
 	}
-	if (sntp_time == NULL)
+	if (sntpTime == nullptr)
 	{
 		Debug::log("Failed to get SNTP time");
 		return -ENODEV;
@@ -30,20 +30,19 @@ int timeval_calculate(struct timeval *__restrict tp,
 	uint32_t       epoch;
 	do
 	{
-		epoch = atomic_load(&sntp_time->updatingEpoch);
+		epoch = atomic_load(&sntpTime->updatingEpoch);
 		// If the low bit is set then the time is being updated.  Wait for the
 		// update to finish.
 		if (epoch & 0x1)
 		{
 			Debug::log("Waiting for SNTP update");
 			// Wait for the update to finish
-			futex_wait(reinterpret_cast<uint32_t *>(&sntp_time->updatingEpoch),
-			           epoch);
+			sntpTime->updatingEpoch.wait(epoch);
 			continue;
 		}
-		time   = sntp_time->time;
-		cycles = sntp_time->cycles;
-	} while (epoch != atomic_load(&sntp_time->updatingEpoch));
+		time   = sntpTime->time;
+		cycles = sntpTime->cycles;
+	} while ((epoch & 0x1) || epoch != atomic_load(&sntpTime->updatingEpoch));
 	Debug::log("Got raw time {}.{}", uint64_t(time.tv_sec), time.tv_usec);
 	uint64_t now = rdcycle64();
 	Debug::log(
@@ -62,6 +61,7 @@ int timeval_calculate(struct timeval *__restrict tp,
 		time.tv_sec += usec / 1000000;
 		usec %= 1000000;
 	}
-	*tp = time;
+	time.tv_usec = usec;
+	*tp          = time;
 	return 0;
 }
