@@ -10,6 +10,26 @@
 
 using Debug = ConditionalDebug<false, "Buffer management">;
 
+// Use a separate allocator quota for the buffer manager (false by default).
+// The buffer manager is responsible for allocating network buffers, which
+// differs from the other types of allocations the TCP/IP stack performs. It
+// may thus make sense to give it its own quota. We may want to expose this as
+// a build system configuration option at some point.
+#define USE_DEDICATED_BUFFERMANAGER_POOL false
+// Size of the buffer manager allocator quota. Only relevant if
+// USE_DEDICATED_BUFFERMANAGER_POOL is enabled.
+#define BUFFER_MANAGER_QUOTA                                                   \
+	(ipconfigNUM_NETWORK_BUFFER_DESCRIPTORS *                                  \
+	 (ipconfigTCP_MSS + ipBUFFER_PADDING))
+
+#if USE_DEDICATED_BUFFERMANAGER_POOL
+DECLARE_AND_DEFINE_ALLOCATOR_CAPABILITY(BufferManagementMallocQuota,
+                                        BUFFER_MANAGER_QUOTA);
+#	define BM_MALLOC_QUOTA STATIC_SEALED_VALUE(BufferManagementMallocQuota)
+#else
+#	define BM_MALLOC_QUOTA MALLOC_CAPABILITY
+#endif
+
 constexpr size_t MinimumBufferSize =
 #if ipconfigUSE_TCP == 1
   sizeof(TCPPacket_t)
@@ -49,16 +69,20 @@ pxGetNetworkBufferWithDescriptor(size_t     xRequestedSizeBytes,
 
 	Timeout t{xBlockTimeTicks};
 
-	std::unique_ptr<NetworkBufferDescriptor_t> descriptor{
-	  static_cast<NetworkBufferDescriptor_t *>(heap_allocate(
-	    &t, MALLOC_CAPABILITY, sizeof(NetworkBufferDescriptor_t)))};
+	// TODO we likely want to pre-allocate (or re-use) the descriptors at
+	// some point
+	auto deleter = [=](void *ptr) { heap_free(BM_MALLOC_QUOTA, ptr); };
+	std::unique_ptr<NetworkBufferDescriptor_t, decltype(deleter)> descriptor{
+	  static_cast<NetworkBufferDescriptor_t *>(
+	    heap_allocate(&t, BM_MALLOC_QUOTA, sizeof(NetworkBufferDescriptor_t))),
+	  deleter};
 	if (descriptor == nullptr)
 	{
 		Debug::log("Failed to allocate descriptor");
 		return nullptr;
 	}
 	auto *buffer = static_cast<uint8_t *>(heap_allocate(
-	  &t, MALLOC_CAPABILITY, xRequestedSizeBytes + ipBUFFER_PADDING));
+	  &t, BM_MALLOC_QUOTA, xRequestedSizeBytes + ipBUFFER_PADDING));
 	if (buffer == nullptr)
 	{
 		Debug::log("Failed to allocate {} byte buffer", xRequestedSizeBytes);
@@ -103,11 +127,9 @@ void vReleaseNetworkBufferAndDescriptor(
 		int ret = heap_free(MALLOC_CAPABILITY, bufferWithoutOffset);
 		ret |= heap_free(MALLOC_CAPABILITY, networkBuffer);
 
-		if (ret != 0)
-		{
-			// This is not supposed to happen.
-			Debug::log("Failed to free network buffer or descriptor.");
-		}
+		// Failure is not supposed to happen unless we have a bug here
+		// or in FreeRTOS.
+		Debug::Assert(ret == 0, "Failed to free network buffer or descriptor.");
 	}
 }
 
