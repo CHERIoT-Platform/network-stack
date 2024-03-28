@@ -355,11 +355,13 @@ namespace
 					  int received = receive_records(t, connection);
 					  if (received == 0 || received == -ENOTCONN)
 					  {
-						  // FIXME: Shut down gracefully
-						  Debug::log("Connection closed, shutting down");
-						  return 0;
+						  // The link died. After
+						  // getting -ENOTCONN, the
+						  // caller should close the
+						  // TLS socket.
+						  return -ENOTCONN;
 					  }
-					  if (received == -ETIMEDOUT)
+					  else if (received == -ETIMEDOUT)
 					  {
 						  return -ETIMEDOUT;
 					  }
@@ -508,7 +510,7 @@ SObj tls_connection_create(Timeout                    *t,
 		}
 		else if ((state & BR_SSL_RECVREC) == BR_SSL_RECVREC)
 		{
-			if (receive_records(t, context) < 0)
+			if (receive_records(t, context) <= 0)
 			{
 				return nullptr;
 			}
