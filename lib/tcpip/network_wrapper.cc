@@ -589,7 +589,7 @@ int network_socket_close(Timeout *t, SObj mallocCapability, SObj sealedSocket)
 		  {
 			  return -EINVAL;
 		  }
-		  else if (closeStatus != 1)
+		  if (closeStatus != 1)
 		  {
 			  // With some lock, the socket can be freed next time
 			  // we try.
@@ -832,15 +832,15 @@ network_socket_send(Timeout *timeout, SObj socket, void *buffer, size_t length)
 		  {
 			  return ret;
 		  }
-		  else if (ret == -pdFREERTOS_ERRNO_ENOTCONN)
+		  if (ret == -pdFREERTOS_ERRNO_ENOTCONN)
 		  {
 			  return -ENOTCONN;
 		  }
-		  else if (ret == -pdFREERTOS_ERRNO_ENOMEM)
+		  if (ret == -pdFREERTOS_ERRNO_ENOMEM)
 		  {
 			  return -ENOMEM;
 		  }
-		  else if (ret == -pdFREERTOS_ERRNO_ENOSPC)
+		  if (ret == -pdFREERTOS_ERRNO_ENOSPC)
 		  {
 			  return -ETIMEDOUT;
 		  }

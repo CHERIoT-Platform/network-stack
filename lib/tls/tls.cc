@@ -319,7 +319,7 @@ namespace
 				  {
 					  return -ENOTCONN;
 				  }
-				  else if ((state & BR_SSL_RECVAPP) == BR_SSL_RECVAPP)
+				  if ((state & BR_SSL_RECVAPP) == BR_SSL_RECVAPP)
 				  {
 					  // If there are data ready to receive, return
 					  // it immediately.
@@ -350,7 +350,7 @@ namespace
 					    "Received {} bytes into {}", length, receivedBuffer);
 					  return ssize_t(length);
 				  }
-				  else if ((state & BR_SSL_RECVREC) == BR_SSL_RECVREC)
+				  if ((state & BR_SSL_RECVREC) == BR_SSL_RECVREC)
 				  {
 					  int received = receive_records(t, connection);
 					  if (received == 0 || received == -ENOTCONN)
@@ -361,7 +361,7 @@ namespace
 						  // TLS socket.
 						  return -ENOTCONN;
 					  }
-					  else if (received == -ETIMEDOUT)
+					  if (received == -ETIMEDOUT)
 					  {
 						  return -ETIMEDOUT;
 					  }
@@ -497,7 +497,7 @@ SObj tls_connection_create(Timeout                    *t,
 			           br_ssl_engine_last_error(engine));
 			return nullptr;
 		}
-		else if ((state & BR_SSL_SENDREC) == BR_SSL_SENDREC)
+		if ((state & BR_SSL_SENDREC) == BR_SSL_SENDREC)
 		{
 			// If we need to send records, send them first.
 			auto [sent, unfinished] = send_records(t, context);
@@ -547,7 +547,7 @@ ssize_t tls_connection_send(Timeout *t,
 			  {
 				  return -ENOTCONN;
 			  }
-			  else if ((state & BR_SSL_SENDREC) == BR_SSL_SENDREC)
+			  if ((state & BR_SSL_SENDREC) == BR_SSL_SENDREC)
 			  {
 				  // If there's data ready to send over the network, prioritise
 				  // sending it
@@ -742,7 +742,7 @@ int tls_connection_close(Timeout *t, SObj sealed)
 			{
 				return -ETIMEDOUT;
 			}
-			else if (received <= 0)
+			if (received <= 0)
 			{
 				// If we failed for any reason other than
 				// timeout, the socket is likely unusable
