@@ -152,7 +152,7 @@ namespace
 				{
 					return -ENOMEM;
 				}
-				else if (status == MQTTSendFailed)
+				if (status == MQTTSendFailed)
 				{
 					// If the TLS link is still live, try
 					// again until we are out of time.
@@ -218,7 +218,7 @@ namespace
 			unsealed->lock.upgrade_for_destruction();
 			return callback(unsealed);
 		}
-		else if (LockGuard g{unsealed->lock, timeout})
+		if (LockGuard g{unsealed->lock, timeout})
 		{
 			return callback(unsealed);
 		}
@@ -235,7 +235,7 @@ namespace
 	 * Note from us: UTF-8 encoding of 0-9, a-z, A-Z, is 1 Byte per
 	 * character.
 	 */
-	constexpr const char clientIDCharacters[] =
+	constexpr const char ClientIdCharacters[] =
 	  "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
 	constexpr const int MQTTMaximumClientIDSize = 23;
 
@@ -413,13 +413,13 @@ namespace
 		uint64_t currentCycle = rdcycle64();
 
 		// Convert to milliseconds
-		constexpr uint64_t milliSecondsPerSecond = 1000;
-		constexpr uint64_t cyclesPerMilliSecond =
-		  CPU_TIMER_HZ / milliSecondsPerSecond;
-		static_assert(cyclesPerMilliSecond > 0,
+		constexpr uint64_t MilliSecondsPerSecond = 1000;
+		constexpr uint64_t CyclesPerMilliSecond =
+		  CPU_TIMER_HZ / MilliSecondsPerSecond;
+		static_assert(CyclesPerMilliSecond > 0,
 		              "The CPU frequency is too low for the coreMQTT time "
 		              "function, which provides time in milliseconds.");
-		uint64_t currentTime = currentCycle / cyclesPerMilliSecond;
+		uint64_t currentTime = currentCycle / CyclesPerMilliSecond;
 
 		// Truncate into 32 bit
 		return currentTime & 0xFFFFFFFF;
@@ -752,7 +752,7 @@ int mqtt_disconnect(Timeout *t, SObj allocator, SObj mqttHandle)
 				  {
 					  return -ENOMEM;
 				  }
-				  else if (status == MQTTBadParameter)
+				  if (status == MQTTBadParameter)
 				  {
 					  // This shouldn't happen and possibly
 					  // indicates a bug in our code.
@@ -760,11 +760,9 @@ int mqtt_disconnect(Timeout *t, SObj allocator, SObj mqttHandle)
 					             "may indicate a bug in this code.");
 					  return -EINVAL;
 				  }
-				  else
-				  {
-					  Debug::log("MQTT_Disconnect gave unknown error.");
-					  return -EAGAIN;
-				  }
+
+				  Debug::log("MQTT_Disconnect gave unknown error.");
+				  return -EAGAIN;
 			  }
 		  } while (t->remaining > 0 && status != MQTTSuccess);
 
@@ -1027,9 +1025,8 @@ int mqtt_run(Timeout *t, SObj mqttHandle)
 				  {
 					  return -ENOMEM;
 				  }
-				  else if (status == MQTTSendFailed ||
-				           status == MQTTRecvFailed ||
-				           status == MQTTNeedMoreBytes)
+				  if (status == MQTTSendFailed || status == MQTTRecvFailed ||
+				      status == MQTTNeedMoreBytes)
 				  {
 					  // If the TLS link is still live, try
 					  // again until we are out of time.
@@ -1075,7 +1072,7 @@ int mqtt_run(Timeout *t, SObj mqttHandle)
 int mqtt_generate_client_id(char *buffer, size_t length)
 {
 	auto characters =
-	  std::string_view(clientIDCharacters, sizeof(clientIDCharacters) - 1);
+	  std::string_view(ClientIdCharacters, sizeof(ClientIdCharacters) - 1);
 
 	if ((length > MQTTMaximumClientIDSize) || (length == 0))
 	{
