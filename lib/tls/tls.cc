@@ -40,30 +40,30 @@ namespace
 		/// The BearSSL X.509 context.
 		br_x509_minimal_context *x509Context;
 		/// The input buffer for the TLS engine.
-		unsigned char *iobuf_in;
+		unsigned char *iobufIn;
 		/// The output buffer for the TLS engine.
-		unsigned char            *iobuf_out;
+		unsigned char            *iobufOut;
 		FlagLockPriorityInherited lock;
 		TLSContext(SObj                     socket,
 		           SObj                     allocator,
 		           br_ssl_client_context   *clientContext,
 		           br_x509_minimal_context *x509Context,
-		           unsigned char           *iobuf_in,
-		           unsigned char           *iobuf_out)
+		           unsigned char           *iobufIn,
+		           unsigned char           *iobufOut)
 		  : socket{socket},
 		    allocator{allocator},
 		    clientContext{clientContext},
 		    x509Context{x509Context},
-		    iobuf_in{iobuf_in},
-		    iobuf_out{iobuf_out}
+		    iobufIn{iobufIn},
+		    iobufOut{iobufOut}
 		{
 		}
 		~TLSContext()
 		{
 			Timeout t{UnlimitedTimeout};
 			network_socket_close(&t, allocator, socket);
-			heap_free(allocator, iobuf_in);
-			heap_free(allocator, iobuf_out);
+			heap_free(allocator, iobufIn);
+			heap_free(allocator, iobufOut);
 			heap_free(allocator, clientContext);
 			heap_free(allocator, x509Context);
 		}
@@ -111,14 +111,14 @@ namespace
 	/// Minimal BearSSL context initialisation.
 	void br_ssl_client_init(br_ssl_client_context      *cc,
 	                        br_x509_minimal_context    *xc,
-	                        const br_x509_trust_anchor *trust_anchors,
-	                        size_t                      trust_anchors_num)
+	                        const br_x509_trust_anchor *trustAnchors,
+	                        size_t                      trustAnchorsCount)
 	{
 		/*
 		 * A small set of cypher suites that should be the intersection of the
 		 * ones supported by most modern servers.
 		 */
-		static const uint16_t suites[] = {
+		static const uint16_t Suites[] = {
 		  BR_TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,
 		  BR_TLS_ECDH_ECDSA_WITH_AES_128_GCM_SHA256,
 #ifdef CHERIOT_TLS_ENABLE_RSA
@@ -138,7 +138,7 @@ namespace
 		 * comparisons).
 		 */
 		br_x509_minimal_init(
-		  xc, &br_sha256_vtable, trust_anchors, trust_anchors_num);
+		  xc, &br_sha256_vtable, trustAnchors, trustAnchorsCount);
 
 		/*
 		 * Set suites and asymmetric crypto implementations. We use the
@@ -147,7 +147,7 @@ namespace
 		 * TODO: change that when better implementations are made available.
 		 */
 		br_ssl_engine_set_suites(
-		  &cc->eng, suites, (sizeof suites) / (sizeof suites[0]));
+		  &cc->eng, Suites, (sizeof Suites) / (sizeof Suites[0]));
 		br_ssl_engine_set_default_ecdsa(&cc->eng);
 		if constexpr (EnableRSA)
 		{
@@ -431,15 +431,15 @@ SObj tls_connection_create(Timeout                    *t,
 	  clientContext.get(), x509Context.get(), trustAnchors, trustAnchorsCount);
 
 	static constexpr size_t                           MinimumBufferSize = 837;
-	std::unique_ptr<unsigned char, decltype(deleter)> iobuf_in{
+	std::unique_ptr<unsigned char, decltype(deleter)> iobufIn{
 	  static_cast<unsigned char *>(
 	    heap_allocate(t, allocator, MinimumBufferSize)),
 	  deleter};
-	std::unique_ptr<unsigned char, decltype(deleter)> iobuf_out{
+	std::unique_ptr<unsigned char, decltype(deleter)> iobufOut{
 	  static_cast<unsigned char *>(
 	    heap_allocate(t, allocator, MinimumBufferSize)),
 	  deleter};
-	if (iobuf_in == nullptr || iobuf_out == nullptr)
+	if (iobufIn == nullptr || iobufOut == nullptr)
 	{
 		Debug::log("Failed to allocate buffers");
 		return nullptr;
@@ -447,9 +447,9 @@ SObj tls_connection_create(Timeout                    *t,
 
 	Debug::log("Setting up TLS buffers");
 	br_ssl_engine_set_buffers_bidi(&clientContext->eng,
-	                               iobuf_in.get(),
+	                               iobufIn.get(),
 	                               MinimumBufferSize,
-	                               iobuf_out.get(),
+	                               iobufOut.get(),
 	                               MinimumBufferSize);
 
 	auto entropy = rand();
@@ -469,8 +469,8 @@ SObj tls_connection_create(Timeout                    *t,
 	                                                allocator,
 	                                                clientContext.release(),
 	                                                x509Context.release(),
-	                                                iobuf_in.release(),
-	                                                iobuf_out.release()};
+	                                                iobufIn.release(),
+	                                                iobufOut.release()};
 	auto        cleanup = [&](auto *) {
         context->~TLSContext();
         token_obj_destroy(allocator, tls_key(), sealed);
