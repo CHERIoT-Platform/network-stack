@@ -371,9 +371,9 @@ namespace
 				// one tick to give it a chance to free up some
 				// space in the message queue before re-running
 				// `FreeRTOS_closesocket` .
-				Timeout one_tick_t{1};
+				Timeout oneTick{1};
 				if (flaglock_priority_inheriting_trylock(
-				      &one_tick_t, &ipThreadLockState) == 0)
+				      &oneTick, &ipThreadLockState) == 0)
 				{
 					Debug::log(
 					  "Acquired the IP thread lock, this should not succeed.");

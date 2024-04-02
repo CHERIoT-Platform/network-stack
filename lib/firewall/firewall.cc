@@ -193,10 +193,10 @@ namespace
 			                protocol == IPProtocolNumber::UDP,
 			              "Invalid protocol for firewall: {}",
 			              protocol);
-			return GuardedTable(LockGuard{permittedEndpointsLock},
+			return GuardedTable{LockGuard{permittedEndpointsLock},
 			                    protocol == IPProtocolNumber::TCP
 			                      ? permittedTCPEndpoints
-			                      : permittedUDPEndpoints);
+			                      : permittedUDPEndpoints};
 		}
 
 		auto find_endpoint(decltype(permittedTCPEndpoints) &table,
@@ -217,7 +217,12 @@ namespace
 		                     uint16_t         localPort,
 		                     uint16_t         remotePort)
 		{
-			auto [g, table] = permitted_endpoints(protocol);
+			// Work around a bug in the clang-13 version of the static analyser
+			// that does not correctly model the lifetimes of structured
+			// bindings.
+			// auto [g, table] = permitted_endpoints(protocol);
+			auto guardedTable = permitted_endpoints(protocol);
+			auto &[g, table]  = guardedTable;
 			ConnectionTuple tuple{endpoint, localPort, remotePort};
 			auto            iterator = find_endpoint(table, tuple);
 			if (iterator != table.end() && (*iterator == tuple))
@@ -231,7 +236,12 @@ namespace
 		                  uint16_t         localPort,
 		                  uint16_t         remotePort)
 		{
-			auto [g, table] = permitted_endpoints(protocol);
+			// Work around a bug in the clang-13 version of the static analyser
+			// that does not correctly model the lifetimes of structured
+			// bindings.
+			// auto [g, table] = permitted_endpoints(protocol);
+			auto guardedTable = permitted_endpoints(protocol);
+			auto &[g, table]  = guardedTable;
 			ConnectionTuple tuple{remoteAddress, localPort, remotePort};
 			auto            iterator = find_endpoint(table, tuple);
 			if (iterator != table.end() && (*iterator == tuple))
@@ -243,7 +253,12 @@ namespace
 
 		void remove_endpoint(IPProtocolNumber protocol, uint16_t localPort)
 		{
-			auto [g, table] = permitted_endpoints(protocol);
+			// Work around a bug in the clang-13 version of the static analyser
+			// that does not correctly model the lifetimes of structured
+			// bindings.
+			// auto [g, table] = permitted_endpoints(protocol);
+			auto guardedTable = permitted_endpoints(protocol);
+			auto &[g, table]  = guardedTable;
 			// TODO: If we sorted by local port, we could make this O(log(n))
 			// If we expect n to be < 8 (currently do) then that's too much
 			// work.
@@ -259,7 +274,12 @@ namespace
 		                           uint16_t         localPort,
 		                           uint16_t         remotePort)
 		{
-			auto [g, table] = permitted_endpoints(protocol);
+			// Work around a bug in the clang-13 version of the static analyser
+			// that does not correctly model the lifetimes of structured
+			// bindings.
+			// auto [g, table] = permitted_endpoints(protocol);
+			auto guardedTable = permitted_endpoints(protocol);
+			auto &[g, table]  = guardedTable;
 			ConnectionTuple tuple{endpoint, localPort, remotePort};
 			auto            iterator = find_endpoint(table, tuple);
 			return iterator != table.end() && (*iterator == tuple);
