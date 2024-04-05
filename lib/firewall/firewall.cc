@@ -14,6 +14,31 @@
 
 namespace
 {
+	// TODO These should probably be in their own library.
+	uint16_t constexpr ntohs(uint16_t value)
+	{
+		return
+#ifdef __LITTLE_ENDIAN__
+		  __builtin_bswap16(value)
+#else
+		  value
+#endif
+		    ;
+	}
+	uint16_t constexpr htons(uint16_t value)
+	{
+		return
+#ifdef __LITTLE_ENDIAN__
+		  __builtin_bswap16(value)
+#else
+		  value
+#endif
+		    ;
+	}
+} // namespace
+
+namespace
+{
 	using Debug = ConditionalDebug<false, "Firewall">;
 
 	/**
@@ -85,10 +110,13 @@ namespace
 		UDP  = 17,
 	};
 
+	static constexpr const uint16_t DhcpServerPort = 67;
+	static constexpr const uint16_t DhcpClientPort = 68;
+
 	struct IPv4Header
 	{
 		/**
-		 * Verson is in the low 4 bits, header length is in the high 4 bits.
+		 * Version is in the low 4 bits, header length is in the high 4 bits.
 		 */
 		uint8_t versionAndHeaderLength;
 		/**
@@ -286,6 +314,23 @@ namespace
 		}
 	};
 
+	bool is_dhcp_reply(enum IPProtocolNumber protocol,
+	                   bool                  isIngress,
+	                   uint16_t              remotePort,
+	                   uint16_t              localPort)
+	{
+		// A DHCP reply is an ingress UDP packet whose remote port
+		// matches the DHCP server port, and whose local port matches
+		// the DHCP client port.
+		if (isIngress && (protocol == IPProtocolNumber::UDP) &&
+		    (remotePort == htons(DhcpServerPort)) &&
+		    (localPort == htons(DhcpClientPort)))
+		{
+			return true;
+		}
+		return false;
+	}
+
 	uint32_t          dnsServerAddress;
 	_Atomic(uint32_t) dnsIsPermitted;
 
@@ -304,19 +349,13 @@ namespace
 		auto *ipv4Header = reinterpret_cast<const IPv4Header *>(data);
 		switch (ipv4Header->protocol)
 		{
-			// Drop all packets with unknown protocol types.
+			// Drop all packets with unknown IP protocol types.
 			default:
 				Debug::log("Dropping IPv4 packet with unknown protocol {}",
 				           ipv4Header->protocol);
 				return false;
 			case IPProtocolNumber::UDP:
-				// If we haven't finished doing DHCP, permit all UDP packets
-				// (we don't know the address of the DHCP server yet, so
-				// IP-based filtering is not going to be reliable).
-				if (__predict_false(dnsServerAddress == 0))
-				{
-					return true;
-				}
+
 				// Permit DNS requests during a DNS query.
 				if (dnsIsPermitted > 0)
 				{
@@ -356,6 +395,7 @@ namespace
 				uint32_t endpoint         = ipv4Header->*remoteAddress;
 				uint16_t localPortNumber  = tcpudpHeader->*localPort;
 				uint16_t remotePortNumber = tcpudpHeader->*remotePort;
+				bool isIngress = (remoteAddress == &IPv4Header::sourceAddress);
 				if (EndpointsTable<uint32_t>::instance().is_endpoint_permitted(
 				      ipv4Header->protocol,
 				      endpoint,
@@ -364,13 +404,19 @@ namespace
 				{
 					Debug::log("Permitting {} {} {}.{}.{}.{}",
 					           ipv4Header->protocol,
-					           remoteAddress == &IPv4Header::destinationAddress
-					             ? "to"
-					             : "from",
+					           isIngress ? "from" : "to",
 					           static_cast<int>(endpoint) & 0xff,
 					           static_cast<int>(endpoint >> 8) & 0xff,
 					           static_cast<int>(endpoint >> 16) & 0xff,
 					           static_cast<int>(endpoint >> 24) & 0xff);
+					return true;
+				}
+				// Permit DHCP replies
+				if (is_dhcp_reply(ipv4Header->protocol,
+				                  isIngress,
+				                  remotePortNumber,
+				                  localPortNumber))
+				{
 					return true;
 				}
 				return false;
