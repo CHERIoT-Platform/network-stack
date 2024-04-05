@@ -175,8 +175,56 @@ namespace
 
 	static_assert(sizeof(IPv4Header) == 20);
 
+	static constexpr const uint8_t Ipv6AddressSize = 16;
+
 	/**
-	 * Simple firewall table for IPv4 endpoints.
+	 * A permitted tuple (source and destination address and port).
+	 *
+	 * We assume a single local address, so the local address is not stored.
+	 */
+	struct ConnectionTuple
+	{
+		// Used to store both IPv4 and IPv6 addresses. IPv4
+		// addresses will be padded with zeroes.
+		uint8_t  remoteAddress[Ipv6AddressSize];
+		uint16_t localPort;
+		uint16_t remotePort;
+		// A clang-tidy bug thinks that this should be = nullptr instead of
+		// = default.
+		auto operator<=>(const ConnectionTuple &) const = default; // NOLINT
+
+		/**
+		 * Defensively copy IPv6 `address` into `remoteAddress`, return
+		 * a negative error code if the address is invalid.
+		 */
+		int set_ipv6_address(const uint8_t *address)
+		{
+			if (!blocking_forever<heap_claim_fast>(address, nullptr) ||
+			    !CHERI::check_pointer<CHERI::PermissionSet{
+			      CHERI::Permission::Load}>(address, Ipv6AddressSize))
+			{
+				Debug::log("Invalid IPv6 address {}", address);
+				return -EINVAL;
+			}
+			memcpy(remoteAddress, address, Ipv6AddressSize);
+			return 0;
+		}
+
+		/**
+		 * Copy IPv4 address `address` into `remoteAddress`, padding
+		 * with zeroes to reach the size of an IPv6 address.
+		 */
+		void set_ipv4_address(const uint32_t &address)
+		{
+			memcpy(remoteAddress, &address, sizeof(address));
+			// Pad with zeroes
+			constexpr const size_t SizePad = Ipv6AddressSize - sizeof(address);
+			memset(remoteAddress + sizeof(address), 0, SizePad);
+		}
+	};
+
+	/**
+	 * Simple firewall table for IPv4 and IPv6 endpoints.
 	 *
 	 * This is intended to be reasonably fast for small numbers of rules and to
 	 * have a low memory overhead.  It stores endpoints as a sorted array of
@@ -185,23 +233,8 @@ namespace
 	 * we're unlikely to encounter systems where this is a problem in the near
 	 * future.
 	 */
-	template<typename Address>
 	class EndpointsTable
 	{
-		/**
-		 * A permitted  tuple (source and destination address and port).
-		 *
-		 * We assume a single local address, so the local address is not stored.
-		 */
-		struct ConnectionTuple
-		{
-			Address  remoteAddress;
-			uint16_t localPort;
-			uint16_t remotePort;
-			// A clang-tidy bug thinks that this should be = nullptr instead of
-			// = default.
-			auto operator<=>(const ConnectionTuple &) const = default; // NOLINT
-		};
 		std::vector<ConnectionTuple> permittedTCPEndpoints;
 		std::vector<ConnectionTuple> permittedUDPEndpoints;
 		FlagLockPriorityInherited    permittedEndpointsLock;
@@ -227,10 +260,25 @@ namespace
 			                      : permittedUDPEndpoints};
 		}
 
+		/**
+		 * Return an iterator to the table entry corresponding to
+		 * passed `endpoint`, or `table.end()` if no such entry was
+		 * found.
+		 */
 		auto find_endpoint(decltype(permittedTCPEndpoints) &table,
 		                   const ConnectionTuple           &endpoint)
 		{
-			return std::lower_bound(table.begin(), table.end(), endpoint);
+			auto iterator = table.begin();
+			auto prev     = iterator;
+			while (iterator != table.end())
+			{
+				if (*iterator == endpoint)
+				{
+					return prev;
+				}
+				prev = iterator++;
+			}
+			return table.end();
 		}
 
 		public:
@@ -240,10 +288,8 @@ namespace
 			return table;
 		}
 
-		void remove_endpoint(IPProtocolNumber protocol,
-		                     Address          endpoint,
-		                     uint16_t         localPort,
-		                     uint16_t         remotePort)
+		void remove_endpoint(IPProtocolNumber       protocol,
+		                     const ConnectionTuple &endpoint)
 		{
 			// Work around a bug in the clang-13 version of the static analyser
 			// that does not correctly model the lifetimes of structured
@@ -251,22 +297,21 @@ namespace
 			// auto [g, table] = permitted_endpoints(protocol);
 			auto guardedTable = permitted_endpoints(protocol);
 			auto &[g, table]  = guardedTable;
-			ConnectionTuple tuple{endpoint, localPort, remotePort};
-			auto            iterator = find_endpoint(table, tuple);
-			if (iterator != table.end() && (*iterator == tuple))
+
+			auto iterator = find_endpoint(table, endpoint);
+			if (iterator != table.end() && (*iterator == endpoint))
 			{
 				table.erase(iterator);
 				return;
 			}
+
 			Debug::log("Failed to remove endpoint (local: {}; remote: {})",
-			           localPort,
-			           remotePort);
+			           endpoint.localPort,
+			           endpoint.remotePort);
 		}
 
-		void add_endpoint(IPProtocolNumber protocol,
-		                  Address          remoteAddress,
-		                  uint16_t         localPort,
-		                  uint16_t         remotePort)
+		void add_endpoint(IPProtocolNumber       protocol,
+		                  const ConnectionTuple &endpoint)
 		{
 			// Work around a bug in the clang-13 version of the static analyser
 			// that does not correctly model the lifetimes of structured
@@ -274,17 +319,17 @@ namespace
 			// auto [g, table] = permitted_endpoints(protocol);
 			auto guardedTable = permitted_endpoints(protocol);
 			auto &[g, table]  = guardedTable;
-			ConnectionTuple tuple{remoteAddress, localPort, remotePort};
-			auto            iterator = find_endpoint(table, tuple);
-			if (iterator != table.end() && (*iterator == tuple))
+
+			auto iterator = find_endpoint(table, endpoint);
+			if (iterator != table.end() && (*iterator == endpoint))
 			{
 				Debug::log("Failed to add endpoint: already in the table "
 				           "(local: {}; remote: {})",
-				           localPort,
-				           remotePort);
+				           endpoint.localPort,
+				           endpoint.remotePort);
 				return;
 			}
-			table.insert(iterator, tuple);
+			table.insert(iterator, endpoint);
 		}
 
 		void remove_endpoint(IPProtocolNumber protocol, uint16_t localPort)
@@ -298,24 +343,23 @@ namespace
 			// TODO: If we sorted by local port, we could make this O(log(n))
 			// If we expect n to be < 8 (currently do) then that's too much
 			// work.
-			bool found = false;
-			std::remove_if(table.begin(),
-			               table.end(),
-			               [localPort, &found](const ConnectionTuple &tuple) {
-				               bool ret = (tuple.localPort == localPort);
-				               found    = found || ret;
-				               return ret;
-			               });
-			if (!found)
+			auto iterator = table.begin();
+			while (iterator != table.end())
 			{
-				Debug::log("Failed to remove endpoint (local: {})", localPort);
+				if (iterator->localPort == localPort)
+				{
+					table.erase(iterator);
+					return;
+				}
+
+				iterator++;
 			}
+
+			Debug::log("Failed to remove endpoint (local: {})", localPort);
 		}
 
-		bool is_endpoint_permitted(IPProtocolNumber protocol,
-		                           Address          endpoint,
-		                           uint16_t         localPort,
-		                           uint16_t         remotePort)
+		bool is_endpoint_permitted(IPProtocolNumber       protocol,
+		                           const ConnectionTuple &endpoint)
 		{
 			// Work around a bug in the clang-13 version of the static analyser
 			// that does not correctly model the lifetimes of structured
@@ -323,9 +367,9 @@ namespace
 			// auto [g, table] = permitted_endpoints(protocol);
 			auto guardedTable = permitted_endpoints(protocol);
 			auto &[g, table]  = guardedTable;
-			ConnectionTuple tuple{endpoint, localPort, remotePort};
-			auto            iterator = find_endpoint(table, tuple);
-			return iterator != table.end() && (*iterator == tuple);
+
+			auto iterator = find_endpoint(table, endpoint);
+			return iterator != table.end() && (*iterator == endpoint);
 		}
 	};
 
@@ -411,11 +455,16 @@ namespace
 				uint16_t localPortNumber  = tcpudpHeader->*localPort;
 				uint16_t remotePortNumber = tcpudpHeader->*remotePort;
 				bool isIngress = (remoteAddress == &IPv4Header::sourceAddress);
-				if (EndpointsTable<uint32_t>::instance().is_endpoint_permitted(
-				      ipv4Header->protocol,
-				      endpoint,
-				      localPortNumber,
-				      remotePortNumber))
+
+				ConnectionTuple tuple;
+				// Do not initialize the address field as it will be fully
+				// overwritten.
+				tuple.localPort  = localPortNumber;
+				tuple.remotePort = remotePortNumber;
+				tuple.set_ipv4_address(endpoint);
+
+				if (EndpointsTable::instance().is_endpoint_permitted(
+				      ipv4Header->protocol, tuple))
 				{
 					Debug::log("Permitting {} {} {}.{}.{}.{}",
 					           ipv4Header->protocol,
@@ -619,88 +668,74 @@ void firewall_add_tcpipv4_endpoint(uint32_t remoteAddress,
                                    uint16_t localPort,
                                    uint16_t remotePort)
 {
-	EndpointsTable<uint32_t>::instance().add_endpoint(
-	  IPProtocolNumber::TCP, remoteAddress, localPort, remotePort);
+	ConnectionTuple tuple;
+	// Do not initialize the address field as it will be fully overwritten
+	// by `set_ipv4_address`.
+	tuple.localPort  = localPort;
+	tuple.remotePort = remotePort;
+	tuple.set_ipv4_address(remoteAddress);
+
+	EndpointsTable::instance().add_endpoint(IPProtocolNumber::TCP, tuple);
 }
 
 void firewall_add_udpipv4_endpoint(uint32_t remoteAddress,
                                    uint16_t localPort,
                                    uint16_t remotePort)
 {
-	EndpointsTable<uint32_t>::instance().add_endpoint(
-	  IPProtocolNumber::UDP, remoteAddress, localPort, remotePort);
+	ConnectionTuple tuple;
+	// Do not initialize the address field as it will be fully overwritten
+	// by `set_ipv4_address`.
+	tuple.localPort  = localPort;
+	tuple.remotePort = remotePort;
+	tuple.set_ipv4_address(remoteAddress);
+
+	EndpointsTable::instance().add_endpoint(IPProtocolNumber::UDP, tuple);
 }
 
 void firewall_remove_tcpipv4_endpoint(uint16_t localPort)
 {
-	EndpointsTable<uint32_t>::instance().remove_endpoint(IPProtocolNumber::TCP,
-	                                                     localPort);
+	EndpointsTable::instance().remove_endpoint(IPProtocolNumber::TCP,
+	                                           localPort);
 }
 
 void firewall_remove_udpipv4_local_endpoint(uint16_t localPort)
 {
-	EndpointsTable<uint32_t>::instance().remove_endpoint(IPProtocolNumber::UDP,
-	                                                     localPort);
+	EndpointsTable::instance().remove_endpoint(IPProtocolNumber::UDP,
+	                                           localPort);
 }
 
 void firewall_remove_udpipv4_remote_endpoint(uint32_t remoteAddress,
                                              uint16_t localPort,
                                              uint16_t remotePort)
 {
-	EndpointsTable<uint32_t>::instance().remove_endpoint(
-	  IPProtocolNumber::UDP, remoteAddress, localPort, remotePort);
+	ConnectionTuple tuple;
+	// Do not initialize the address field as it will be fully overwritten
+	// by `set_ipv4_address`.
+	tuple.localPort  = localPort;
+	tuple.remotePort = remotePort;
+	tuple.set_ipv4_address(remoteAddress);
+
+	EndpointsTable::instance().remove_endpoint(IPProtocolNumber::UDP, tuple);
 }
 
 namespace
 {
-
-	/**
-	 * IPv6 address.
-	 *
-	 * This should be `std::array<uint8_t, 16>` but our version of `std::array`
-	 * does not yet have a three-way comparison operator.
-	 */
-	struct IPv6Address
+	void firewall_add_ipv6_endpoint_internal(enum IPProtocolNumber protocol,
+	                                         uint8_t *remoteAddress,
+	                                         uint16_t localPort,
+	                                         uint16_t remotePort)
 	{
-		/**
-		 * The bytes of the address.
-		 */
-		uint8_t bytes[16];
-		/**
-		 * Returns a pointer to the bytes of this address.
-		 */
-		auto data()
-		{
-			return bytes;
-		}
-		/**
-		 * Returns the size of an address.
-		 */
-		[[nodiscard]] size_t size() const
-		{
-			return sizeof(bytes);
-		}
-		/// Comparison operator.
-		// A clang-tidy bug thinks that this should be = nullptr instead of =
-		// default.
-		auto operator<=>(const IPv6Address &) const = default; // NOLINT
-	};
+		ConnectionTuple tuple;
+		// Do not initialize the address field as it will be fully overwritten
+		// by `set_ipv6_address`.
+		tuple.localPort  = localPort;
+		tuple.remotePort = remotePort;
 
-	/**
-	 * Defensively copy the address, returns nullopt if the address is invalid.
-	 */
-	std::optional<IPv6Address> copy_address(const uint8_t *address)
-	{
-		IPv6Address copy;
-		if (!blocking_forever<heap_claim_fast>(address, nullptr) ||
-		    !CHERI::check_pointer<CHERI::PermissionSet{
-		      CHERI::Permission::Load}>(address, copy.size()))
+		if (tuple.set_ipv6_address(remoteAddress) < 0)
 		{
-			Debug::log("Invalid IPv6 address {}", address);
-			return std::nullopt;
+			return;
 		}
-		memcpy(copy.data(), address, copy.size());
-		return copy;
+		EndpointsTable::instance().add_endpoint(protocol, tuple);
 	}
 } // namespace
 
@@ -708,43 +743,43 @@ void firewall_add_tcpipv6_endpoint(uint8_t *remoteAddress,
                                    uint16_t localPort,
                                    uint16_t remotePort)
 {
-	if (auto copy = copy_address(remoteAddress))
-	{
-		EndpointsTable<IPv6Address>::instance().add_endpoint(
-		  IPProtocolNumber::TCP, *copy, localPort, remotePort);
-	}
+	firewall_add_ipv6_endpoint_internal(
+	  IPProtocolNumber::TCP, remoteAddress, localPort, remotePort);
 }
 
 void firewall_add_udpipv6_endpoint(uint8_t *remoteAddress,
                                    uint16_t localPort,
                                    uint16_t remotePort)
 {
-	if (auto copy = copy_address(remoteAddress))
-	{
-		EndpointsTable<IPv6Address>::instance().add_endpoint(
-		  IPProtocolNumber::UDP, *copy, localPort, remotePort);
-	}
-}
-
-void firewall_remove_tcpipv6_endpoint(uint16_t localPort)
-{
-	EndpointsTable<IPv6Address>::instance().remove_endpoint(
-	  IPProtocolNumber::TCP, localPort);
-}
-
-void firewall_remove_udpipv6_local_endpoint(uint16_t localPort)
-{
-	EndpointsTable<IPv6Address>::instance().remove_endpoint(
-	  IPProtocolNumber::UDP, localPort);
+	firewall_add_ipv6_endpoint_internal(
+	  IPProtocolNumber::UDP, remoteAddress, localPort, remotePort);
 }
 
 void firewall_remove_udpipv6_remote_endpoint(uint8_t *remoteAddress,
                                              uint16_t localPort,
                                              uint16_t remotePort)
 {
-	if (auto copy = copy_address(remoteAddress))
+	ConnectionTuple tuple;
+	// Do not initialize the address field as it will be fully overwritten
+	// by `set_ipv6_address`.
+	tuple.localPort  = localPort;
+	tuple.remotePort = remotePort;
+
+	if (tuple.set_ipv6_address(remoteAddress) < 0)
 	{
-		EndpointsTable<IPv6Address>::instance().remove_endpoint(
-		  IPProtocolNumber::UDP, *copy, localPort, remotePort);
+		return;
 	}
+	EndpointsTable::instance().remove_endpoint(IPProtocolNumber::UDP, tuple);
+}
+
+void firewall_remove_tcpipv6_endpoint(uint16_t localPort)
+{
+	EndpointsTable::instance().remove_endpoint(IPProtocolNumber::TCP,
+	                                           localPort);
+}
+
+void firewall_remove_udpipv6_local_endpoint(uint16_t localPort)
+{
+	EndpointsTable::instance().remove_endpoint(IPProtocolNumber::UDP,
+	                                           localPort);
 }
