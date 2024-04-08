@@ -30,6 +30,27 @@ using CHERI::PermissionSet;
 
 namespace
 {
+	// TODO These should probably be in their own library.
+	uint16_t constexpr ntohs(uint16_t value)
+	{
+		return
+#ifdef __LITTLE_ENDIAN__
+		  __builtin_bswap16(value)
+#else
+		  value
+#endif
+		    ;
+	}
+	uint16_t constexpr htons(uint16_t value)
+	{
+		return
+#ifdef __LITTLE_ENDIAN__
+		  __builtin_bswap16(value)
+#else
+		  value
+#endif
+		    ;
+	}
 
 	/**
 	 * The sealed wrapper around a FreeRTOS socket.
@@ -558,28 +579,27 @@ int network_socket_close(Timeout *t, SObj mallocCapability, SObj sealedSocket)
 		  // mainly if the TCP connection is dead, which is likely to
 		  // happen in practice and has no impact for us.
 		  FreeRTOS_shutdown(socket->socket, FREERTOS_SHUT_RDWR);
+		  auto localPort = ntohs(socket->socket->usLocalPort);
 		  if (socket->socket->bits.bIsIPv6)
 		  {
 			  if (isTCP)
 			  {
-				  firewall_remove_tcpipv6_endpoint(socket->socket->usLocalPort);
+				  firewall_remove_tcpipv6_endpoint(localPort);
 			  }
 			  else
 			  {
-				  firewall_remove_udpipv6_local_endpoint(
-				    socket->socket->usLocalPort);
+				  firewall_remove_udpipv6_local_endpoint(localPort);
 			  }
 		  }
 		  else
 		  {
 			  if (isTCP)
 			  {
-				  firewall_remove_tcpipv4_endpoint(socket->socket->usLocalPort);
+				  firewall_remove_tcpipv4_endpoint(localPort);
 			  }
 			  else
 			  {
-				  firewall_remove_udpipv4_local_endpoint(
-				    socket->socket->usLocalPort);
+				  firewall_remove_udpipv4_local_endpoint(localPort);
 			  }
 		  }
 		  // Close the socket.  Another thread will actually clean up the
