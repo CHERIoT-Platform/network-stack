@@ -256,7 +256,11 @@ namespace
 			if (iterator != table.end() && (*iterator == tuple))
 			{
 				table.erase(iterator);
+				return;
 			}
+			Debug::log("Failed to remove endpoint (local: {}; remote: {})",
+			           localPort,
+			           remotePort);
 		}
 
 		void add_endpoint(IPProtocolNumber protocol,
@@ -274,6 +278,10 @@ namespace
 			auto            iterator = find_endpoint(table, tuple);
 			if (iterator != table.end() && (*iterator == tuple))
 			{
+				Debug::log("Failed to add endpoint: already in the table "
+				           "(local: {}; remote: {})",
+				           localPort,
+				           remotePort);
 				return;
 			}
 			table.insert(iterator, tuple);
@@ -290,11 +298,18 @@ namespace
 			// TODO: If we sorted by local port, we could make this O(log(n))
 			// If we expect n to be < 8 (currently do) then that's too much
 			// work.
+			bool found = false;
 			std::remove_if(table.begin(),
 			               table.end(),
-			               [localPort](const ConnectionTuple &tuple) {
-				               return tuple.localPort == localPort;
+			               [localPort, &found](const ConnectionTuple &tuple) {
+				               bool ret = (tuple.localPort == localPort);
+				               found    = found || ret;
+				               return ret;
 			               });
+			if (!found)
+			{
+				Debug::log("Failed to remove endpoint (local: {})", localPort);
+			}
 		}
 
 		bool is_endpoint_permitted(IPProtocolNumber protocol,
