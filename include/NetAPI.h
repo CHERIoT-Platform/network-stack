@@ -180,8 +180,13 @@ int __cheri_compartment("TCPIP")
  * The `bytesReceived` field of the result will be negative if an error
  * occurred.  The `buffer` field will be null if no data were received.
  *
+ * Note that errors occuring in this function (particularly timeout and invalid
+ * `address` or `port` pointers) may cause UDP packets to be dropped.
+ *
  * The negative values will be errno values:
  *
+ *  - `-ENOMEM`: The allocation quota is insufficient to hold the packet.
+ *  - `-EPERM`: The `address` and/or `port` pointers are invalid.
  *  - `-EINVAL`: The socket is not valid.
  *  - `-ETIMEDOUT`: The timeout was reached before data could be received.
  *  - `-ENOTCONN`: The socket is not connected.

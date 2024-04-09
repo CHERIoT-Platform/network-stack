@@ -667,23 +667,26 @@ NetworkReceiveResult network_socket_receive_from(Timeout *timeout,
 			                                                       FREERTOS_ZERO_COPY,
 			                                                       &remoteAddress,
 			                                                       &remoteAddressLength);
-            });
-		   if (received > 0)
+            } /* with_freertos_timeout */);
+          if (received > 0)
           {
-              ssize_t claimed = heap_claim(mallocCapability, unclaimedBuffer);
-              Debug::log(
-			     "Claimed {} bytes for {}-byte buffer", claimed, received);
+              Claim c{mallocCapability, unclaimedBuffer};
               FreeRTOS_ReleaseUDPPayloadBuffer(unclaimedBuffer);
-              if (claimed <= 0)
+              if (!c)
               {
+                  Debug::log("Failed to claim socket.");
                   return -ENOMEM;
               }
+
+              Debug::log("Claimed {}-byte buffer", received);
               Capability claimedBuffer{unclaimedBuffer};
               claimedBuffer.bounds() = received;
+
               if (heap_claim_fast(timeout, address, port) < 0)
               {
                   return -ETIMEDOUT;
               }
+
               if (address != nullptr)
               {
                   if (!check_pointer<PermissionSet{Permission::Store}>(address))
@@ -705,19 +708,18 @@ NetworkReceiveResult network_socket_receive_from(Timeout *timeout,
               }
               if (port != nullptr)
               {
-                  if (!check_pointer<PermissionSet{Permission::Store}>(address))
+                  if (!check_pointer<PermissionSet{Permission::Store}>(port))
                   {
                       return -EPERM;
                   }
                   *port = FreeRTOS_ntohs(remoteAddress.sin_port);
               }
-              if (received > 0)
-              {
-                  buffer = claimedBuffer;
-                  return received;
-              }
+
+              buffer = claimedBuffer;
+              c.release();
+              return received;
           }
-          else if (received < 0)
+          if (received < 0)
           {
               if (received == -pdFREERTOS_ERRNO_ENOTCONN)
               {
@@ -728,12 +730,13 @@ NetworkReceiveResult network_socket_receive_from(Timeout *timeout,
               {
                   return -ETIMEDOUT;
               }
+
               // Something went wrong?
               Debug::log("Receive failed with unexpected error: {}", received);
               return -EINVAL;
           }
-          return received;
-	   },
+          return received; // We had `received` == 0.
+	   } /* with_sealed_socket */,
 	   socket);
 	return {result, buffer};
 }
