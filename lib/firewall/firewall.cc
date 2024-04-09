@@ -175,6 +175,26 @@ namespace
 
 	static_assert(sizeof(IPv4Header) == 20);
 
+	ssize_t __noinline find_endpoint(const uint8_t *tableBegin,
+	                                 const uint8_t *tableEnd,
+	                                 const uint8_t *entry,
+	                                 size_t         entrySize)
+	{
+		const uint8_t *cur  = tableBegin;
+		const uint8_t *prev = cur;
+		while (cur != tableEnd)
+		{
+			bool identical = (memcmp(cur, entry, entrySize) == 0);
+			if (identical)
+			{
+				return (prev - tableBegin) / entrySize;
+			}
+			prev = cur;
+			cur += entrySize;
+		}
+		return -1;
+	}
+
 	/**
 	 * Simple firewall table for IPv4 endpoints.
 	 *
@@ -227,12 +247,6 @@ namespace
 			                      : permittedUDPEndpoints};
 		}
 
-		auto find_endpoint(decltype(permittedTCPEndpoints) &table,
-		                   const ConnectionTuple           &endpoint)
-		{
-			return std::lower_bound(table.begin(), table.end(), endpoint);
-		}
-
 		public:
 		static EndpointsTable &instance()
 		{
@@ -252,15 +266,19 @@ namespace
 			auto guardedTable = permitted_endpoints(protocol);
 			auto &[g, table]  = guardedTable;
 			ConnectionTuple tuple{endpoint, localPort, remotePort};
-			auto            iterator = find_endpoint(table, tuple);
-			if (iterator != table.end() && (*iterator == tuple))
+			auto            index =
+			  find_endpoint((const uint8_t *)(table.data()),
+			                (const uint8_t *)(table.data() + table.size()),
+			                (uint8_t *)&tuple,
+			                sizeof(tuple));
+			if (index == -1)
 			{
-				table.erase(iterator);
+				Debug::log("Failed to remove endpoint (local: {}; remote: {})",
+				           localPort,
+				           remotePort);
 				return;
 			}
-			Debug::log("Failed to remove endpoint (local: {}; remote: {})",
-			           localPort,
-			           remotePort);
+			table.erase(table.begin() + index);
 		}
 
 		void add_endpoint(IPProtocolNumber protocol,
@@ -275,16 +293,19 @@ namespace
 			auto guardedTable = permitted_endpoints(protocol);
 			auto &[g, table]  = guardedTable;
 			ConnectionTuple tuple{remoteAddress, localPort, remotePort};
-			auto            iterator = find_endpoint(table, tuple);
-			if (iterator != table.end() && (*iterator == tuple))
+			auto            index =
+			  find_endpoint((const uint8_t *)(table.data()),
+			                (const uint8_t *)(table.data() + table.size()),
+			                (uint8_t *)&tuple,
+			                sizeof(tuple));
+			if (index == -1)
 			{
-				Debug::log("Failed to add endpoint: already in the table "
-				           "(local: {}; remote: {})",
-				           localPort,
-				           remotePort);
-				return;
+				table.insert(table.end(), tuple);
 			}
-			table.insert(iterator, tuple);
+			Debug::log("Failed to add endpoint: already in the table "
+			           "(local: {}; remote: {})",
+			           localPort,
+			           remotePort);
 		}
 
 		void remove_endpoint(IPProtocolNumber protocol, uint16_t localPort)
@@ -324,8 +345,12 @@ namespace
 			auto guardedTable = permitted_endpoints(protocol);
 			auto &[g, table]  = guardedTable;
 			ConnectionTuple tuple{endpoint, localPort, remotePort};
-			auto            iterator = find_endpoint(table, tuple);
-			return iterator != table.end() && (*iterator == tuple);
+			auto            index =
+			  find_endpoint((const uint8_t *)(table.data()),
+			                (const uint8_t *)(table.data() + table.size()),
+			                (uint8_t *)&tuple,
+			                sizeof(tuple));
+			return index != -1;
 		}
 	};
 
