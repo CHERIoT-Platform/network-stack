@@ -5,7 +5,7 @@
 #include <atomic>
 #include <compartment-macros.h>
 #include <debug.hh>
-#include <fail-simulator-on-error.h>
+//#include <fail-simulator-on-error.h>
 #include <locks.hh>
 #include <platform-ethernet.hh>
 #include <timeout.h>
