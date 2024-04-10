@@ -11,12 +11,12 @@
 #include <platform-entropy.hh>
 #include <platform-gpio.hh>
 #include <sntp.h>
+#include <string_view>
 #include <tick_macros.h>
+#include <vector>
 
 #include "host.cert.h"
-#include "thread.h"
-#include "timeout.h"
-//#include "mosquitto.org.h"
+#include "microvium-ffi.h"
 
 using CHERI::Capability;
 
@@ -24,7 +24,7 @@ using Debug            = ConditionalDebug<true, "MQTT demo">;
 constexpr bool UseIPv6 = CHERIOT_RTOS_OPTION_IPv6;
 
 // MQTT network buffer sizes
-constexpr const size_t networkBufferSize    = 1024;
+constexpr const size_t networkBufferSize    = 2048;
 constexpr const size_t incomingPublishCount = 100;
 constexpr const size_t outgoingPublishCount = 100;
 
@@ -38,21 +38,15 @@ namespace
 
 	DECLARE_AND_DEFINE_ALLOCATOR_CAPABILITY(mqttTestMalloc, 32 * 1024);
 
-	constexpr const char *ledTopic             = "cheri-led";
-	int32_t               ledSubscribePacketId = -1;
-	bool                  ledAckReceived       = false;
+	constexpr std::string_view CodeTopic{"cheri-code"};
+	int32_t                    codeSubscribePacketId = -1;
+	bool                       codeAckReceived       = false;
 
 	constexpr const char *buttonTopic   = "cheri-button";
 	int                   buttonCounter = 0;
 
-	/// Helpers
-
-	/// Returns a weak pseudo-random number.
-	uint64_t rand()
-	{
-		EntropySource rng;
-		return rng();
-	}
+	std::unique_ptr<mvm_VM, MVMDeleter> vm;
+	std::vector<uint8_t>                bytecode;
 
 	/**
 	 * Note from the MQTT 3.1.1 spec:
@@ -64,54 +58,17 @@ namespace
 	 * UTF-8 encoding of 0-9, a-z, A-Z, is 1 Byte per character, so we should be
 	 * able to do up to a length of 22 characters + zero byte.
 	 */
-	constexpr const int clientIDlength = 23;
-	constexpr const int clientIDPrefixLength = 8;
+	constexpr const int clientIDlength           = 23;
+	constexpr const int clientIDPrefixLength     = 8;
 	char                clientID[clientIDlength] = "cheriot-XXXXXXXXXXXXXX";
-
-	/**
-	 * Turn an LED on.
-	 */
-	void gpios_on()
-	{
-		MMIO_CAPABILITY(GPIO, gpio_led0)->enable_all();
-	}
-
-	/**
-	 * Turn an LED on.
-	 */
-	void led_on(int32_t index)
-	{
-		MMIO_CAPABILITY(GPIO, gpio_led0)->led_on(index);
-	}
-
-	/**
-	 * Turn an LED off.
-	 */
-	void led_off(int32_t index)
-	{
-		MMIO_CAPABILITY(GPIO, gpio_led0)->led_off(index);
-	}
-
-	/**
-	 * Read a single button.
-	 */
-	int32_t read_button(int32_t index)
-	{
-		return MMIO_CAPABILITY(GPIO, gpio_led0)->button(index);
-	}
-
-	uint32_t read_switches()
-	{
-		return MMIO_CAPABILITY(GPIO, gpio_led0)->switches();
-	}
 
 	/// Callbacks
 
 	void __cheri_callback ackCallback(uint16_t packetID, bool isReject)
 	{
-		if (packetID == ledSubscribePacketId)
+		if (packetID == codeSubscribePacketId)
 		{
-			ledAckReceived = true;
+			codeAckReceived = true;
 		}
 	}
 
@@ -120,43 +77,96 @@ namespace
 	                                      const void *payload,
 	                                      size_t      payloadLength)
 	{
-		// TODO check input pointers
-
-		const char *payloadStr = static_cast<const char *>(payload);
-		size_t      length     = std::min(strlen(ledTopic), topicNameLength);
-		if (strncmp(topicName, ledTopic, length) == 0)
+		std::string_view topic{topicName, topicNameLength};
+		// FIXME: This is a work around for a compiler bug.  __builtin_memcmp
+		// is being expanded to a call to memcmp with the wrong calling
+		// convention and so we get linker errors.
+		// if (topic == CodeTopic)
+		if ((CodeTopic.size() == topic.size()) &&
+		    (memcmp(topic.data(), CodeTopic.data(), CodeTopic.size()) == 0))
 		{
-			if (payloadLength >= 1)
+			Debug::log("Received new JavaScript code.");
+			vm.reset();
+			bytecode.clear();
+			bytecode.reserve(payloadLength);
+			bytecode.insert(bytecode.end(),
+			                static_cast<const uint8_t *>(payload),
+			                static_cast<const uint8_t *>(payload) +
+			                  payloadLength);
+			Debug::log("Copied JavaScript bytecode");
+			mvm_VM *rawVm;
+			auto    err = mvm_restore(
+			     &rawVm,            /* Out pointer to the VM */
+			     bytecode.data(),   /* Bytecode data */
+			     bytecode.size(),   /* Bytecode length */
+			     MALLOC_CAPABILITY, /* Capability used to allocate memory */
+			     ::resolve_import); /* Callback used to resolve FFI imports */
+			if (err == MVM_E_SUCCESS)
 			{
-				switch (static_cast<const char *>(payload)[0])
-				{
-					case '0':
-						led_off(0);
-						led_off(1);
-						return;
-					case '1':
-						led_on(0);
-						led_off(1);
-						return;
-					case '2':
-						led_off(0);
-						led_on(1);
-						return;
-					case '3':
-						led_on(0);
-						led_on(1);
-						return;
-				}
+				Debug::log("Successfully loaded bytecode.");
+				vm.reset(rawVm);
 			}
+			else
+			{
+				// If this is not valid bytecode, give up.
+				Debug::log("Failed to parse bytecode: {}", err);
+			}
+			// Don't try to handle the new-code message in JavaScript.
+			return;
 		}
 
-		Debug::log("Received PUBLISH notification with invalid topic ({}) or "
-		           "payload ({}).",
-		           std::string_view{topicName, topicNameLength},
-		           std::string_view{payloadStr, payloadLength});
+		if (!vm)
+		{
+			return;
+		}
+
+		mvm_Value callback;
+		if (mvm_resolveExports(vm.get(), &ExportPublished, &callback, 1) ==
+		    MVM_E_SUCCESS)
+		{
+			mvm_Value args[2];
+			args[0] = mvm_newString(vm.get(), topicName, topicNameLength);
+			args[1] = mvm_newString(
+			  vm.get(), static_cast<const char *>(payload), payloadLength);
+			// Set a limit of bytecodes to execute, to prevent infinite loops.
+			mvm_stopAfterNInstructions(vm.get(), 20000);
+			// Call the function:
+			int err = mvm_call(vm.get(), callback, nullptr, args, 2);
+			if (err != MVM_E_SUCCESS)
+			{
+				Debug::log("Failed to call publish callback function: {}", err);
+			}
+		}
 	}
 
-	uint32_t switches;
+	/// Handle to the MQTT connection.
+	SObj handle;
+
+	bool export_mqtt_publish(std::string_view topic, std::string_view message)
+	{
+		Timeout t{UnlimitedTimeout};
+		Debug::log("Publishing message to topic '{}' ({}): '{}' ({})",
+		           topic,
+		           topic.size(),
+		           message,
+		           message.size());
+		auto ret = mqtt_publish(&t,
+		                        handle,
+		                        0, // Don't want acks for this one
+		                        topic.data(),
+		                        topic.size(),
+		                        message.data(),
+		                        message.size());
+		Debug::log("Publish returned {}", ret);
+		return ret == 0;
+	}
+
+	bool export_mqtt_subscribe(std::string_view topic)
+	{
+		Timeout t{MS_TO_TICKS(100)};
+		auto    ret = mqtt_subscribe(&t, handle, 1, topic.data(), topic.size());
+		return ret >= 0;
+	}
 
 } // namespace
 
@@ -167,7 +177,7 @@ void __cheri_compartment("mqtt_demo") demo()
 	int     ret;
 	Timeout t{MS_TO_TICKS(5000)};
 
-	gpios_on();
+	MMIO_CAPABILITY(GPIO, gpio_led0)->enable_all();
 
 	Debug::log("Starting MQTT demo...");
 	network_start();
@@ -206,25 +216,27 @@ void __cheri_compartment("mqtt_demo") demo()
 
 	while (true)
 	{
+		vm.reset();
+		bytecode.clear();
 		Debug::log("Generating client ID...");
 		mqtt_generate_client_id(clientID + clientIDPrefixLength,
 		                        clientIDlength - clientIDPrefixLength - 1);
 
 		Debug::log("Connecting to MQTT broker...");
 		Debug::log("Quota left: {}", heap_quota_remaining(MALLOC_CAPABILITY));
-		t           = UnlimitedTimeout;
-		SObj handle = mqtt_connect(&t,
-		                           STATIC_SEALED_VALUE(mqttTestMalloc),
-		                           STATIC_SEALED_VALUE(DemoHost),
-		                           publishCallback,
-		                           ackCallback,
-		                           TAs,
-		                           TAs_NUM,
-		                           networkBufferSize,
-		                           incomingPublishCount,
-		                           outgoingPublishCount,
-		                           clientID,
-		                           strlen(clientID));
+		t      = UnlimitedTimeout;
+		handle = mqtt_connect(&t,
+		                      STATIC_SEALED_VALUE(mqttTestMalloc),
+		                      STATIC_SEALED_VALUE(DemoHost),
+		                      publishCallback,
+		                      ackCallback,
+		                      TAs,
+		                      TAs_NUM,
+		                      networkBufferSize,
+		                      incomingPublishCount,
+		                      outgoingPublishCount,
+		                      clientID,
+		                      strlen(clientID));
 
 		if (!Capability{handle}.is_valid())
 		{
@@ -236,13 +248,13 @@ void __cheri_compartment("mqtt_demo") demo()
 
 		Debug::log("Connected to MQTT broker!");
 
-		Debug::log("Subscribing to LED topic '{}'.", ledTopic);
+		Debug::log("Subscribing to JavaScript code topic '{}'.", CodeTopic);
 
 		ret = mqtt_subscribe(&t,
 		                     handle,
 		                     1, // QoS 1 = delivered at least once
-		                     ledTopic,
-		                     strlen(ledTopic));
+		                     CodeTopic.data(),
+		                     CodeTopic.size());
 
 		if (ret < 0)
 		{
@@ -251,110 +263,61 @@ void __cheri_compartment("mqtt_demo") demo()
 			continue;
 		}
 
-		ledSubscribePacketId = ret;
+		codeSubscribePacketId = ret;
 
 		Debug::log("Now fetching the SUBACKs.");
 
-		while (!ledAckReceived)
+		while (!codeAckReceived)
 		{
-			t   = Timeout{MS_TO_TICKS(100)};
+			t   = Timeout{MS_TO_TICKS(1000)};
 			ret = mqtt_run(&t, handle);
 
 			if (ret < 0)
 			{
-				Debug::log("Failed to wait for the SUBACK, error {}.", ret);
-				mqtt_disconnect(&t, STATIC_SEALED_VALUE(mqttTestMalloc), handle);
+				Debug::log(
+				  "Failed to wait for the SUBACK for the code node, error {}.",
+				  ret);
+				mqtt_disconnect(
+				  &t, STATIC_SEALED_VALUE(mqttTestMalloc), handle);
 				continue;
 			}
 		}
 
 		Timeout coolDown{0};
 		Debug::log("Now entering the main loop.");
-		// Hugo: If I comment out the next line, it will try a reconnect
-		// immediately. For some reason that I haven't been able to track down
-		// yet, this fails 100% of the time.
 		while (true)
 		{
-			SystickReturn timestampBefore = thread_systemtick_get();
-
 			// Check for PUBLISHes
-			t   = Timeout{MS_TO_TICKS(100)};
+			t = Timeout{MS_TO_TICKS(100)};
+			// Debug::log("{} bytes of heap free", heap_available());
 			ret = mqtt_run(&t, handle);
 
-			if (ret < 0)
+			if ((ret < 0) && (ret != -ETIMEDOUT))
 			{
 				Debug::log("Failed to wait for PUBLISHes, error {}.", ret);
 				break;
 			}
 
-			uint32_t newSwitches = read_switches();
-			if (newSwitches != switches)
+			if (!vm)
 			{
-				for (int i = 0; i < 8; i++)
-				{
-					bool newSwitch = (newSwitches & (1 << i)) != 0;
-					bool oldSwitch = (switches & (1 << i)) != 0;
-					if (newSwitch != oldSwitch)
-					{
-						Debug::log("Setting switch {} to {}.", i, newSwitch ? "ON" : "OFF");
-						char topic[]             = "cheri-switch-X";
-						topic[sizeof(topic) - 2] = '0' + i;
-						t                        = Timeout{MS_TO_TICKS(5000)};
-						ret                      = mqtt_publish(&t,
-						                                        handle,
-						                                        0, // Don't want acks for this one
-						                                        topic,
-						                                        sizeof(topic) - 1,
-                                           newSwitch ? "ON" : "OFF",
-                                           newSwitch ? 2 : 3);
-						Debug::log("Free heap space: {}", heap_available());
-						if (ret < 0)
-						{
-							Debug::log(
-							  "Failed to publish button change, error {}.",
-							  ret);
-							break;
-						}
-					}
-				}
-				switches = newSwitches;
-			}
-
-			// Check the button
-			if (read_button(0) && !coolDown.remaining)
-			{
-				Debug::log("Publishing {} to button topic '{}'.",
-				           buttonCounter,
-				           buttonTopic);
-
-				char num_char[20] = {0};
-				snprintf(num_char, 20, "%lu", buttonCounter);
-
-				t   = Timeout{MS_TO_TICKS(5000)};
-				ret = mqtt_publish(&t,
-				                   handle,
-				                   0, // Don't want acks for this one
-				                   buttonTopic,
-				                   strlen(buttonTopic),
-				                   static_cast<const void *>(num_char),
-				                   strlen(num_char));
-
-				if (ret < 0)
-				{
-					Debug::log("Failed to publish, error {}.", ret);
-					break;
-				}
-
-				buttonCounter++;
-
-				// Set cool down timer
-				coolDown = Timeout{MS_TO_TICKS(500)};
 				continue;
 			}
 
-			SystickReturn timestampAfter = thread_systemtick_get();
-			// Timeouts should not overflow a 32 bit value
-			coolDown.elapse(timestampAfter.lo - timestampBefore.lo);
+			mvm_Value callback;
+			if (mvm_resolveExports(vm.get(), &ExportTick, &callback, 1) ==
+			    MVM_E_SUCCESS)
+			{
+				// Set a limit of bytecodes to execute, to prevent infinite
+				// loops.
+				mvm_stopAfterNInstructions(vm.get(), 20000);
+				// Call the function:
+				int err = mvm_call(vm.get(), callback, nullptr, nullptr, 0);
+				if (err != MVM_E_SUCCESS)
+				{
+					Debug::log("Failed to call tick callback function: {}",
+					           err);
+				}
+			}
 		}
 		Debug::log("Exiting main loop, cleaning up.");
 		mqtt_disconnect(&t, STATIC_SEALED_VALUE(mqttTestMalloc), handle);
