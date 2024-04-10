@@ -67,8 +67,15 @@ namespace
 		MQTTFixedBuffer_t    networkBuffer;
 		NetworkContext_t     networkContext;
 
-		// Lock on which the whole public API synchronizes.
-		FlagLockPriorityInherited lock;
+		/**
+		 * Lock on which the whole public API synchronizes.  This is a
+		 * recursive mutex so that you can publish during a callback.
+		 * Arbitrary recursion is discouraged by coreMQTT, but at least this
+		 * minimal case works.
+		 *
+		 * See: https://github.com/FreeRTOS/coreMQTT/issues/278
+		 */
+		RecursiveMutex lock;
 
 		/**
 		 * Constructor of the CHERIoT MQTT context object. We keep
