@@ -257,6 +257,12 @@ int __cheri_compartment("MQTT") mqtt_unsubscribe(Timeout    *t,
  * Fetch ACK and PUBLISH notifications on a given MQTT connection, and keep
  * the connection alive.
  *
+ * This function will invoke the callbacks passed to `mqtt_connect`.  The
+ * connection object is protected by a recursive mutex, so these callbacks can
+ * call additional publish and subscribe functions.  If doing so, care must be
+ * taken to ensure that the buffer is not exhausted.  Calling `mqtt_run` from a
+ * callback is not supported.
+ *
  * The return value is zero if notifications were successfully fetched, or a
  * negative error code.
  *
