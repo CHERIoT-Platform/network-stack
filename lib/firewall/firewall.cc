@@ -1,7 +1,6 @@
 // Copyright SCI Semiconductor and CHERIoT Contributors.
 // SPDX-License-Identifier: MIT
 
-#include "firewall.hh"
 #include <atomic>
 #include <compartment-macros.h>
 #include <debug.hh>
@@ -11,6 +10,10 @@
 #include <timeout.h>
 #include <timeout.hh>
 #include <vector>
+
+using Debug = ConditionalDebug<false, "Firewall">;
+
+#include "firewall.hh"
 
 namespace
 {
@@ -39,7 +42,6 @@ namespace
 
 namespace
 {
-	using Debug = ConditionalDebug<false, "Firewall">;
 
 	/**
 	 * EtherType values, for Ethernet headers.  These are defined in network
@@ -48,8 +50,10 @@ namespace
 	enum class EtherType : uint16_t
 	{
 		IPv4 = 0x0008,
+#if CHERIOT_RTOS_OPTION_IPv6
 		IPv6 = 0xDD86,
-		ARP  = 0x0608,
+#endif
+		ARP = 0x0608,
 	};
 
 	const char *ethertype_as_string(EtherType etherType)
@@ -58,8 +62,10 @@ namespace
 		{
 			case EtherType::IPv4:
 				return "IPv4";
+#if CHERIOT_RTOS_OPTION_IPv6
 			case EtherType::IPv6:
 				return "IPv6";
+#endif
 			case EtherType::ARP:
 				return "ARP";
 			default:
@@ -491,15 +497,18 @@ namespace
 				}
 				return ret;
 			}
+#if CHERIOT_RTOS_OPTION_IPv6
 			// For now, permit all outbound IPv6 packets.
+			// FIXME: Check the firewall for IPv6!
 			case EtherType::IPv6:
 			{
 				Debug::log("Permitting outbound IPv6 packet");
 				return true;
 				break;
 			}
+#endif
 		}
-		return true;
+		return false;
 	}
 
 	bool packet_filter_ingress(const uint8_t *data, size_t length)
@@ -525,9 +534,12 @@ namespace
 		  reinterpret_cast<EthernetHeader *>(const_cast<uint8_t *>(data));
 		switch (ethernetHeader->etherType)
 		{
+#if CHERIOT_RTOS_OPTION_IPv6
 			// For now, testing with v6 disabled.
+			// FIXME: Check the firewall for IPv6!
 			case EtherType::IPv6:
 				return true;
+#endif
 			case EtherType::ARP:
 				Debug::log("Saw ARP frame");
 				return true;
@@ -706,6 +718,7 @@ namespace
 	}
 } // namespace
 
+#if CHERIOT_RTOS_OPTION_IPv6
 void firewall_add_tcpipv6_endpoint(uint8_t *remoteAddress,
                                    uint16_t localPort,
                                    uint16_t remotePort)
@@ -750,6 +763,7 @@ void firewall_remove_udpipv6_remote_endpoint(uint8_t *remoteAddress,
 		  IPProtocolNumber::UDP, *copy, localPort, remotePort);
 	}
 }
+#endif
 
 bool ethernet_driver_start(std::atomic<uint8_t> *state)
 {

@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: MIT
 
 #pragma once
-#include "../firewall/firewall.hh"
 #include <FreeRTOS_IP.h>
 #include <ds/linked_list.h>
 #include <locks.hh>
@@ -22,8 +21,6 @@ enum [[clang::flag_enum]] RestartState{
   IpThreadKicked = 2,
   DriverKicked   = 4,
 };
-
-static_assert(RestartStateDriverKickedBit == DriverKicked);
 
 using SocketRingLink = ds::linked_list::cell::Pointer;
 

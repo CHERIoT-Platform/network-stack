@@ -12,7 +12,6 @@
 #include <platform-ethernet.hh>
 #include <timeout.h>
 
-#include "../firewall/firewall.hh"
 #include "tcpip-internal.h"
 
 // FreeRTOS APIs
@@ -23,6 +22,8 @@
 #include <NetworkBufferManagement.h>
 
 using Debug = ConditionalDebug<false, "Ethernet Adaptor">;
+
+#include "../firewall/firewall.hh"
 
 namespace
 {

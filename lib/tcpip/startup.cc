@@ -12,9 +12,9 @@
 #include <platform-ethernet.hh>
 #include <tcpip-internal.h>
 
-#include "../firewall/firewall.hh"
-
 using Debug = ConditionalDebug<false, "TCP/IP Stack startup">;
+
+#include "../firewall/firewall.hh"
 
 extern "C" void ip_cleanup(void);
 

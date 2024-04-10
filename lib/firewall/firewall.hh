@@ -114,6 +114,7 @@ void __cheri_compartment("Firewall")
                                           uint16_t localPort,
                                           uint16_t remotePort);
 
+#if CHERIOT_RTOS_OPTION_IPv6
 /**
  * Open a hole in the firewall for TCP packets to and from the given endpoint.
  * This permits inbound packets to, and outbound packets from, the specified
@@ -167,3 +168,43 @@ void __cheri_compartment("Firewall")
   firewall_remove_udpipv6_remote_endpoint(uint8_t *remoteAddress,
                                           uint16_t localPort,
                                           uint16_t remotePort);
+#else
+__always_inline static inline void
+firewall_add_tcpipv6_endpoint(uint8_t *remoteAddress,
+                              uint16_t localPort,
+                              uint16_t remotePort)
+{
+	Debug::Assert(
+	  false, "{} not supported with IPv6 disabled", __PRETTY_FUNCTION__);
+}
+__always_inline static inline void
+firewall_add_udpipv6_endpoint(uint8_t *remoteAddress,
+                              uint16_t localPort,
+                              uint16_t remotePort)
+{
+	Debug::Assert(
+	  false, "{} not supported with IPv6 disabled", __PRETTY_FUNCTION__);
+}
+
+__always_inline static inline void
+firewall_remove_tcpipv6_endpoint(uint16_t localPort)
+{
+	Debug::Assert(
+	  false, "{} not supported with IPv6 disabled", __PRETTY_FUNCTION__);
+}
+__always_inline static inline void
+firewall_remove_udpipv6_local_endpoint(uint16_t endpoint)
+{
+	Debug::Assert(
+	  false, "{} not supported with IPv6 disabled", __PRETTY_FUNCTION__);
+}
+
+__always_inline static inline void
+firewall_remove_udpipv6_remote_endpoint(uint8_t *remoteAddress,
+                                        uint16_t localPort,
+                                        uint16_t remotePort)
+{
+	Debug::Assert(
+	  false, "{} not supported with IPv6 disabled", __PRETTY_FUNCTION__);
+}
+#endif
