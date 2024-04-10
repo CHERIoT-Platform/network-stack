@@ -6,7 +6,6 @@
 #include <FreeRTOS_ND.h>
 #include <tcpip_error_handler.h>
 
-#include "../firewall/firewall.hh"
 #include "network-internal.h"
 #include "tcpip-internal.h"
 
@@ -19,7 +18,11 @@
 #include <platform-ethernet.hh>
 #include <token.h>
 
-using Debug            = ConditionalDebug<false, "Network stack wrapper">;
+using Debug = ConditionalDebug<false, "Network stack wrapper">;
+
+#include "../firewall/firewall.hh"
+
+static_assert(RestartStateDriverKickedBit == DriverKicked);
 constexpr bool UseIPv6 = CHERIOT_RTOS_OPTION_IPv6;
 
 // IP thread global lock. See comment in `FreeRTOS_IP_wrapper.c`.
