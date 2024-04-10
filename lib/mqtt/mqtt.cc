@@ -80,14 +80,21 @@ namespace
 		}
 
 		/**
-		 * Destructor of the CHERIoT MQTT context object. This takes
-		 * care of closing the TLS link, and de-allocating all objects.
+		 * Destroy the CHERIoT MQTT context object. This takes care of closing
+		 * the TLS link, and de-allocating all objects.
 		 */
-		~CHERIoTMqttContext()
+		void destroy(SObj allocator)
 		{
 			Timeout t{UnlimitedTimeout};
 			tls_connection_close(&t, tlsHandle);
+			heap_free(allocator, networkBuffer.pBuffer);
 		}
+
+		/**
+		 * No destructor.  Implicit deletion is not allowed, `destroy` must be
+		 * called explicitly.
+		 */
+		~CHERIoTMqttContext() = delete;
 
 		/**
 		 * Following this we allocate variable length data:
@@ -534,7 +541,7 @@ SObj mqtt_connect(Timeout                    *t,
 	// coreMQTT), we can assume that the allocator zeroes out for us.
 	size_t handleSize =
 	  sizeof(CHERIoTMqttContext) -
-	  sizeof(CHERIoTMqttContext::variableLengthData) + networkBufferSize +
+	  sizeof(CHERIoTMqttContext::variableLengthData) +
 	  sizeof(MQTTPubAckInfo_t) * (incomingPublishCount + outgoingPublishCount);
 
 	// Create a sealed MQTT handle.
@@ -575,8 +582,14 @@ SObj mqtt_connect(Timeout                    *t,
 	  reinterpret_cast<MQTTPubAckInfo_t *>(&context->variableLengthData);
 	MQTTPubAckInfo_t *outgoingPublishes =
 	  incomingPublishes + incomingPublishCount;
-	uint8_t *networkBuffer = reinterpret_cast<uint8_t *>(outgoingPublishes) +
-	                         sizeof(MQTTPubAckInfo_t) * outgoingPublishCount;
+	uint8_t *networkBuffer =
+	  static_cast<uint8_t *>(heap_allocate(t, allocator, networkBufferSize));
+
+	if (networkBuffer == nullptr)
+	{
+		token_obj_destroy(allocator, mqtt_key(), sealedMQTTHandle);
+		return nullptr;
+	}
 
 	// Initialize context nested structures.
 	context->networkContext.tlsHandle       = tlsHandle;
@@ -594,7 +607,7 @@ SObj mqtt_connect(Timeout                    *t,
 		// `token_obj_destroy` will free the `CHERIoTMqttContext`
 		// object through `heap_free`, but not call its destructor. We
 		// must do that manually.
-		context->~CHERIoTMqttContext();
+		context->destroy(allocator);
 		token_obj_destroy(allocator, mqtt_key(), sealedMQTTHandle);
 	};
 	std::unique_ptr<struct SObjStruct, decltype(cleanup)> sealedContext{
@@ -787,7 +800,7 @@ int mqtt_disconnect(Timeout *t, SObj allocator, SObj mqttHandle)
 	  t,
 	  mqttHandle,
 	  [&](CHERIoTMqttContext *connection) {
-		  connection->~CHERIoTMqttContext();
+		  connection->destroy(allocator);
 		  token_obj_destroy(allocator, mqtt_key(), mqttHandle);
 		  return 0;
 	  },
