@@ -68,7 +68,7 @@ namespace
 		NetworkContext_t     networkContext;
 
 		// Lock on which the whole public API synchronizes.
-		FlagLockPriorityInherited lock;
+		RecursiveMutex lock;
 
 		/**
 		 * Constructor of the CHERIoT MQTT context object. We keep
