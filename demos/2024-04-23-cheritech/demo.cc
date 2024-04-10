@@ -16,7 +16,7 @@
 #include <vector>
 
 #include "host.cert.h"
-#include "microvium-ffi.h"
+#include "javascript.hh"
 
 using CHERI::Capability;
 
@@ -45,9 +45,6 @@ namespace
 	constexpr const char *buttonTopic   = "cheri-button";
 	int                   buttonCounter = 0;
 
-	std::unique_ptr<mvm_VM, MVMDeleter> vm;
-	std::vector<uint8_t>                bytecode;
-
 	/**
 	 * Note from the MQTT 3.1.1 spec:
 	 * The Server MUST allow ClientIds which are between 1 and 23 UTF-8 encoded
@@ -74,7 +71,7 @@ namespace
 
 	void __cheri_callback publishCallback(const char *topicName,
 	                                      size_t      topicNameLength,
-	                                      const void *payload,
+	                                      const void *payloadData,
 	                                      size_t      payloadLength)
 	{
 		std::string_view topic{topicName, topicNameLength};
@@ -85,90 +82,39 @@ namespace
 		if ((CodeTopic.size() == topic.size()) &&
 		    (memcmp(topic.data(), CodeTopic.data(), CodeTopic.size()) == 0))
 		{
-			Debug::log("Received new JavaScript code.");
-			vm.reset();
-			bytecode.clear();
-			bytecode.reserve(payloadLength);
-			bytecode.insert(bytecode.end(),
-			                static_cast<const uint8_t *>(payload),
-			                static_cast<const uint8_t *>(payload) +
-			                  payloadLength);
-			Debug::log("Copied JavaScript bytecode");
-			mvm_VM *rawVm;
-			auto    err = mvm_restore(
-			     &rawVm,            /* Out pointer to the VM */
-			     bytecode.data(),   /* Bytecode data */
-			     bytecode.size(),   /* Bytecode length */
-			     MALLOC_CAPABILITY, /* Capability used to allocate memory */
-			     ::resolve_import); /* Callback used to resolve FFI imports */
-			if (err == MVM_E_SUCCESS)
-			{
-				Debug::log("Successfully loaded bytecode.");
-				vm.reset(rawVm);
-			}
-			else
-			{
-				// If this is not valid bytecode, give up.
-				Debug::log("Failed to parse bytecode: {}", err);
-			}
-			// Don't try to handle the new-code message in JavaScript.
+			load_javascript(payloadData, payloadLength);
 			return;
 		}
 
-		if (!vm)
-		{
-			return;
-		}
-
-		mvm_Value callback;
-		if (mvm_resolveExports(vm.get(), &ExportPublished, &callback, 1) ==
-		    MVM_E_SUCCESS)
-		{
-			mvm_Value args[2];
-			args[0] = mvm_newString(vm.get(), topicName, topicNameLength);
-			args[1] = mvm_newString(
-			  vm.get(), static_cast<const char *>(payload), payloadLength);
-			// Set a limit of bytecodes to execute, to prevent infinite loops.
-			mvm_stopAfterNInstructions(vm.get(), 20000);
-			// Call the function:
-			int err = mvm_call(vm.get(), callback, nullptr, args, 2);
-			if (err != MVM_E_SUCCESS)
-			{
-				Debug::log("Failed to call publish callback function: {}", err);
-			}
-		}
+		std::string_view payload{static_cast<const char *>(payloadData),
+		                         payloadLength};
+		publish(topic, payload);
 	}
 
 	/// Handle to the MQTT connection.
 	SObj handle;
 
-	bool export_mqtt_publish(std::string_view topic, std::string_view message)
-	{
-		Timeout t{UnlimitedTimeout};
-		Debug::log("Publishing message to topic '{}' ({}): '{}' ({})",
-		           topic,
-		           topic.size(),
-		           message,
-		           message.size());
-		auto ret = mqtt_publish(&t,
-		                        handle,
-		                        0, // Don't want acks for this one
-		                        topic.data(),
-		                        topic.size(),
-		                        message.data(),
-		                        message.size());
-		Debug::log("Publish returned {}", ret);
-		return ret == 0;
-	}
-
-	bool export_mqtt_subscribe(std::string_view topic)
-	{
-		Timeout t{MS_TO_TICKS(100)};
-		auto    ret = mqtt_subscribe(&t, handle, 1, topic.data(), topic.size());
-		return ret >= 0;
-	}
-
 } // namespace
+
+bool mqtt_publish(std::string_view topic, std::string_view message)
+{
+	Timeout t{UnlimitedTimeout};
+	auto ret = mqtt_publish(&t,
+	                        handle,
+	                        0, // Don't want acks for this one
+	                        topic.data(),
+	                        topic.size(),
+	                        message.data(),
+	                        message.size());
+	return ret != 0;
+}
+
+bool mqtt_subscribe(std::string_view topic)
+{
+	Timeout t{MS_TO_TICKS(100)};
+	auto    ret = mqtt_subscribe(&t, handle, 1, topic.data(), topic.size());
+	return ret >= 0;
+}
 
 /// Main demo
 
@@ -216,8 +162,7 @@ void __cheri_compartment("mqtt_demo") demo()
 
 	while (true)
 	{
-		vm.reset();
-		bytecode.clear();
+		load_javascript(nullptr, 0);
 		Debug::log("Generating client ID...");
 		mqtt_generate_client_id(clientID + clientIDPrefixLength,
 		                        clientIDlength - clientIDPrefixLength - 1);
@@ -283,7 +228,6 @@ void __cheri_compartment("mqtt_demo") demo()
 			}
 		}
 
-		Timeout coolDown{0};
 		Debug::log("Now entering the main loop.");
 		while (true)
 		{
@@ -297,27 +241,7 @@ void __cheri_compartment("mqtt_demo") demo()
 				Debug::log("Failed to wait for PUBLISHes, error {}.", ret);
 				break;
 			}
-
-			if (!vm)
-			{
-				continue;
-			}
-
-			mvm_Value callback;
-			if (mvm_resolveExports(vm.get(), &ExportTick, &callback, 1) ==
-			    MVM_E_SUCCESS)
-			{
-				// Set a limit of bytecodes to execute, to prevent infinite
-				// loops.
-				mvm_stopAfterNInstructions(vm.get(), 20000);
-				// Call the function:
-				int err = mvm_call(vm.get(), callback, nullptr, nullptr, 0);
-				if (err != MVM_E_SUCCESS)
-				{
-					Debug::log("Failed to call tick callback function: {}",
-					           err);
-				}
-			}
+			tick();
 		}
 		Debug::log("Exiting main loop, cleaning up.");
 		mqtt_disconnect(&t, STATIC_SEALED_VALUE(mqttTestMalloc), handle);
