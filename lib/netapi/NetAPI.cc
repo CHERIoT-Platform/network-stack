@@ -63,7 +63,15 @@ SObj network_socket_connect_tcp(Timeout *timeout,
 		Debug::log("Failed to resolve host");
 		return nullptr;
 	}
-	bool isIPv6       = address.kind == NetworkAddress::AddressKindIPv6;
+	bool isIPv6 = address.kind == NetworkAddress::AddressKindIPv6;
+	if constexpr (!UseIPv6)
+	{
+		if (isIPv6)
+		{
+			Debug::log("IPv6 is not supported");
+			return nullptr;
+		}
+	}
 	auto sealedSocket = network_socket_create_and_bind(
 	  timeout, mallocCapability, isIPv6, ConnectionTypeTCP);
 	auto kind = network_socket_kind(sealedSocket);
@@ -148,8 +156,16 @@ NetworkAddress network_socket_udp_authorise_host(Timeout *timeout,
 	}
 	if (isIPv6)
 	{
-		firewall_add_udpipv6_endpoint(
-		  address.ipv6, kind.localPort, ntohs(host->port));
+		if constexpr (!UseIPv6)
+		{
+			Debug::log("IPv6 is not supported");
+			return {NetworkAddress::AddressKindInvalid};
+		}
+		else
+		{
+			firewall_add_udpipv6_endpoint(
+			  address.ipv6, kind.localPort, ntohs(host->port));
+		}
 	}
 	else
 	{
