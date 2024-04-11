@@ -1,7 +1,7 @@
 // Copyright SCI Semiconductor and CHERIoT Contributors.
 // SPDX-License-Identifier: MIT
 
-#include "firewall.h"
+#include "firewall.hh"
 #include <atomic>
 #include <compartment-macros.h>
 #include <debug.hh>
@@ -68,6 +68,11 @@ namespace
 	}
 
 	std::atomic<uint32_t> barrier;
+
+	/**
+	 * This is used to synchronize with the TCP/IP stack during resets.
+	 */
+	std::atomic<uint8_t> *tcpipRestartState = nullptr;
 
 	auto &lazy_network_interface()
 	{
@@ -238,6 +243,13 @@ namespace
 		{
 			static EndpointsTable table;
 			return table;
+		}
+
+		void clear(IPProtocolNumber protocol)
+		{
+			auto guardedTable = permitted_endpoints(protocol);
+			auto &[g, table]  = guardedTable;
+			table.clear();
 		}
 
 		void remove_endpoint(IPProtocolNumber protocol,
@@ -492,6 +504,16 @@ namespace
 
 	bool packet_filter_ingress(const uint8_t *data, size_t length)
 	{
+		uint32_t stateSnapshot = tcpipRestartState->load();
+		if (stateSnapshot != 0 &&
+		    ((stateSnapshot & RestartStateDriverKickedBit) == 0))
+		{
+			// We are in a reset and the driver has not yet been
+			// restarted.
+			Debug::log("Dropping packet due to network stack restart.");
+			return false;
+		}
+
 		// Not a valid Ethernet frame (64 bytes including four-byte FCS, which
 		// is stripped by this point).
 		if (length < 60)
@@ -526,26 +548,6 @@ namespace
 	std::atomic<uint32_t> receivedCounter;
 
 } // namespace
-
-bool ethernet_driver_start()
-{
-	// Protect against double entry.  If the barrier state is 0, no
-	// initialisation has happened and we should proceed.  If it's 1, we're in
-	// the middle of initialisation, if it's 2 then initialisation is done.  In
-	// any non-zero case, we should not try to do anything.
-	uint32_t expected = 0;
-	if (!barrier.compare_exchange_strong(expected, 1))
-	{
-		return false;
-	}
-	Debug::log("Initialising network interface");
-	auto &ethernet = lazy_network_interface();
-	ethernet.mac_address_set();
-	// Poke the barrier and make the driver thread start.
-	barrier = 2;
-	barrier.notify_one();
-	return true;
-}
 
 bool ethernet_send_frame(uint8_t *frame, size_t length)
 {
@@ -747,4 +749,46 @@ void firewall_remove_udpipv6_remote_endpoint(uint8_t *remoteAddress,
 		EndpointsTable<IPv6Address>::instance().remove_endpoint(
 		  IPProtocolNumber::UDP, *copy, localPort, remotePort);
 	}
+}
+
+bool ethernet_driver_start(std::atomic<uint8_t> *state)
+{
+	if (tcpipRestartState == nullptr)
+	{
+		if (!CHERI::check_pointer<CHERI::PermissionSet{
+		      CHERI::Permission::Load, CHERI::Permission::Global}>(
+		      state, sizeof(*state)))
+		{
+			Debug::log("Invalid TCP/IP state pointer {}", state);
+			return false;
+		}
+		tcpipRestartState = state;
+	}
+	if (tcpipRestartState->load() != 0)
+	{
+		// This is a restart, no need to actually reset the driver.
+		// Instead, just remove all firewall entries.
+		Debug::log("Network stack restart: clearing all entries.");
+		EndpointsTable<IPv6Address>::instance().clear(IPProtocolNumber::UDP);
+		EndpointsTable<IPv6Address>::instance().clear(IPProtocolNumber::TCP);
+		EndpointsTable<uint32_t>::instance().clear(IPProtocolNumber::UDP);
+		EndpointsTable<uint32_t>::instance().clear(IPProtocolNumber::TCP);
+		return true;
+	}
+	// Protect against double entry.  If the barrier state is 0, no
+	// initialisation has happened and we should proceed.  If it's 1, we're in
+	// the middle of initialisation, if it's 2 then initialisation is done.  In
+	// any non-zero case, we should not try to do anything.
+	uint32_t expected = 0;
+	if (!barrier.compare_exchange_strong(expected, 1))
+	{
+		return false;
+	}
+	Debug::log("Initialising network interface");
+	auto &ethernet = lazy_network_interface();
+	ethernet.mac_address_set();
+	// Poke the barrier and make the driver thread start.
+	barrier = 2;
+	barrier.notify_one();
+	return true;
 }

@@ -30,8 +30,8 @@ The new code in this repository is around 3% of the size of the large components
 Compartmentalisation
 --------------------
 
-The initial implementation has five compartments.
-Three are mostly existing third-party code with thin wrappers:
+The initial implementation has six compartments.
+Four are mostly existing third-party code with thin wrappers:
 
  - The TCP/IP stack is in a compartment.
    The FreeRTOS code was originally written on the assumption of a single security domain and separating it would require refactoring that would be hard to keep up to date.
@@ -75,14 +75,17 @@ graph TD
   classDef ThirdParty fill: #e44
 ```
 
-The TCP/IP stack has a lot of state and cannot yet recover gracefully in case of failure, but failure is at least isolated in the caller.
-In contrast, the TLS compartment is almost completely stateless.
-This gives strong flow isolation properties: Even if an attacker compromises the TLS compartment by sending malicious data over one connection that triggers a bug in BearSSL (unlikely), it is extraordinarily difficult for them to interfere with any other TLS connection.
+The TCP/IP stack is a large compartment with a lot of state.
+It is fault-tolerant: when an error is triggered (CHERI spatial or temporal safety fault, assertion), the compartment is automatically reset to a pristine state and restarted.
+We expand on this capability [below](#automatic-restart-of-the-tcpip-stack).
+
+Unlike the TCP/IP stack, the TLS compartment is almost completely stateless.
+This makes resetting the compartment trivial, and gives strong flow isolation properties: Even if an attacker compromises the TLS compartment by sending malicious data over one connection that triggers a bug in BearSSL (unlikely), it is extraordinarily difficult for them to interfere with any other TLS connection.
 
 Similarly, the firewall is controlled by the Network API compartment.
 The TCP/IP stack has no access to the control-plane interface for the compartment.
 A compromise that gets arbitrary-code execution in the network stack cannot open new firewall holes (to join a DDoS botnet such as [Mirai](https://en.wikipedia.org/wiki/Mirai_(malware)), for example).
-Note that there are currently some technical limitations to this, see the note below.
+Note that there are currently some technical limitations to this, see the discussion below.
 The worst it can do to rest of the system is provide malicious data, but a system using TLS will have HMACs on received messages and so this is no worse than a malicious packet being injected from the network.
 
 All of this is on top of the spatial and temporal safety properties that the CHERIoT platform provides at a base level.
@@ -224,3 +227,28 @@ Now that you know that the SNTP compartment is the only one that can send and re
 
 If you've modified the SNTP compartment to point to your NTP service and use its authentication credentials, then this should be different.
 This can all be part of your firmware's auditing policy.
+
+Automatic restart of the TCP/IP stack
+-------------------------------------
+
+We designed the TCP/IP stack to automatically and transparently restart on failure (e.g., a CHERI fault or an assertion).
+The restart procedure broadly works like this (simplified for didactic reasons):
+
+1. The error handler of the TCP/IP compartment is triggered and starts the reset procedure.
+2. It first sets a flag to prevent any new thread from entering the compartment.
+3. Then, it sets all synchronization primitives of the compartment (locks, futexes) for destruction. This wakes up sleeping threads present in the compartment, and prevents them from blocking again.
+4. Then, it waits for all threads present in the compartment (apart from the FreeRTOS network thread) to exit, either through normal control-flow, or by crashing.
+5. Finally, it frees all the memory of the compartment, resets all global state, and calls the start function of the network stack, which restarts the TCP/IP stack into a pristine working state.
+6. After the reset, any further call to the socket API (apart from `network_socket_close`) with an old socket from the previous instance of the network stack will be detected and failed with an `-ENOTCONN` code. This pushes callers to close the sockets and create new ones with the new instance of the TCP/IP stack.
+
+The implementation details of the reset slightly deviate from this description.
+See the technical documentation in `tcpip_error_handler.h` for a full perspective.
+
+Note that the current implementation of the automatic reset makes a few assumptions:
+
+- The TCP/IP stack cannot currently recover from a crash due to a stack overflow in the TCP/IP compartment. This is due to a limitation of the implementation of the switcher, which cannot trigger the error handler on stack overflow. This limitation should be addressed soon.
+- A small set of globals called 'reset-critical' outlive resets and/or are necessary for the reset. We assume that this data has not been corrupted. This data is correspondingly annotated in the source code.
+- The control-flow of threads in the compartment has not been altered.
+
+These assumptions leave some attack surface to malicious actors.
+We are working on improvements to remove or weaken them.
