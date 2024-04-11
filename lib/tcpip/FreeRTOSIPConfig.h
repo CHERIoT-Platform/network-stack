@@ -27,7 +27,6 @@
 
 #define ipconfigNUM_NETWORK_BUFFER_DESCRIPTORS 8
 
-
 #define ipconfigTCP_RX_BUFFER_LENGTH ( 1280 )
 #define ipconfigTCP_TX_BUFFER_LENGTH ( 1280 )
 
@@ -58,3 +57,6 @@
 
 #define ipconfigALLOW_SOCKET_SEND_WITHOUT_BIND 0
 #define ipconfigUSE_NETWORK_EVENT_HOOK 1
+
+// Necessary to have FreeRTOS+TCP invoke our own `ipFOREVER` function.
+#define TEST
