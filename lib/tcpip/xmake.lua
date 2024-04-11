@@ -39,18 +39,20 @@ compartment("TCPIP")
   add_files("network_wrapper.cc")
   add_files("startup.cc")
   add_files(
-            "../../third_party/freertos-plus-tcp/source/FreeRTOS_ARP.c",
             "../../third_party/freertos-plus-tcp/source/FreeRTOS_BitConfig.c",
-            "../../third_party/freertos-plus-tcp/source/FreeRTOS_DHCP.c",
             "../../third_party/freertos-plus-tcp/source/FreeRTOS_DNS.c",
-            "../../third_party/freertos-plus-tcp/source/FreeRTOS_DNS_Cache.c",
             "../../third_party/freertos-plus-tcp/source/FreeRTOS_DNS_Callback.c",
             "../../third_party/freertos-plus-tcp/source/FreeRTOS_DNS_Networking.c",
             "../../third_party/freertos-plus-tcp/source/FreeRTOS_DNS_Parser.c",
             "../../third_party/freertos-plus-tcp/source/FreeRTOS_ICMP.c",
             -- Included via a wrapper that statically creates the thread.
+            --"../../third_party/freertos-plus-tcp/source/FreeRTOS_DNS_Cache.c",
+            --"../../third_party/freertos-plus-tcp/source/FreeRTOS_ARP.c",
+            --"../../third_party/freertos-plus-tcp/source/FreeRTOS_DHCP.c",
             --"../../third_party/freertos-plus-tcp/source/FreeRTOS_IP.c",
-            "../../third_party/freertos-plus-tcp/source/FreeRTOS_IP_Timers.c",
+            --"../../third_party/freertos-plus-tcp/source/FreeRTOS_TCP_IP.c",
+            --"../../third_party/freertos-plus-tcp/source/FreeRTOS_TCP_WIN.c",
+            --"../../third_party/freertos-plus-tcp/source/FreeRTOS_IP_Timers.c",
             "../../third_party/freertos-plus-tcp/source/FreeRTOS_IP_Utils.c",
             "../../third_party/freertos-plus-tcp/source/FreeRTOS_IPv4.c",
             "../../third_party/freertos-plus-tcp/source/FreeRTOS_IPv4_Sockets.c",
@@ -60,7 +62,6 @@ compartment("TCPIP")
             "../../third_party/freertos-plus-tcp/source/FreeRTOS_Routing.c",
             "../../third_party/freertos-plus-tcp/source/FreeRTOS_Sockets.c",
             "../../third_party/freertos-plus-tcp/source/FreeRTOS_Stream_Buffer.c",
-            "../../third_party/freertos-plus-tcp/source/FreeRTOS_TCP_IP.c",
             "../../third_party/freertos-plus-tcp/source/FreeRTOS_TCP_IP_IPv4.c",
             "../../third_party/freertos-plus-tcp/source/FreeRTOS_TCP_Reception.c",
             "../../third_party/freertos-plus-tcp/source/FreeRTOS_TCP_State_Handling.c",
@@ -69,7 +70,6 @@ compartment("TCPIP")
             "../../third_party/freertos-plus-tcp/source/FreeRTOS_TCP_Transmission_IPv4.c",
             "../../third_party/freertos-plus-tcp/source/FreeRTOS_TCP_Utils.c",
             "../../third_party/freertos-plus-tcp/source/FreeRTOS_TCP_Utils_IPv4.c",
-            "../../third_party/freertos-plus-tcp/source/FreeRTOS_TCP_WIN.c",
             "../../third_party/freertos-plus-tcp/source/FreeRTOS_Tiny_TCP.c",
             "../../third_party/freertos-plus-tcp/source/FreeRTOS_UDP_IP.c",
             "../../third_party/freertos-plus-tcp/source/FreeRTOS_UDP_IPv4.c"

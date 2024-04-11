@@ -3,6 +3,7 @@
 
 // Native APIs
 #include <atomic>
+#include <cheri-builtins.h>
 #include <compartment-macros.h>
 #include <debug.hh>
 //#include <fail-simulator-on-error.h>
@@ -11,7 +12,8 @@
 #include <platform-ethernet.hh>
 #include <timeout.h>
 
-#include "../firewall/firewall.h"
+#include "../firewall/firewall.hh"
+#include "tcpip-internal.h"
 
 // FreeRTOS APIs
 #include <FreeRTOS.h>
@@ -36,7 +38,16 @@ namespace
 	 */
 	BaseType_t initialise(struct xNetworkInterface *pxDescriptor)
 	{
-		ethernet_driver_start();
+		CHERI::Capability stateCap{&restartState};
+		// We trust the firewall, but restricting permissions is still
+		// nice to catch bugs.
+		stateCap.permissions() &=
+		  {CHERI::Permission::Load, CHERI::Permission::Global};
+		ethernet_driver_start(stateCap);
+		if (restartState.load() != 0)
+		{
+			restartState |= DriverKicked;
+		}
 		return pdPASS;
 	}
 
@@ -68,53 +79,58 @@ namespace
 bool __cheri_compartment("TCPIP")
   ethernet_receive_frame(uint8_t *frame, size_t length)
 {
-	// We do not check the frame pointer and length because this function
-	// can only be called by the firewall and we trust the firewall. See
-	// the compartment call allow list entry of `ethernet_send_frame` in
-	// the policy file (`network_stack.rego`).
-	if (eConsiderFrameForProcessing(frame) != eProcessBuffer)
-	{
-		// Debug::log("Frame not for us");
-		return false;
-	}
-	NetworkBufferDescriptor_t *descriptor =
-	  pxGetNetworkBufferWithDescriptor(length, 10);
-	if (descriptor == nullptr)
-	{
-		Debug::log("Failed to allocate network buffer for {}-byte frame\n",
-		           length);
-		return false;
-	}
-	memcpy(descriptor->pucEthernetBuffer, frame, length);
-	descriptor->xDataLength = length;
-	descriptor->pxInterface = thisInterface;
-	// This is an annoying waste of an allocation, we should be able to
-	// drop this but FreeRTOS_MatchingEndpoint requires a different
-	// alignment.  This will matter less when we are doing our own
-	// filtering.
-	descriptor->pxEndPoint =
-	  FreeRTOS_MatchingEndpoint(thisInterface, descriptor->pucEthernetBuffer);
-	if (descriptor->pxEndPoint == nullptr)
-	{
-		// Debug::log("Failed to find endpoint for frame\n");
-		vReleaseNetworkBufferAndDescriptor(descriptor);
-		return false;
-	}
+	return with_restarting_checks_driver(
+	  [&]() {
+		  // We do not check the frame pointer and length because this function
+		  // can only be called by the firewall and we trust the firewall. See
+		  // the compartment call allow list entry of `ethernet_send_frame` in
+		  // the policy file (`network_stack.rego`).
+		  if (eConsiderFrameForProcessing(frame) != eProcessBuffer)
+		  {
+			  // Debug::log("Frame not for us");
+			  return false;
+		  }
+		  NetworkBufferDescriptor_t *descriptor =
+		    pxGetNetworkBufferWithDescriptor(length, 10);
+		  if (descriptor == nullptr)
+		  {
+			  Debug::log(
+			    "Failed to allocate network buffer for {}-byte frame\n",
+			    length);
+			  return false;
+		  }
+		  memcpy(descriptor->pucEthernetBuffer, frame, length);
+		  descriptor->xDataLength = length;
+		  descriptor->pxInterface = thisInterface;
+		  // This is an annoying waste of an allocation, we should be able to
+		  // drop this but FreeRTOS_MatchingEndpoint requires a different
+		  // alignment.  This will matter less when we are doing our own
+		  // filtering.
+		  descriptor->pxEndPoint = FreeRTOS_MatchingEndpoint(
+		    thisInterface, descriptor->pucEthernetBuffer);
+		  if (descriptor->pxEndPoint == nullptr)
+		  {
+			  // Debug::log("Failed to find endpoint for frame\n");
+			  vReleaseNetworkBufferAndDescriptor(descriptor);
+			  return false;
+		  }
 
-	Debug::log("Sending frame to IP task");
+		  Debug::log("Sending frame to IP task");
 
-	IPStackEvent_t event;
-	event.eEventType = eNetworkRxEvent;
-	event.pvData     = descriptor;
-	// Allow a one-tick sleep so that the IP task can wake up if
-	// necessary.
-	if (xSendEventStructToIPTask(&event, 1) == pdFALSE)
-	{
-		Debug::log("Failed to send event to IP task\n");
-		vReleaseNetworkBufferAndDescriptor(descriptor);
-		return false;
-	}
-	return true;
+		  IPStackEvent_t event;
+		  event.eEventType = eNetworkRxEvent;
+		  event.pvData     = descriptor;
+		  // Allow a one-tick sleep so that the IP task can wake up if
+		  // necessary.
+		  if (xSendEventStructToIPTask(&event, 1) == pdFALSE)
+		  {
+			  Debug::log("Failed to send event to IP task\n");
+			  vReleaseNetworkBufferAndDescriptor(descriptor);
+			  return false;
+		  }
+		  return true;
+	  },
+	  false /* cannot receive frame if we are restarting */);
 }
 
 NetworkInterface_t *fill_interface_descriptor(BaseType_t          xEMACIndex,
