@@ -31,6 +31,14 @@ DECLARE_AND_DEFINE_ALLOCATOR_CAPABILITY(BufferManagementMallocQuota,
 #	define BM_MALLOC_CAPABILITY MALLOC_CAPABILITY
 #endif
 
+void free_buffer_manager_memory()
+{
+#if USE_DEDICATED_BUFFERMANAGER_POOL
+	heap_free_all(BM_MALLOC_CAPABILITY);
+#endif
+	return;
+}
+
 constexpr size_t MinimumBufferSize =
 #if ipconfigUSE_TCP == 1
   sizeof(TCPPacket_t)
@@ -130,7 +138,9 @@ void vReleaseNetworkBufferAndDescriptor(
 
 		// Failure is not supposed to happen unless we have a bug here
 		// or in FreeRTOS.
-		Debug::Assert(ret == 0, "Failed to free network buffer or descriptor.");
+		Debug::Assert(ret == 0,
+		              "Failed to free network buffer or descriptor (error {}).",
+		              ret);
 	}
 }
 
