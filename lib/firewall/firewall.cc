@@ -7,6 +7,7 @@
 #include <debug.hh>
 //#include <fail-simulator-on-error.h>
 #include <locks.hh>
+#include <platform-entropy.hh>
 #include <platform-ethernet.hh>
 #include <timeout.h>
 #include <timeout.hh>
@@ -85,6 +86,43 @@ namespace
 	 * Ethernet MAC address.
 	 */
 	using MACAddress = std::array<uint8_t, 6>;
+
+	/**
+	 * Returns the MAC address for the network interface.
+	 */
+	MACAddress &mac_address()
+	{
+		static MACAddress macAddress = []() {
+			auto &ethernet = lazy_network_interface();
+			if constexpr (EthernetDevice::has_unique_mac_address())
+			{
+				return ethernet.mac_address_default();
+			}
+			else
+			{
+				std::array<uint8_t, 6> macAddress;
+				EntropySource          entropy;
+				for (auto &byte : macAddress)
+				{
+					byte = entropy();
+				}
+				// Set the local bit (second bit transmitted from first byte) to
+				// 1 to indicate a locally administered MAC
+				macAddress[0] |= 0b01;
+				// Make sure that the broadcast bit is 0
+				macAddress[0] &= ~0b1;
+				Debug::log("MAC address: {}:{}:{}:{}:{}:{}",
+				           macAddress[0],
+				           macAddress[1],
+				           macAddress[2],
+				           macAddress[3],
+				           macAddress[4],
+				           macAddress[5]);
+				return macAddress;
+			}
+		}();
+		return macAddress;
+	}
 
 	/**
 	 * Ethernet header.
@@ -499,6 +537,8 @@ namespace
 
 	bool packet_filter_ingress(const uint8_t *data, size_t length)
 	{
+		static constinit MACAddress broadcastMAC = {
+		  0xff, 0xff, 0xff, 0xff, 0xff, 0xff};
 		// Not a valid Ethernet frame (64 bytes including four-byte FCS, which
 		// is stripped by this point).
 		if (length < 60)
@@ -508,6 +548,19 @@ namespace
 		}
 		EthernetHeader *ethernetHeader =
 		  reinterpret_cast<EthernetHeader *>(const_cast<uint8_t *>(data));
+		if ((ethernetHeader->destination != mac_address()) &&
+		    (ethernetHeader->destination != broadcastMAC))
+		{
+			Debug::log(
+			  "Dropping frame with destination MAC address {}:{}:{}:{}:{}:{}",
+			  ethernetHeader->destination[0],
+			  ethernetHeader->destination[1],
+			  ethernetHeader->destination[2],
+			  ethernetHeader->destination[3],
+			  ethernetHeader->destination[4],
+			  ethernetHeader->destination[5]);
+			return false;
+		}
 		switch (ethernetHeader->etherType)
 		{
 #ifdef ENABLE_IPV6
@@ -550,7 +603,9 @@ bool ethernet_driver_start()
 	}
 	Debug::log("Initialising network interface");
 	auto &ethernet = lazy_network_interface();
-	ethernet.mac_address_set();
+	// If the device has a unique MAC address, use it.  Otherwise, generate a
+	// random locally administered one.
+	ethernet.mac_address_set(mac_address());
 	// Poke the barrier and make the driver thread start.
 	barrier = 2;
 	barrier.notify_one();
@@ -761,3 +816,11 @@ void firewall_remove_udpipv6_remote_endpoint(uint8_t *remoteAddress,
 }
 
 #endif
+
+uint8_t *firewall_mac_address_get()
+{
+	CHERI::Capability ret{mac_address().data()};
+	ret.permissions() &= {CHERI::Permission::Load, CHERI::Permission::Global};
+	ret.bounds() = 6;
+	return ret;
+}

@@ -90,7 +90,7 @@ void __cheri_compartment("TCPIP") network_start()
 	                      NetMask,
 	                      GatewayAddress,
 	                      DNSServerAddress,
-	                      KunyanEthernet::mac_address_default().data());
+	                      firewall_mac_address_get());
 	// Enable DHCP
 	endpointIPv4.bits.bWantDHCP = pdTRUE;
 
