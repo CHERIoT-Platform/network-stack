@@ -87,13 +87,14 @@ void __cheri_compartment("TCPIP") network_start()
 	Debug::log("Output function: {}",
 	           reinterpret_cast<void *>(interface.pfOutput));
 	Debug::log("Setting up endpointIPv4");
+	auto *mac = firewall_mac_address_get();
 	FreeRTOS_FillEndPoint(&interface,
 	                      &endpointIPv4,
 	                      IPAddress,
 	                      NetMask,
 	                      GatewayAddress,
 	                      DNSServerAddress,
-	                      EthernetDevice::mac_address_default().data());
+	                      mac);
 	// Enable DHCP
 	endpointIPv4.bits.bWantDHCP = pdTRUE;
 
@@ -112,15 +113,14 @@ void __cheri_compartment("TCPIP") network_start()
 		FreeRTOS_CreateIPv6Address(&xIPAddress, &xPrefix, 64, pdTRUE);
 		FreeRTOS_inet_pton6("fe80::ba27:ebff:fe5a:d751", xGateWay.ucBytes);
 
-		FreeRTOS_FillEndPoint_IPv6(
-		  &interface,
-		  &endpointIPv6,
-		  &(xIPAddress),
-		  &(xPrefix),
-		  64uL, /* Prefix length. */
-		  &(xGateWay),
-		  NULL, /* pxDNSServerAddress: Not used yet. */
-		  EthernetDevice::mac_address_default().data());
+		FreeRTOS_FillEndPoint_IPv6(&interface,
+		                           &endpointIPv6,
+		                           &(xIPAddress),
+		                           &(xPrefix),
+		                           64uL, /* Prefix length. */
+		                           &(xGateWay),
+		                           NULL, /* pxDNSServerAddress: Not used yet. */
+		                           mac);
 		FreeRTOS_inet_pton6(
 		  "2001:4860:4860::8888",
 		  endpointIPv6.ipv6_settings.xDNSServerAddresses[0].ucBytes);
@@ -141,15 +141,14 @@ void __cheri_compartment("TCPIP") network_start()
 		FreeRTOS_inet_pton6("fe80::", xPrefix.ucBytes);
 		FreeRTOS_inet_pton6("fe80::7009", xIPAddress.ucBytes);
 
-		FreeRTOS_FillEndPoint_IPv6(
-		  &interface,
-		  &endpointIPv6LinkLocal,
-		  &(xIPAddress),
-		  &(xPrefix),
-		  10U,  /* Prefix length. */
-		  NULL, /* No gateway */
-		  NULL, /* pxDNSServerAddress: Not used yet. */
-		  EthernetDevice::mac_address_default().data());
+		FreeRTOS_FillEndPoint_IPv6(&interface,
+		                           &endpointIPv6LinkLocal,
+		                           &(xIPAddress),
+		                           &(xPrefix),
+		                           10U,  /* Prefix length. */
+		                           NULL, /* No gateway */
+		                           NULL, /* pxDNSServerAddress: Not used yet. */
+		                           mac);
 	}
 #endif
 

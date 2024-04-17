@@ -208,3 +208,10 @@ firewall_remove_udpipv6_remote_endpoint(uint8_t *remoteAddress,
 	  false, "{} not supported with IPv6 disabled", __PRETTY_FUNCTION__);
 }
 #endif
+
+/**
+ * Get the MAC address of the ethernet device.
+ *
+ * Returns a read-only capability to the MAC address.
+ */
+uint8_t *__cheri_compartment("Firewall") firewall_mac_address_get();
