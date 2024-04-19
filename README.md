@@ -82,9 +82,24 @@ This gives strong flow isolation properties: Even if an attacker compromises the
 Similarly, the firewall is controlled by the Network API compartment.
 The TCP/IP stack has no access to the control-plane interface for the compartment.
 A compromise that gets arbitrary-code execution in the network stack cannot open new firewall holes (to join a DDoS botnet such as [Mirai](https://en.wikipedia.org/wiki/Mirai_(malware)), for example).
+Note that there are currently some technical limitations to this, see the note below.
 The worst it can do to rest of the system is provide malicious data, but a system using TLS will have HMACs on received messages and so this is no worse than a malicious packet being injected from the network.
 
 All of this is on top of the spatial and temporal safety properties that the CHERIoT platform provides at a base level.
+
+**Note on the isolation of the firewall control plane.**
+
+In the current implementation, the TCP/IP stack still indirectly controls which endpoints the firewall allows/disables because the Network API compartment operates with domain names, and the firewall with IPs, and the TCP/IP stack controls the translation between the two.
+
+For instance, if the application tells the Network API that the only endpoint it will ever communicate with is `example.com`, the Network API will need to translate that domain name into an IP to create a firewall entry.
+The TCP/IP compartment is responsible for doing the translation through DNS.
+Thus, a compromised TCP/IP stack can spoof the DNS translation and return whichever IP address it wants to connect to, to create a corresponding firewall entry.
+
+This attack scenario comes with the limitation that DNS resolution and firewall updates only happen when establishing a new connection.
+However, in many cases the TCP/IP stack can trigger this arbitrarily by closing the sockets opened by the application to force the application to trigger another socket open (and thus to re-establish the connection and re-translate the domain name).
+
+Looking forward, we are planning to address this limitation by moving the DNS lookup to a separate compartment.
+Unfortunately, without DNSSEC, the network stack can still tamper with responses, so this will also require a firewall-layer bypass to send DNS responses to the DNS compartment instead of the network stack.
 
 Capabilities authorise communication
 ------------------------------------
