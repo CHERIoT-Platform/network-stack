@@ -102,9 +102,15 @@ NetworkAddress __cheri_compartment("NetAPI")
  *
  * Returns 0 on success, or a negative error code on failure:
  *
- *  - -EINVAL: The socket is not valid or the malloc capability does not match
- *    the socket.
- *  - -ETIMEDOUT: The timeout was reached before the socket could be closed.
+ *  - -EINVAL: Invalid argument (the socket is not valid, the malloc capability
+ *             does not match the socket, or the timeout is invalid). When
+ *             -EINVAL is returned, no resources were freed and the socket was
+ *             not closed. The operation can be retried with correct arguments.
+ *  - -ETIMEDOUT: The timeout was reached before the socket could be closed. No
+ *             resources were freed and the socket was not closed. The operation
+ *             can be retried.
+ *  - -ENOTRECOVERABLE: An error occurred and the socket was partially freed or
+ *             closed. The operation cannot be retried.
  */
 int __cheri_compartment("TCPIP")
   network_socket_close(Timeout *t, SObj mallocCapability, SObj sealedSocket);

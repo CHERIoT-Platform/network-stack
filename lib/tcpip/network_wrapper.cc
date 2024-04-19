@@ -558,87 +558,95 @@ int network_socket_close(Timeout *t, SObj mallocCapability, SObj sealedSocket)
 	}
 	return with_sealed_socket(
 	  [=](SealedSocket *socket) {
-		  // Don't use a lock guard here, we don't want to release the lock if
-		  // it's been deallocated.  This must be released on all return paths
-		  // except the one for success.
-		  if (!socket->socketLock.try_lock(t))
+		  if (LockGuard g{socket->socketLock, t})
 		  {
-			  return -ETIMEDOUT;
-		  }
-		  // Since we free the socket and the token at the end after
-		  // terminating the socket, ensure that the frees won't fail
-		  if (heap_can_free(mallocCapability, socket->socket) != 0 ||
-		      token_obj_can_destroy(
-		        mallocCapability, socket_key(), sealedSocket) != 0)
-		  {
-			  return -EINVAL;
-		  }
-		  bool isTCP = socket->socket->ucProtocol == FREERTOS_IPPROTO_TCP;
-		  // Shut down the socket before closing the firewall.  Don't
-		  // bother with the return value: `FreeRTOS_shutdown` fails
-		  // mainly if the TCP connection is dead, which is likely to
-		  // happen in practice and has no impact for us.
-		  FreeRTOS_shutdown(socket->socket, FREERTOS_SHUT_RDWR);
-		  auto localPort = ntohs(socket->socket->usLocalPort);
-		  if (socket->socket->bits.bIsIPv6)
-		  {
-			  if (isTCP)
+			  // Since we free the socket and the token at the end after
+			  // terminating the socket, ensure that the frees won't fail
+			  if (heap_can_free(mallocCapability, socket->socket) != 0 ||
+			      token_obj_can_destroy(
+			        mallocCapability, socket_key(), sealedSocket) != 0)
 			  {
-				  firewall_remove_tcpipv6_endpoint(localPort);
+				  Debug::log("Unable to free socket or token.");
+				  // The main reason why this would fail is because we
+				  // were called with the wrong malloc capability. We
+				  // want to leave a chance to the caller to call us
+				  // again with the right capability.
+				  return -EINVAL;
+			  }
+			  bool isTCP = socket->socket->ucProtocol == FREERTOS_IPPROTO_TCP;
+			  // Shut down the socket before closing the firewall.  Don't
+			  // bother with the return value: `FreeRTOS_shutdown` fails
+			  // mainly if the TCP connection is dead, which is likely to
+			  // happen in practice and has no impact for us.
+			  FreeRTOS_shutdown(socket->socket, FREERTOS_SHUT_RDWR);
+			  auto localPort = ntohs(socket->socket->usLocalPort);
+			  if (socket->socket->bits.bIsIPv6)
+			  {
+				  if (isTCP)
+				  {
+					  firewall_remove_tcpipv6_endpoint(localPort);
+				  }
+				  else
+				  {
+					  firewall_remove_udpipv6_local_endpoint(localPort);
+				  }
 			  }
 			  else
 			  {
-				  firewall_remove_udpipv6_local_endpoint(localPort);
+				  if (isTCP)
+				  {
+					  firewall_remove_tcpipv4_endpoint(localPort);
+				  }
+				  else
+				  {
+					  firewall_remove_udpipv4_local_endpoint(localPort);
+				  }
 			  }
-		  }
-		  else
-		  {
-			  if (isTCP)
+			  // Close the socket.  Another thread will actually clean up the
+			  // memory. This returns 1 on success.
+			  int  ret         = 0;
+			  auto closeStatus = close_socket_retry(t, socket->socket);
+			  if (closeStatus == 0)
 			  {
-				  firewall_remove_tcpipv4_endpoint(localPort);
+				  // The only reason why this would fail is internal
+				  // corruption (did someone already close the
+				  // socket?). Nothing can be done by anyone at this
+				  // stage. Don't return because we would leak
+				  // everything.
+				  ret = -ENOTRECOVERABLE;
 			  }
-			  else
+			  else if (closeStatus != 1)
 			  {
-				  firewall_remove_udpipv4_local_endpoint(localPort);
+				  // The close couldn't be delivered to the IP
+				  // task. With some luck, the socket can be
+				  // freed next time we try.
+				  return -ETIMEDOUT;
 			  }
+			  g.release();
+			  socket->socketLock.upgrade_for_destruction();
+			  // Drop the caller's claim on the socket.
+			  if (heap_free(mallocCapability, socket->socket) != 0)
+			  {
+				  // This is not supposed to happen, since we did a
+				  // `heap_can_free` earlier (unless we did not have
+				  // enough stack, or a concurrent free happened). If
+				  // it does, we may be leaking the socket.
+				  Debug::log("Failed to free socket.");
+				  // Don't return yet, try to at least free the token.
+				  ret = -ENOTRECOVERABLE;
+			  }
+			  if (token_obj_destroy(
+			        mallocCapability, socket_key(), sealedSocket) != 0)
+			  {
+				  // This is not supposed to happen, since we did a
+				  // `token_obj_can_destroy` earlier (see comment
+				  // above). If it does, we're leaking the token.
+				  Debug::log("Failed to free token.");
+				  ret = -ENOTRECOVERABLE;
+			  }
+			  return ret;
 		  }
-		  // Close the socket.  Another thread will actually clean up the
-		  // memory.
-		  auto closeStatus = close_socket_retry(t, socket->socket);
-		  if (closeStatus == 0)
-		  {
-			  return -EINVAL;
-		  }
-		  if (closeStatus != 1)
-		  {
-			  // With some lock, the socket can be freed next time
-			  // we try.
-			  return -ETIMEDOUT;
-		  }
-		  socket->socketLock.upgrade_for_destruction();
-		  // Drop the caller's claim on the socket.
-		  int ret = 0;
-		  if (heap_free(mallocCapability, socket->socket) != 0)
-		  {
-			  // This is not supposed to happen, since we did a
-			  // heap_can_free earlier. If it does, we're leaking
-			  // the socket.
-			  Debug::log("Failed to free socket.");
-			  // Release the lock so that we don't leak it.
-			  socket->socketLock.unlock();
-			  // Don't return now, try to at least free the token.
-			  ret = -EINVAL;
-		  }
-		  if (token_obj_destroy(mallocCapability, socket_key(), sealedSocket) !=
-		      0)
-		  {
-			  // This is not supposed to happen, since we did a
-			  // token_obj_can_destroy earlier. If it does, we're
-			  // leaking the token.
-			  Debug::log("Failed to free token.");
-			  ret = -EINVAL;
-		  }
-		  return ret;
+		  return -ETIMEDOUT;
 	  },
 	  sealedSocket);
 }
