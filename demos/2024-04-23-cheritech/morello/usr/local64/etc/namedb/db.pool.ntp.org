@@ -1,0 +1,11 @@
+@       IN      SOA     pool.ntp.org. root.pool.ntp.org. (
+                              2         ; Serial
+                         604800         ; Refresh
+                          86400         ; Retry
+                        2419200         ; Expire
+                         604800 )       ; Negative Cache TTL
+;
+@       IN      NS      ns.pool.ntp.org.
+@       IN      A       10.0.0.10
+ns      IN      A       10.0.0.10
+

@@ -580,7 +580,7 @@ int network_socket_close(Timeout *t, SObj mallocCapability, SObj sealedSocket)
 		  // happen in practice and has no impact for us.
 		  FreeRTOS_shutdown(socket->socket, FREERTOS_SHUT_RDWR);
 		  auto localPort = ntohs(socket->socket->usLocalPort);
-		  if (socket->socket->bits.bIsIPv6)
+		  if (UseIPv6 && socket->socket->bits.bIsIPv6)
 		  {
 			  if (isTCP)
 			  {

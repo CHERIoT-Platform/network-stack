@@ -7,6 +7,7 @@
 #include <debug.hh>
 //#include <fail-simulator-on-error.h>
 #include <locks.hh>
+#include <platform-entropy.hh>
 #include <platform-ethernet.hh>
 #include <timeout.h>
 #include <timeout.hh>
@@ -48,8 +49,10 @@ namespace
 	enum class EtherType : uint16_t
 	{
 		IPv4 = 0x0008,
+#ifdef ENABLE_IPV6
 		IPv6 = 0xDD86,
-		ARP  = 0x0608,
+#endif
+		ARP = 0x0608,
 	};
 
 	const char *ethertype_as_string(EtherType etherType)
@@ -58,8 +61,10 @@ namespace
 		{
 			case EtherType::IPv4:
 				return "IPv4";
+#ifdef ENABLE_IPV6
 			case EtherType::IPv6:
 				return "IPv6";
+#endif
 			case EtherType::ARP:
 				return "ARP";
 			default:
@@ -81,6 +86,43 @@ namespace
 	 * Ethernet MAC address.
 	 */
 	using MACAddress = std::array<uint8_t, 6>;
+
+	/**
+	 * Returns the MAC address for the network interface.
+	 */
+	MACAddress &mac_address()
+	{
+		static MACAddress macAddress = []() {
+			auto &ethernet = lazy_network_interface();
+			if constexpr (EthernetDevice::has_unique_mac_address())
+			{
+				return ethernet.mac_address_default();
+			}
+			else
+			{
+				std::array<uint8_t, 6> macAddress;
+				EntropySource          entropy;
+				for (auto &byte : macAddress)
+				{
+					byte = entropy();
+				}
+				// Set the local bit (second bit transmitted from first byte) to
+				// 1 to indicate a locally administered MAC
+				macAddress[0] |= 0b01;
+				// Make sure that the broadcast bit is 0
+				macAddress[0] &= ~0b1;
+				Debug::log("MAC address: {}:{}:{}:{}:{}:{}",
+				           macAddress[0],
+				           macAddress[1],
+				           macAddress[2],
+				           macAddress[3],
+				           macAddress[4],
+				           macAddress[5]);
+				return macAddress;
+			}
+		}();
+		return macAddress;
+	}
 
 	/**
 	 * Ethernet header.
@@ -479,19 +521,24 @@ namespace
 				}
 				return ret;
 			}
+#ifdef ENABLE_IPV6
 			// For now, permit all outbound IPv6 packets.
+			// FIXME: Check the firewall for IPv6!
 			case EtherType::IPv6:
 			{
 				Debug::log("Permitting outbound IPv6 packet");
 				return true;
 				break;
 			}
+#endif
 		}
-		return true;
+		return false;
 	}
 
 	bool packet_filter_ingress(const uint8_t *data, size_t length)
 	{
+		static constinit MACAddress broadcastMAC = {
+		  0xff, 0xff, 0xff, 0xff, 0xff, 0xff};
 		// Not a valid Ethernet frame (64 bytes including four-byte FCS, which
 		// is stripped by this point).
 		if (length < 60)
@@ -501,11 +548,27 @@ namespace
 		}
 		EthernetHeader *ethernetHeader =
 		  reinterpret_cast<EthernetHeader *>(const_cast<uint8_t *>(data));
+		if ((ethernetHeader->destination != mac_address()) &&
+		    (ethernetHeader->destination != broadcastMAC))
+		{
+			Debug::log(
+			  "Dropping frame with destination MAC address {}:{}:{}:{}:{}:{}",
+			  ethernetHeader->destination[0],
+			  ethernetHeader->destination[1],
+			  ethernetHeader->destination[2],
+			  ethernetHeader->destination[3],
+			  ethernetHeader->destination[4],
+			  ethernetHeader->destination[5]);
+			return false;
+		}
 		switch (ethernetHeader->etherType)
 		{
+#ifdef ENABLE_IPV6
 			// For now, testing with v6 disabled.
+			// FIXME: Check the firewall for IPv6!
 			case EtherType::IPv6:
 				return true;
+#endif
 			case EtherType::ARP:
 				Debug::log("Saw ARP frame");
 				return true;
@@ -540,7 +603,9 @@ bool ethernet_driver_start()
 	}
 	Debug::log("Initialising network interface");
 	auto &ethernet = lazy_network_interface();
-	ethernet.mac_address_set();
+	// If the device has a unique MAC address, use it.  Otherwise, generate a
+	// random locally administered one.
+	ethernet.mac_address_set(mac_address());
 	// Poke the barrier and make the driver thread start.
 	barrier = 2;
 	barrier.notify_one();
@@ -704,6 +769,7 @@ namespace
 	}
 } // namespace
 
+#ifdef ENABLE_IPV6
 void firewall_add_tcpipv6_endpoint(uint8_t *remoteAddress,
                                    uint16_t localPort,
                                    uint16_t remotePort)
@@ -747,4 +813,14 @@ void firewall_remove_udpipv6_remote_endpoint(uint8_t *remoteAddress,
 		EndpointsTable<IPv6Address>::instance().remove_endpoint(
 		  IPProtocolNumber::UDP, *copy, localPort, remotePort);
 	}
+}
+
+#endif
+
+uint8_t *firewall_mac_address_get()
+{
+	CHERI::Capability ret{mac_address().data()};
+	ret.permissions() &= {CHERI::Permission::Load, CHERI::Permission::Global};
+	ret.bounds() = 6;
+	return ret;
 }
