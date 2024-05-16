@@ -353,17 +353,20 @@ namespace
 				  if ((state & BR_SSL_RECVREC) == BR_SSL_RECVREC)
 				  {
 					  int received = receive_records(t, connection);
-					  if (received == 0 || received == -ENOTCONN)
-					  {
-						  // The link died. After
-						  // getting -ENOTCONN, the
-						  // caller should close the
-						  // TLS socket.
-						  return -ENOTCONN;
-					  }
 					  if (received == -ETIMEDOUT)
 					  {
 						  return -ETIMEDOUT;
+					  }
+					  if (received <= 0)
+					  {
+						  // The receive failed. This
+						  // can happen for a number of
+						  // reasons, but most likely
+						  // if the link died. After
+						  // getting -ENOTCONN, the
+						  // caller of this API should
+						  // close the TLS socket.
+						  return -ENOTCONN;
 					  }
 					  // Next loop iteration, we'll try pulling the
 					  // data out of the TLS engine.
@@ -552,6 +555,12 @@ ssize_t tls_connection_send(Timeout *t,
 				  // If there's data ready to send over the network, prioritise
 				  // sending it
 				  auto [sent, unfinished] = send_records(t, connection);
+				  if (sent == -ECOMPARTMENTFAIL)
+				  {
+					  // The TCP/IP stack crashed; tell the
+					  // caller that the link is dead.
+					  return -ENOTCONN;
+				  }
 				  if (sent <= 0)
 				  {
 					  return sent;
@@ -741,6 +750,12 @@ int tls_connection_close(Timeout *t, SObj sealed)
 			if (received == -ETIMEDOUT)
 			{
 				return -ETIMEDOUT;
+			}
+			if (received == -ECOMPARTMENTFAIL)
+			{
+				// The TCP/IP stack crashed; give up and don't
+				// gracefully terminate.
+				break;
 			}
 			if (received <= 0)
 			{

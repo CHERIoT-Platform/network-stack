@@ -163,6 +163,7 @@ NetworkReceiveResult __cheri_compartment("TCPIP")
  *
  * The negative values will be errno values:
  *
+ *  - `-EPERM`: `buffer` and/or `length` are invalid.
  *  - `-EINVAL`: The socket is not valid.
  *  - `-ETIMEDOUT`: The timeout was reached before data could be received.
  *  - `-ENOTCONN`: The socket is not connected.
