@@ -10,6 +10,8 @@
 
 using Debug = ConditionalDebug<false, "Buffer management">;
 
+using CHERI::Capability;
+
 // Use a separate allocator quota for the buffer manager (false by default).
 // The buffer manager is responsible for allocating network buffers, which
 // differs from the other types of allocations the TCP/IP stack performs. It
@@ -77,14 +79,14 @@ pxGetNetworkBufferWithDescriptor(size_t     xRequestedSizeBytes,
 	  static_cast<NetworkBufferDescriptor_t *>(heap_allocate(
 	    &t, BM_MALLOC_CAPABILITY, sizeof(NetworkBufferDescriptor_t))),
 	  deleter};
-	if (descriptor == nullptr)
+	if (!Capability{descriptor.get()}.is_valid())
 	{
 		Debug::log("Failed to allocate descriptor");
 		return nullptr;
 	}
 	auto *buffer = static_cast<uint8_t *>(heap_allocate(
 	  &t, BM_MALLOC_CAPABILITY, xRequestedSizeBytes + ipBUFFER_PADDING));
-	if (buffer == nullptr)
+	if (!Capability{buffer}.is_valid())
 	{
 		Debug::log("Failed to allocate {} byte buffer", xRequestedSizeBytes);
 		return nullptr;

@@ -796,7 +796,7 @@ NetworkReceiveResult network_socket_receive(Timeout *timeout,
               buffer = static_cast<uint8_t *>(
                 heap_allocate(&zeroTimeout, mallocCapability, available));
               timeout->elapse(zeroTimeout.elapsed);
-              if (buffer == nullptr)
+              if (!Capability{buffer}.is_valid())
               {
                   // If there's a lot of data, just try a small
                   // allocation and see if that works.
@@ -825,7 +825,7 @@ NetworkReceiveResult network_socket_receive(Timeout *timeout,
                   available = -ENOMEM;
                   return nullptr;
               }
-          } while (buffer == nullptr);
+          } while (!Capability{buffer}.is_valid());
           return buffer;
 	   },
 	   [&](void *buffer) -> void { heap_free(mallocCapability, buffer); });

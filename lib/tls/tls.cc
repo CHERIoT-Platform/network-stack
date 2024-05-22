@@ -414,7 +414,7 @@ SObj tls_connection_create(Timeout                    *t,
 	  static_cast<br_ssl_client_context *>(
 	    heap_allocate(t, allocator, sizeof(br_ssl_client_context))),
 	  deleter};
-	if (clientContext == nullptr)
+	if (!Capability{clientContext.get()}.is_valid())
 	{
 		Debug::log("Failed to allocate client context");
 		return nullptr;
@@ -424,7 +424,7 @@ SObj tls_connection_create(Timeout                    *t,
 	    heap_allocate(t, allocator, sizeof(br_x509_minimal_context))),
 	  deleter};
 	auto *engine = &clientContext->eng;
-	if (x509Context == nullptr)
+	if (!Capability{x509Context.get()}.is_valid())
 	{
 		Debug::log("Failed to allocate X509 context");
 		return nullptr;
@@ -442,7 +442,8 @@ SObj tls_connection_create(Timeout                    *t,
 	  static_cast<unsigned char *>(
 	    heap_allocate(t, allocator, MinimumBufferSize)),
 	  deleter};
-	if (iobufIn == nullptr || iobufOut == nullptr)
+	if (!Capability{iobufIn.get()}.is_valid() ||
+	    !Capability{iobufOut.get()}.is_valid())
 	{
 		Debug::log("Failed to allocate buffers");
 		return nullptr;
@@ -638,7 +639,7 @@ NetworkReceiveResult tls_connection_receive(Timeout *t, SObj sealedConnection)
                 heap_allocate(&zeroTimeout, mallocCapability, available));
               t->elapse(zeroTimeout.elapsed);
 
-              if (buffer == nullptr)
+              if (!Capability{buffer}.is_valid())
               {
                   // If there's a lot of data, just try a small
                   // allocation and see if that works.
@@ -667,7 +668,7 @@ NetworkReceiveResult tls_connection_receive(Timeout *t, SObj sealedConnection)
                   available = -ENOMEM;
                   return nullptr;
               }
-          } while (buffer == nullptr);
+          } while (!Capability{buffer}.is_valid());
           return buffer;
 	   });
 	return {result, buffer};
