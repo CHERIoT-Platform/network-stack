@@ -55,18 +55,37 @@ SObj network_socket_connect_tcp(Timeout *timeout,
 		Debug::log("Host capability does not authorise a TCP connection");
 		return nullptr;
 	}
+
+	NetworkAddress    address{NetworkAddress::AddressKindInvalid};
+	CHERI::Capability addressPtr = &address;
+	addressPtr.permissions() &= {CHERI::Permission::Store};
 	firewall_permit_dns();
-	NetworkAddress address = network_host_resolve(host->hostname, UseIPv6);
+	int ret = network_host_resolve(host->hostname, UseIPv6, addressPtr);
 	firewall_permit_dns(false);
-	if (address.kind == NetworkAddress::AddressKindInvalid)
+	if ((ret < 0) || (address.kind == NetworkAddress::AddressKindInvalid))
 	{
 		Debug::log("Failed to resolve host");
 		return nullptr;
 	}
-	bool isIPv6       = address.kind == NetworkAddress::AddressKindIPv6;
-	auto sealedSocket = network_socket_create_and_bind(
+	bool isIPv6 = address.kind == NetworkAddress::AddressKindIPv6;
+
+	CHERI::Capability sealedSocket = network_socket_create_and_bind(
 	  timeout, mallocCapability, isIPv6, ConnectionTypeTCP);
-	auto kind = network_socket_kind(sealedSocket);
+	if (!sealedSocket.is_valid())
+	{
+		Debug::log("Failed to create socket");
+		return nullptr;
+	}
+
+	SocketKind        kind;
+	CHERI::Capability kindPtr = &kind;
+	kindPtr.permissions() &= {CHERI::Permission::Store};
+	if (network_socket_kind(sealedSocket, kindPtr) < 0)
+	{
+		Debug::log("Failed to retrieve socket kind");
+		return nullptr;
+	}
+
 	// FIXME: IPv6
 	if (isIPv6)
 	{
@@ -78,10 +97,13 @@ SObj network_socket_connect_tcp(Timeout *timeout,
 		firewall_add_tcpipv4_endpoint(
 		  address.ipv4, kind.localPort, ntohs(host->port));
 	}
+
 	if (network_socket_connect_tcp_internal(
 	      timeout, sealedSocket, address, host->port) != 0)
 	{
 		Timeout t{UnlimitedTimeout};
+		// We pass an unlimited timeout, so this cannot fail in any
+		// actionable manner. Don't check the return value.
 		network_socket_close(&t, mallocCapability, sealedSocket);
 		timeout->elapse(t.elapsed);
 		if (isIPv6)
@@ -118,7 +140,14 @@ NetworkAddress network_socket_udp_authorise_host(Timeout *timeout,
 		Debug::log("Host capability does not authorise a UDP connection");
 		return address;
 	}
-	auto kind   = network_socket_kind(socket);
+
+	SocketKind        kind;
+	CHERI::Capability kindPtr = &kind;
+	kindPtr.permissions() &= {CHERI::Permission::Store};
+	// No need to check the return value here, potential errors will be
+	// detected in the switch.
+	network_socket_kind(socket, kindPtr);
+
 	bool isIPv6 = false;
 	switch (kind.protocol)
 	{
@@ -133,10 +162,13 @@ NetworkAddress network_socket_udp_authorise_host(Timeout *timeout,
 			isIPv6 = true;
 			break;
 	}
+
+	CHERI::Capability addressPtr = &address;
+	addressPtr.permissions() &= {CHERI::Permission::Store};
 	firewall_permit_dns();
-	address = network_host_resolve(host->hostname, UseIPv6);
+	int ret = network_host_resolve(host->hostname, UseIPv6, addressPtr);
 	firewall_permit_dns(false);
-	if (address.kind == NetworkAddress::AddressKindInvalid)
+	if ((ret < 0) || (address.kind == NetworkAddress::AddressKindInvalid))
 	{
 		Debug::log("Failed to resolve host");
 		return address;
@@ -146,6 +178,7 @@ NetworkAddress network_socket_udp_authorise_host(Timeout *timeout,
 		Debug::log("Host address does not match socket type");
 		return address;
 	}
+
 	if (isIPv6)
 	{
 		firewall_add_udpipv6_endpoint(
@@ -161,6 +194,7 @@ NetworkAddress network_socket_udp_authorise_host(Timeout *timeout,
 		firewall_add_udpipv4_endpoint(
 		  address.ipv4, kind.localPort, ntohs(host->port));
 	}
+
 	return address;
 }
 

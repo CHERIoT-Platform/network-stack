@@ -214,7 +214,8 @@ namespace
 	 * will favour IPv6 addresses, but can still return IPv4 addresses if no
 	 * IPv6 address is available.
 	 */
-	NetworkAddress host_resolve(const char *hostname, bool useIPv6 = UseIPv6)
+	int
+	host_resolve(const char *hostname, bool useIPv6, NetworkAddress *address)
 	{
 		struct AddrinfoHints hints;
 		hints.family = useIPv6 ? FREERTOS_AF_INET6 : FREERTOS_AF_INET;
@@ -229,31 +230,31 @@ namespace
 			// Try with IPv4 if the lookup failed with IPv6
 			if (useIPv6)
 			{
-				return host_resolve(hostname, false);
+				return host_resolve(hostname, false, address);
 			}
 			Debug::log("DNS request returned: {}", ret);
-			return {0, NetworkAddress::AddressKindInvalid};
+			address->kind = NetworkAddress::AddressKindInvalid;
+			address->ipv4 = 0;
+			return ret;
 		}
 
-		NetworkAddress address;
-		bool           isIPv6 = false;
+		bool isIPv6 = false;
 		for (freertos_addrinfo *r = results; r != nullptr; r = r->ai_next)
 		{
 			Debug::log("Canonical name: {}", r->ai_canonname);
 			if (r->ai_family == FREERTOS_AF_INET6)
 			{
 				memcpy(
-				  address.ipv6, r->ai_addr->sin_address.xIP_IPv6.ucBytes, 16);
-				address.kind = NetworkAddress::AddressKindIPv6;
+				  address->ipv6, r->ai_addr->sin_address.xIP_IPv6.ucBytes, 16);
+				address->kind = NetworkAddress::AddressKindIPv6;
 				Debug::log("Got IPv6 address");
 			}
 			else
 			{
-				address.ipv4 = r->ai_addr->sin_address.ulIP_IPv4;
-				address.kind = NetworkAddress::AddressKindIPv4;
-				Debug::log("Got IPv4 address");
+				address->ipv4 = r->ai_addr->sin_address.ulIP_IPv4;
+				address->kind = NetworkAddress::AddressKindIPv4;
 				Debug::log(
-				  "Got address: {}.{}.{}.{}",
+				  "Got IPv4 address: {}.{}.{}.{}",
 				  static_cast<int>(r->ai_addr->sin_address.ulIP_IPv4) & 0xff,
 				  static_cast<int>(r->ai_addr->sin_address.ulIP_IPv4) >> 8 &
 				    0xff,
@@ -265,7 +266,7 @@ namespace
 		}
 
 		FreeRTOS_freeaddrinfo(results);
-		return address;
+		return 0;
 	}
 
 	/**
@@ -422,9 +423,11 @@ namespace
 	}
 } // namespace
 
-NetworkAddress network_host_resolve(const char *hostname, bool useIPv6)
+int network_host_resolve(const char     *hostname,
+                         bool            useIPv6,
+                         NetworkAddress *address)
 {
-	return host_resolve(hostname, useIPv6);
+	return host_resolve(hostname, useIPv6, address);
 }
 
 SObj network_socket_create_and_bind(Timeout       *timeout,
@@ -959,27 +962,30 @@ ssize_t network_socket_send_to(Timeout              *timeout,
 	  socket);
 }
 
-SocketKind network_socket_kind(SObj socket)
+int network_socket_kind(SObj socket, SocketKind *kind)
 {
-	SocketKind kind = {SocketKind::Invalid, 0};
-	with_sealed_socket(
+	kind->protocol  = SocketKind::Invalid;
+	kind->localPort = 0;
+
+	int ret = with_sealed_socket(
 	  [&](SealedSocket *socket) {
 		  if (socket->socket->ucProtocol == FREERTOS_IPPROTO_TCP)
 		  {
-			  kind.protocol = socket->socket->bits.bIsIPv6
-			                    ? SocketKind::TCPIPv6
-			                    : SocketKind::TCPIPv4;
+			  kind->protocol = socket->socket->bits.bIsIPv6
+			                     ? SocketKind::TCPIPv6
+			                     : SocketKind::TCPIPv4;
 		  }
 		  else
 		  {
-			  kind.protocol = socket->socket->bits.bIsIPv6
-			                    ? SocketKind::UDPIPv6
-			                    : SocketKind::UDPIPv4;
+			  kind->protocol = socket->socket->bits.bIsIPv6
+			                     ? SocketKind::UDPIPv6
+			                     : SocketKind::UDPIPv4;
 		  }
-		  kind.localPort = listGET_LIST_ITEM_VALUE(
+		  kind->localPort = listGET_LIST_ITEM_VALUE(
 		    (&((socket->socket)->xBoundSocketListItem)));
 		  return 0;
 	  },
 	  socket);
-	return kind;
+
+	return ret;
 }
