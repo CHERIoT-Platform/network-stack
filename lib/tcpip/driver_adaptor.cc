@@ -37,13 +37,12 @@ namespace
 	 */
 	BaseType_t initialise(struct xNetworkInterface *pxDescriptor)
 	{
-		if (currentlyRestarting.load() == false)
+		uint32_t expected = Restarting & IpThreadKicked;
+		if (!restartState.compare_exchange_strong(expected, expected & DriverKicked))
 		{
+			// The CAS will fail only if this is the first start of
+			// the network stack. Actually start the driver.
 			ethernet_driver_start();
-		}
-		else
-		{
-			kickDriver.store(true);
 		}
 		return pdPASS;
 	}

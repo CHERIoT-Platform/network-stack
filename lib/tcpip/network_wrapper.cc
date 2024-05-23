@@ -28,26 +28,20 @@ extern struct FlagLockState ipThreadLockState;
 
 extern "C" int ipFOREVER(void)
 {
-	// We must interrupt the loop if a reset is ongoing
-	// (`currentlyRestarting`). However, we must allow the loop to run
-	// during the early stages of a reset, when the `currentlyRestarting`
-	// flag has not been reset yet (`restartingIpThread`).
-	return (currentlyRestarting.load() == false) ||
-	       (restartingIpThread.load() == true);
+	// We must interrupt the loop if a reset is ongoing (`Restarting`).
+	// However, we must still allow the loop to run during the early stages
+	// of a reset (`IpThreadKicked`).
+	uint32_t state = restartState.load();
+	return (state == 0) || ((state & IpThreadKicked) != 0);
 }
 
 // TODO Should these be in an anonymous namespace?
 
 /**
- * `kickDriver`, `currentlyRestarting`, and `restartingIpThread` all serve
- * synchronization purposes at different stages and for different threads of
- * the reset process.
- *
- * TODO: This could probably be replaced with a single integer flag.
+ * State machine of the restart process. Used for synchronization across the
+ * TCP/IP stack and with the firewall.
  */
-std::atomic<bool> kickDriver          = false;
-std::atomic<bool> currentlyRestarting = false;
-std::atomic<bool> restartingIpThread  = false;
+std::atomic<uint32_t> restartState = 0;
 
 /**
  * Keep track of the total number of user threads live in the network stack.

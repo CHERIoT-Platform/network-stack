@@ -2,6 +2,7 @@
 #include "FreeRTOS_IP.h"
 #include "FreeRTOS_Sockets.h"
 #include "compartment.h"
+#include "tcpip-internal.h"
 #include <atomic>
 #include <cheri.hh>
 #include <debug.hh>
@@ -12,20 +13,21 @@
 
 using DebugErrorHandler = ConditionalDebug<true, "TCP/IP Stack error handler">;
 
-// Globals to update as part of the reset.
+// Global state to update as part of the reset.
 extern std::atomic<uint32_t>                                 currentSocketEpoch;
+extern std::atomic<uint8_t>                     userThreadCount;
+
+// Locks and futexes to release as part of the reset
+extern struct FlagLockState                     ipThreadLockState;
 extern std::vector<FlagLockPriorityInherited *> socketLocks;
 extern std::vector<FreeRTOS_Socket_t *>         sockets;
-extern struct FlagLockState                     ipThreadLockState;
-extern void                                     free_buffer_manager_memory();
-extern void                                     network_restart();
-extern std::atomic<bool>                        kickDriver;
-extern std::atomic<bool>                        currentlyRestarting;
-extern std::atomic<bool>                        restartingIpThread;
-extern std::atomic<uint8_t>                     userThreadCount;
 extern struct RecursiveMutexState               __CriticalSectionFlagLock;
 extern struct RecursiveMutexState               __SuspendFlagLock;
 extern QueueHandle_t                            xNetworkEventQueue;
+
+// APIs to call as part of the reset
+extern void                                     free_buffer_manager_memory();
+extern void                                     network_restart();
 
 /// Thread ID of the network thread.
 extern uint16_t networkThreadID;
@@ -52,10 +54,10 @@ extern "C" void reset_network_stack_state()
 	// 2. ensure that no thread enters the compartment while we are
 	//    restarting
 	// 3. reset the network thread whenever it wakes up
-	bool expected = false;
-	if (!currentlyRestarting.compare_exchange_strong(expected, true))
+	uint32_t expected = NotRestarting;
+	if (!restartState.compare_exchange_strong(expected, Restarting))
 	{
-		if (isIpThread && restartingIpThread.load())
+		if (isIpThread && ((restartState.load() & IpThreadKicked) != 0))
 		{
 			// Currently recovering from a crash that happens
 			// during the reset process isn't possible. It's not
@@ -176,11 +178,11 @@ extern "C" void reset_network_stack_state()
 	// Restart the network stack. This resets the startup state before
 	// calling `network_start`.
 	DebugErrorHandler::log("Restarting the network stack.");
-	restartingIpThread.store(true);
+	restartState &= IpThreadKicked;
 	network_restart();
 
-	// We do not reset `currentlyRestarting` to `false` here, the network
-	// thread will take care of it when the network stack is done reseting.
+	// We do not reset `restartState` here, the network thread will take
+	// care of it when the TCP/IP stack is done reseting.
 }
 
 extern void ip_thread_entry(void);

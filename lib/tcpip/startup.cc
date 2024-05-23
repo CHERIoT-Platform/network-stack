@@ -10,14 +10,12 @@
 
 #include <debug.hh>
 #include <platform-ethernet.hh>
+#include <tcpip-internal.h>
 
 #include "../firewall/firewall.h"
 
 using Debug = ConditionalDebug<false, "TCP/IP Stack startup">;
 
-extern std::atomic<bool> currentlyRestarting;
-extern std::atomic<bool> restartingIpThread;
-extern std::atomic<bool> kickDriver;
 extern "C" void          ip_cleanup(void);
 
 /**
@@ -164,7 +162,7 @@ void __cheri_compartment("TCPIP") network_start()
 	{
 		Debug::log("Failed to initialize IP stack\n");
 	}
-	if (currentlyRestarting.load() == false)
+	if (restartState.load() == 0)
 	{
 		// Wait until the network is fully initialised.
 		constexpr uint32_t RequiredBits =
@@ -233,16 +231,14 @@ void vApplicationIPNetworkEventHook_Multi(eIPCallbackEvent_t eNetworkEvent,
 		}
 	}
 
-	if (currentlyRestarting.load() == true)
+	if (restartState.load() == 0)
 	{
 		constexpr uint32_t RequiredBits =
 		  UseIPv6 ? DoneIPv4 | DoneIPv6 : DoneIPv4;
 		if ((state.load() & RequiredBits) == RequiredBits)
 		{
 			Debug::log("Now officially done restarting");
-			currentlyRestarting.store(false);
-			restartingIpThread.store(false);
-			kickDriver.store(false);
+			restartState.store(NotRestarting);
 		}
 	}
 }
