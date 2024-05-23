@@ -3,6 +3,7 @@
 
 // Native APIs
 #include <atomic>
+#include <cheri-builtins.h>
 #include <compartment-macros.h>
 #include <debug.hh>
 //#include <fail-simulator-on-error.h>
@@ -37,13 +38,16 @@ namespace
 	 */
 	BaseType_t initialise(struct xNetworkInterface *pxDescriptor)
 	{
-		uint32_t expected = Restarting & IpThreadKicked;
-		if (!restartState.compare_exchange_strong(expected, expected & DriverKicked))
+		if (restartState.load() != 0)
 		{
-			// The CAS will fail only if this is the first start of
-			// the network stack. Actually start the driver.
-			ethernet_driver_start();
+			restartState |= DriverKicked;
 		}
+		CHERI::Capability stateCap{&restartState};
+		// We trust the firewall, but restricting permissions is still
+		// nice to catch bugs.
+		stateCap.permissions() &=
+		  {CHERI::Permission::Load, CHERI::Permission::Global};
+		ethernet_driver_start(stateCap);
 		return pdPASS;
 	}
 

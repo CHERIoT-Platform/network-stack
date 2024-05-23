@@ -14,8 +14,8 @@
 using DebugErrorHandler = ConditionalDebug<true, "TCP/IP Stack error handler">;
 
 // Global state to update as part of the reset.
-extern std::atomic<uint32_t>                                 currentSocketEpoch;
-extern std::atomic<uint8_t>                     userThreadCount;
+extern std::atomic<uint32_t> currentSocketEpoch;
+extern std::atomic<uint8_t>  userThreadCount;
 
 // Locks and futexes to release as part of the reset
 extern struct FlagLockState                     ipThreadLockState;
@@ -26,8 +26,8 @@ extern struct RecursiveMutexState               __SuspendFlagLock;
 extern QueueHandle_t                            xNetworkEventQueue;
 
 // APIs to call as part of the reset
-extern void                                     free_buffer_manager_memory();
-extern void                                     network_restart();
+extern void free_buffer_manager_memory();
+extern void network_restart();
 
 /// Thread ID of the network thread.
 extern uint16_t networkThreadID;
@@ -173,12 +173,12 @@ extern "C" void reset_network_stack_state()
 
 	// Initialize fresh vectors for locks and sockets
 	socketLocks = std::vector<FlagLockPriorityInherited *>{};
-	sockets = std::vector<FreeRTOS_Socket_t *>{};
+	sockets     = std::vector<FreeRTOS_Socket_t *>{};
 
 	// Restart the network stack. This resets the startup state before
 	// calling `network_start`.
 	DebugErrorHandler::log("Restarting the network stack.");
-	restartState &= IpThreadKicked;
+	restartState |= IpThreadKicked;
 	network_restart();
 
 	// We do not reset `restartState` here, the network thread will take

@@ -11,14 +11,14 @@
  * Flags for the state of restart.
  */
 enum [[clang::flag_enum]] RestartState{
-  NotRestarting   = 0,
-  Restarting      = 1,
-  IpThreadKicked  = 2,
-  DriverKicked    = 4,
+  NotRestarting  = 0,
+  Restarting     = 1,
+  IpThreadKicked = 2,
+  DriverKicked   = 4,
 };
 
 extern std::atomic<uint32_t> restartState;
-extern std::atomic<uint8_t> userThreadCount;
+extern std::atomic<uint8_t>  userThreadCount;
 
 /**
  * Helper to run a function ensuring that the thread counters are
@@ -45,7 +45,6 @@ auto with_restarting_checks_driver(auto operation, auto errorValue)
 	{
 		// We are restarting and the driver isn't yet supposed to send
 		// packets.
-		yield();
 		return errorValue;
 	}
 

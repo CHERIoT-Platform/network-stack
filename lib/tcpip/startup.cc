@@ -16,7 +16,7 @@
 
 using Debug = ConditionalDebug<false, "TCP/IP Stack startup">;
 
-extern "C" void          ip_cleanup(void);
+extern "C" void ip_cleanup(void);
 
 /**
  * Exposed by the driver adaptor.  Uses a CHERIoT driver to provide a FreeRTOS
@@ -231,7 +231,7 @@ void vApplicationIPNetworkEventHook_Multi(eIPCallbackEvent_t eNetworkEvent,
 		}
 	}
 
-	if (restartState.load() == 0)
+	if (restartState.load() != 0)
 	{
 		constexpr uint32_t RequiredBits =
 		  UseIPv6 ? DoneIPv4 | DoneIPv6 : DoneIPv4;
