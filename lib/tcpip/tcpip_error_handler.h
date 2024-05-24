@@ -175,6 +175,11 @@ extern "C" void reset_network_stack_state()
 	socketLocks = std::vector<FlagLockPriorityInherited *>{};
 	sockets     = std::vector<FreeRTOS_Socket_t *>{};
 
+	// Re-initialize the critical section locks we updated for destruction
+	// earlier
+	__CriticalSectionFlagLock.lock.lockWord = 0;
+	__SuspendFlagLock.lock.lockWord = 0;
+
 	// Restart the network stack. This resets the startup state before
 	// calling `network_start`.
 	DebugErrorHandler::log("Restarting the network stack.");
