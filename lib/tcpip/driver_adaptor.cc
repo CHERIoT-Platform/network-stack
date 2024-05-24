@@ -38,16 +38,16 @@ namespace
 	 */
 	BaseType_t initialise(struct xNetworkInterface *pxDescriptor)
 	{
-		if (restartState.load() != 0)
-		{
-			restartState |= DriverKicked;
-		}
 		CHERI::Capability stateCap{&restartState};
 		// We trust the firewall, but restricting permissions is still
 		// nice to catch bugs.
 		stateCap.permissions() &=
 		  {CHERI::Permission::Load, CHERI::Permission::Global};
 		ethernet_driver_start(stateCap);
+		if (restartState.load() != 0)
+		{
+			restartState |= DriverKicked;
+		}
 		return pdPASS;
 	}
 

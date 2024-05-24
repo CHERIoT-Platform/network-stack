@@ -247,8 +247,6 @@ namespace
 			auto guardedTable = permitted_endpoints(protocol);
 			auto &[g, table]  = guardedTable;
 			table.clear();
-			table.reserve(8);
-			table.reserve(8);
 		}
 
 		void remove_endpoint(IPProtocolNumber protocol,
@@ -503,13 +501,19 @@ namespace
 
 	bool packet_filter_ingress(const uint8_t *data, size_t length)
 	{
-		// TODO clean this up
-		uint32_t s = TCPIPRestartState->load();
-		if (s != 0 && ((s & 0x4) == 0))
+		// This should match the `DriverKicked` bit of enum
+		// `RestartState` (see `tcpip-internal.h`).
+		constexpr uint32_t DriverKickedBit = 0x4;
+
+		uint32_t stateSnapshot = TCPIPRestartState->load();
+		if (stateSnapshot != 0 && ((stateSnapshot & DriverKickedBit) == 0))
 		{
-			Debug::log("Dropping a packet due to network stack restart.");
+			// We are in a reset and the driver has not yet been
+			// restarted.
+			Debug::log("Dropping packet due to network stack restart.");
 			return false;
 		}
+
 		// Not a valid Ethernet frame (64 bytes including four-byte FCS, which
 		// is stripped by this point).
 		if (length < 60)
@@ -751,7 +755,13 @@ bool ethernet_driver_start(std::atomic<uint32_t> *state)
 {
 	if (TCPIPRestartState == nullptr)
 	{
-		// TODO check pointer here
+		if (!CHERI::check_pointer<CHERI::PermissionSet{
+		      CHERI::Permission::Load, CHERI::Permission::Global}>(
+		      state, sizeof(*state)))
+		{
+			Debug::log("Invalid TCP/IP state pointer {}", state);
+			return false;
+		}
 		TCPIPRestartState = state;
 	}
 	if (TCPIPRestartState->load() != 0)
