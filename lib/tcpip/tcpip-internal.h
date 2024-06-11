@@ -2,6 +2,9 @@
 // SPDX-License-Identifier: MIT
 
 #pragma once
+#include <FreeRTOS_IP.h>
+#include <ds/linked_list.h>
+#include <locks.hh>
 /**
  * Internal helpers for use inside of the TCP/IP compartment.
  * These should be called only from the TCP/IP compartment.
@@ -17,8 +20,42 @@ enum [[clang::flag_enum]] RestartState{
   DriverKicked   = 4,
 };
 
-extern std::atomic<uint32_t> restartState;
-extern std::atomic<uint8_t>  userThreadCount;
+using ChunkFreeLink = ds::linked_list::cell::PtrAddr;
+
+/**
+ * The sealed wrapper around a FreeRTOS socket.
+ */
+struct SealedSocket
+{
+	/**
+	 * Socket epoch. This is used to check if the socket correponds
+	 * to the current instance of the network stack.
+	 */
+	uint64_t socketEpoch;
+	/**
+	 * The lock protecting this socket.
+	 */
+	FlagLockPriorityInherited socketLock;
+	/**
+	 * The FreeRTOS socket.  It would be nice if this didn't require a
+	 * separate allocation but FreeRTOS+TCP isn't designed to support that
+	 * use case.
+	 */
+	FreeRTOS_Socket_t *socket;
+	ChunkFreeLink      ring __attribute__((__cheri_no_subobject_bounds__)) = {};
+	/**
+	 * Container-of for the above field.
+	 */
+	__always_inline static struct SealedSocket *from_ring(ChunkFreeLink *c)
+	{
+		return reinterpret_cast<struct SealedSocket *>(
+		  reinterpret_cast<uintptr_t>(c) - offsetof(struct SealedSocket, ring));
+	}
+};
+
+extern ds::linked_list::Sentinel<ChunkFreeLink> sealedSockets;
+extern std::atomic<uint32_t>                    restartState;
+extern std::atomic<uint8_t>                     userThreadCount;
 
 /**
  * Helper to run a function ensuring that the thread counters are

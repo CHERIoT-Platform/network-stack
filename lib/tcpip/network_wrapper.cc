@@ -61,13 +61,11 @@ std::atomic<uint8_t> userThreadCount = 0;
 std::atomic<uint32_t> currentSocketEpoch = 0;
 
 /**
- * Store pointers to the sockets and socket locks.
+ * Store pointers to the sealed sockets.
  *
- * FIXME we are just using vectors as a temporary hack, we will replace with a
- * linked list later when it works.
+ * TODO we will need to synchronize on this.
  */
-std::vector<FlagLockPriorityInherited *> socketLocks;
-std::vector<FreeRTOS_Socket_t *>         sockets;
+ds::linked_list::Sentinel<ChunkFreeLink> sealedSockets;
 
 using CHERI::Capability;
 using CHERI::check_pointer;
@@ -97,28 +95,6 @@ namespace
 #endif
 		    ;
 	}
-
-	/**
-	 * The sealed wrapper around a FreeRTOS socket.
-	 */
-	struct SealedSocket
-	{
-		/**
-		 * Socket epoch. This is used to check if the socket correponds
-		 * to the current instance of the network stack.
-		 */
-		uint64_t socketEpoch;
-		/**
-		 * The lock protecting this socket.
-		 */
-		FlagLockPriorityInherited socketLock;
-		/**
-		 * The FreeRTOS socket.  It would be nice if this didn't require a
-		 * separate allocation but FreeRTOS+TCP isn't designed to support that
-		 * use case.
-		 */
-		FreeRTOS_Socket_t *socket;
-	};
 
 	/**
 	 * Returns the key with which SealedSocket instances are sealed.
@@ -528,22 +504,6 @@ SObj network_socket_create_and_bind(Timeout       *timeout,
 		  // Set the socket epoch
 		  socketWrapper->socketEpoch = currentSocketEpoch.load();
 
-		  // Add the socket lock to the list.
-		  bool added = false;
-		  for (FlagLockPriorityInherited *&lock : socketLocks)
-		  {
-			  if (lock == nullptr)
-			  {
-				  lock  = &(socketWrapper->socketLock);
-				  added = true;
-				  break;
-			  }
-		  }
-		  if (!added)
-		  {
-			  socketLocks.push_back(&(socketWrapper->socketLock));
-		  }
-
 		  const auto Family = isIPv6 ? FREERTOS_AF_INET6 : FREERTOS_AF_INET;
 		  Socket_t   socket =
 		    FreeRTOS_socket(Family,
@@ -563,20 +523,7 @@ SObj network_socket_create_and_bind(Timeout       *timeout,
 		  socketWrapper->socket = socket;
 
 		  // Add the socket to the list.
-		  added = false;
-		  for (FreeRTOS_Socket_t *&s : sockets)
-		  {
-			  if (s == nullptr)
-			  {
-				  s     = socketWrapper->socket;
-				  added = true;
-				  break;
-			  }
-		  }
-		  if (!added)
-		  {
-			  sockets.push_back(socketWrapper->socket);
-		  }
+		  sealedSockets.append(&(socketWrapper->ring));
 
 		  // Claim the socket so that it counts towards the caller's quota.  The
 		  // network stack also keeps a claim to it.  We will drop this claim on
@@ -769,36 +716,10 @@ int network_socket_close(Timeout *t, SObj mallocCapability, SObj sealedSocket)
 					  // freed next time we try.
 					  return -ETIMEDOUT;
 				  }
-				  // Remove the socket's lock from the lock and socket lists.
-				  // Again do not do this if the socket is coming from a
-				  // previous instance of the network stack, as the error
-				  // handler already took care of it.
-				  bool removed = false;
-				  for (FlagLockPriorityInherited *&lock : socketLocks)
-				  {
-					  if (lock == &(socket->socketLock))
-					  {
-						  lock    = nullptr;
-						  removed = true;
-						  break;
-					  }
-				  }
-				  Debug::Assert(
-				    removed == true,
-				    "The socket lock should be present in the list.");
 
-				  removed = false;
-				  for (FreeRTOS_Socket_t *&s : sockets)
-				  {
-					  if (s == socket->socket)
-					  {
-						  s       = nullptr;
-						  removed = true;
-						  break;
-					  }
-				  }
-				  Debug::Assert(removed == true,
+				  Debug::Assert(ds::linked_list::is_singleton(&(socket->ring)),
 				                "The socket should be present in the list.");
+				  ds::linked_list::remove(&(socket->ring));
 
 				  g.release();
 				  socket->socketLock.upgrade_for_destruction();

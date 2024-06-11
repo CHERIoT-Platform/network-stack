@@ -18,12 +18,10 @@ extern std::atomic<uint32_t> currentSocketEpoch;
 extern std::atomic<uint8_t>  userThreadCount;
 
 // Locks and futexes to release as part of the reset
-extern struct FlagLockState                     ipThreadLockState;
-extern std::vector<FlagLockPriorityInherited *> socketLocks;
-extern std::vector<FreeRTOS_Socket_t *>         sockets;
-extern struct RecursiveMutexState               __CriticalSectionFlagLock;
-extern struct RecursiveMutexState               __SuspendFlagLock;
-extern QueueHandle_t                            xNetworkEventQueue;
+extern struct FlagLockState       ipThreadLockState;
+extern struct RecursiveMutexState __CriticalSectionFlagLock;
+extern struct RecursiveMutexState __SuspendFlagLock;
+extern QueueHandle_t              xNetworkEventQueue;
 
 // APIs to call as part of the reset
 extern void free_buffer_manager_memory();
@@ -81,25 +79,28 @@ extern "C" void reset_network_stack_state()
 	// Upgrade socket locks for destruction to ensure that threads waiting
 	// on it exit the compartment. Do not remove the entries because we
 	// will re-initialize the vectors anyways.
-	DebugErrorHandler::log("Upgrading socket locks for destruction.");
-	for (FlagLockPriorityInherited *&lock : socketLocks)
+	DebugErrorHandler::log(
+	  "Setting socket locks for destruction and destroying event groups.");
+	if (!sealedSockets.is_empty())
 	{
-		if (lock != nullptr)
+		auto *cell = sealedSockets.first();
+		while (cell != &sealedSockets.sentinel)
 		{
+			struct SealedSocket *socket = SealedSocket::from_ring(cell);
+
+			FlagLockPriorityInherited *lock = &(socket->socketLock);
 			DebugErrorHandler::log("Destroying lock {}", lock);
 			lock->upgrade_for_destruction();
+
+			FreeRTOS_Socket_t *s = socket->socket;
+			DebugErrorHandler::log("Destroying event group {}", s->xEventGroup);
+			eventgroup_destroy_force(MALLOC_CAPABILITY, s->xEventGroup);
+
+			cell = cell->cell_next();
 		}
 	}
 
-	DebugErrorHandler::log("Unblocking threads blocked on event groups.");
-	for (FreeRTOS_Socket_t *&s : sockets)
-	{
-		if (s != nullptr)
-		{
-			DebugErrorHandler::log("Destroying event group {}", s->xEventGroup);
-			eventgroup_destroy_force(MALLOC_CAPABILITY, s->xEventGroup);
-		}
-	}
+	sealedSockets.reset();
 
 	// Upgrade the two critical section locks for destruction
 	// TODO document what this will do
@@ -173,16 +174,12 @@ extern "C" void reset_network_stack_state()
 	// Update the socket epoch.
 	currentSocketEpoch++;
 
-	// Initialize fresh vectors for locks and sockets
-	socketLocks = std::vector<FlagLockPriorityInherited *>{};
-	sockets     = std::vector<FreeRTOS_Socket_t *>{};
-
 	// Re-initialize the critical section locks we updated for destruction
 	// earlier
 	__CriticalSectionFlagLock.lock.lockWord = 0;
-	__CriticalSectionFlagLock.depth = 0;
-	__SuspendFlagLock.lock.lockWord = 0;
-	__SuspendFlagLock.depth = 0;
+	__CriticalSectionFlagLock.depth         = 0;
+	__SuspendFlagLock.lock.lockWord         = 0;
+	__SuspendFlagLock.depth                 = 0;
 
 	// Restart the network stack. This resets the startup state before
 	// calling `network_start`.
