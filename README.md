@@ -224,3 +224,10 @@ Now that you know that the SNTP compartment is the only one that can send and re
 
 If you've modified the SNTP compartment to point to your NTP service and use its authentication credentials, then this should be different.
 This can all be part of your firmware's auditing policy.
+
+Automatic Restart
+-----------------
+
+TODO document.
+
+TODO discuss "reset-critical" limitation and how we will improve at a later point.

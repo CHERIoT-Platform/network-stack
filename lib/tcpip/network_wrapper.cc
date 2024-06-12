@@ -45,7 +45,7 @@ std::atomic<uint32_t> restartState = 0;
  * This is used to ensure that all threads have been adequately terminated when
  * performing a network stack reset.
  *
- * This should not be reset by the error handler.
+ * This should not be reset by the error handler and is reset-critical.
  */
 std::atomic<uint8_t> userThreadCount = 0;
 
@@ -53,16 +53,17 @@ std::atomic<uint8_t> userThreadCount = 0;
  * Current socket epoch. This is used to detect sockets that belong to a
  * previous instance of the network stack.
  *
- * This should not be reset by the error handler.
+ * This should not be reset by the error handler and is reset-critical.
  */
 std::atomic<uint32_t> currentSocketEpoch = 0;
 
 /**
  * Store pointers to the sealed sockets.
  *
- * TODO we will need to synchronize on this.
+ * This *will* be reset by the error handler, however it *is* reset-critical.
  */
 ds::linked_list::Sentinel<ChunkFreeLink> sealedSockets;
+FlagLockPriorityInherited                sealedSocketsListLock;
 
 using CHERI::Capability;
 using CHERI::check_pointer;
@@ -519,9 +520,6 @@ SObj network_socket_create_and_bind(Timeout       *timeout,
 		  }
 		  socketWrapper->socket = socket;
 
-		  // Add the socket to the list.
-		  sealedSockets.append(&(socketWrapper->ring));
-
 		  // Claim the socket so that it counts towards the caller's quota.  The
 		  // network stack also keeps a claim to it.  We will drop this claim on
 		  // deallocation.
@@ -541,21 +539,41 @@ SObj network_socket_create_and_bind(Timeout       *timeout,
 			  return nullptr;
 		  }
 
-		  freertos_sockaddr localAddress;
-		  memset(&localAddress, 0, sizeof(localAddress));
-		  localAddress.sin_len = sizeof(localAddress);
-		  // Note from the FreeRTOS API spec: 'Specifying a port number of 0 or
-		  // passing pxAddress as NULL will result in the socket being bound to
-		  // a port number from the private range'. Here, `localPort` will be 0
-		  // if the caller wants to bind to any port.
-		  localAddress.sin_port   = FreeRTOS_htons(localPort);
-		  localAddress.sin_family = Family;
-		  auto bindResult =
-		    FreeRTOS_bind(socket, &localAddress, sizeof(localAddress));
-		  if (bindResult != 0)
+		  // Acquire the lock until we complete the bind to ensure that
+		  // we don't fail to acquire `sealedSocketsListLock` in the
+		  // error handling of `FreeRTOS_bind`.
+		  if (LockGuard g{sealedSocketsListLock, timeout})
+		  {
+			  // Add the socket to the sealed socket reset list.
+			  sealedSockets.append(&(socketWrapper->ring));
+
+			  freertos_sockaddr localAddress;
+			  memset(&localAddress, 0, sizeof(localAddress));
+			  localAddress.sin_len = sizeof(localAddress);
+			  // Note from the FreeRTOS API spec: 'Specifying a port number of 0
+			  // or passing pxAddress as NULL will result in the socket being
+			  // bound to a port number from the private range'. Here,
+			  // `localPort` will be 0 if the caller wants to bind to any port.
+			  localAddress.sin_port   = FreeRTOS_htons(localPort);
+			  localAddress.sin_family = Family;
+			  auto bindResult =
+			    FreeRTOS_bind(socket, &localAddress, sizeof(localAddress));
+			  if (bindResult != 0)
+			  {
+				  // See above comments.
+				  Debug::log("Failed to bind socket.");
+				  // No need to acquire the lock here since we still have it.
+				  ds::linked_list::remove(&(socketWrapper->ring));
+				  close_socket_retry(timeout, socket);
+				  token_obj_destroy(
+				    mallocCapability, socket_key(), sealedSocket);
+				  return nullptr;
+			  }
+		  }
+		  else
 		  {
 			  // See above comments.
-			  Debug::log("Failed to bind socket.");
+			  Debug::log("Failed to add socket to the socket reset list.");
 			  close_socket_retry(timeout, socket);
 			  token_obj_destroy(mallocCapability, socket_key(), sealedSocket);
 			  return nullptr;
@@ -692,6 +710,17 @@ int network_socket_close(Timeout *t, SObj mallocCapability, SObj sealedSocket)
 			  int ret = 0;
 			  if (socket->socketEpoch == currentSocketEpoch.load())
 			  {
+				  Debug::Assert(ds::linked_list::is_singleton(&(socket->ring)),
+				                "The socket should be present in the list.");
+				  if (LockGuard g{sealedSocketsListLock, t})
+				  {
+					  ds::linked_list::remove(&(socket->ring));
+				  }
+				  else
+				  {
+					  return -ETIMEDOUT;
+				  }
+
 				  // Close the socket.  Another thread will actually
 				  // clean up the memory. This returns 1 on success.
 				  // Again, do not do this if the socket is from a
@@ -713,10 +742,6 @@ int network_socket_close(Timeout *t, SObj mallocCapability, SObj sealedSocket)
 					  // freed next time we try.
 					  return -ETIMEDOUT;
 				  }
-
-				  Debug::Assert(ds::linked_list::is_singleton(&(socket->ring)),
-				                "The socket should be present in the list.");
-				  ds::linked_list::remove(&(socket->ring));
 
 				  g.release();
 				  socket->socketLock.upgrade_for_destruction();

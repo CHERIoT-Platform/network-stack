@@ -30,6 +30,7 @@ extern void network_restart();
 /// Thread ID of the network thread.
 extern uint16_t networkThreadID;
 
+// TODO document how we found the different locks and futexes to destroy
 extern "C" void reset_network_stack_state()
 {
 	const bool isUserThread = thread_id_get() != networkThreadID;
@@ -46,6 +47,8 @@ extern "C" void reset_network_stack_state()
 		DebugErrorHandler::log(
 		  "Network thread TCP/IP stack error handler called!");
 	}
+
+	// TODO manually unlock the sealed sockets lock list if it was held.
 
 	// Set the currently restarting flag. This will do several things:
 	// 1. ensure that only one call to this error handler triggers a reset
@@ -76,9 +79,22 @@ extern "C" void reset_network_stack_state()
 
 	DebugErrorHandler::log("Reset-ing the network stack.");
 
-	// Upgrade socket locks for destruction to ensure that threads waiting
-	// on it exit the compartment. Do not remove the entries because we
-	// will re-initialize the vectors anyways.
+	// If someone is holding the lock, wait for them to release it. We know
+	// that they will release it because they will 1) either exit the
+	// critical section or 2) crash into it, in which case we (the error
+	// handler) will manually unlock it - see above.
+	//
+	// We need to acquire the lock because we do not want the sealed
+	// sockets list to be in an inconsistent state when we go over it.
+	sealedSocketsListLock.lock();
+
+	DebugErrorHandler::log(
+	  "Setting the sealed socket list lock for destruction.");
+	sealedSocketsListLock.upgrade_for_destruction();
+
+	// Upgrade socket locks for destruction and destroy event groups to
+	// ensure that threads waiting on them exit the compartment. We will
+	// empty the list later.
 	DebugErrorHandler::log(
 	  "Setting socket locks for destruction and destroying event groups.");
 	if (!sealedSockets.is_empty())

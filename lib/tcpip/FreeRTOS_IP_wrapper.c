@@ -21,7 +21,7 @@ void ip_thread_start(void);
 /**
  * Backup of the constant UDP packet header (`xDefaultPartUDPPacketHeader`).
  *
- * This should not be reset by the error handler.
+ * This should not be reset by the error handler and is reset-critical.
  *
  * Note (which also applies to `threadEntryGuard` and `isRestart`): ultimately
  * we should move these to a separate "network stack TCB" compartment to be
@@ -37,7 +37,7 @@ static UDPPacketHeader_t defaultUDPPacketHeaderCopy;
  * Flag used to synchronize the network stack thread and user threads at
  * startup.
  *
- * This should not be reset by the error handler.
+ * This should not be reset by the error handler and is reset-critical.
  */
 static uint32_t threadEntryGuard;
 
@@ -45,7 +45,7 @@ static uint32_t threadEntryGuard;
  * Flag used to distinguish a normal TCP/IP thread start from a restart due to
  * a reset of the TCP/IP thread.
  *
- * This should not be reset by the error handler.
+ * This should not be reset by the error handler and is reset-critical.
  */
 static uint8_t isRestart = 0;
 
