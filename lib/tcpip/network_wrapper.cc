@@ -18,7 +18,6 @@
 #include <locks.hh>
 #include <platform-ethernet.hh>
 #include <token.h>
-#include <vector>
 
 using Debug            = ConditionalDebug<false, "Network stack wrapper">;
 constexpr bool UseIPv6 = CHERIOT_RTOS_OPTION_IPv6;
@@ -34,8 +33,6 @@ extern "C" int ipFOREVER(void)
 	uint32_t state = restartState.load();
 	return (state == 0) || ((state & IpThreadKicked) != 0);
 }
-
-// TODO Should these be in an anonymous namespace?
 
 /**
  * State machine of the restart process. Used for synchronization across the

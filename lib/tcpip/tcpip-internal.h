@@ -5,9 +5,11 @@
 #include <FreeRTOS_IP.h>
 #include <ds/linked_list.h>
 #include <locks.hh>
+
 /**
- * Internal helpers for use inside of the TCP/IP compartment.
- * These should be called only from the TCP/IP compartment.
+ * Internal helpers and data structures for use inside of the TCP/IP
+ * compartment. These should be called or used only from/in the TCP/IP
+ * compartment.
  */
 
 /**
@@ -24,6 +26,9 @@ using ChunkFreeLink = ds::linked_list::cell::PtrAddr;
 
 /**
  * The sealed wrapper around a FreeRTOS socket.
+ *
+ * These sealed wrappers are part of a doubly linked list which is used by the
+ * compartment reset code to reset locks, etc. TODO more documentation here.
  */
 struct SealedSocket
 {
@@ -58,33 +63,38 @@ extern std::atomic<uint32_t>                    restartState;
 extern std::atomic<uint8_t>                     userThreadCount;
 
 /**
- * Helper to run a function ensuring that the thread counters are
- * updated appropriately.
+ * Helper to run a function ensuring that the thread counters are updated
+ * appropriately. Every entry point of the TCP/IP stack API (with the exception
+ * of the driver thread, see below) should go through this unless it
+ * manipulates `userThreadCount` manually.
  */
 auto with_restarting_checks(auto operation, auto errorValue)
 {
 	if (restartState.load() != 0)
 	{
+		// yield to give a chance to the restart code to make some
+		// progress, in case applications are aggressively trying to
+		// re-open the socket.
 		yield();
 		return errorValue;
 	}
-
 	userThreadCount++;
 	auto ret = operation();
 	userThreadCount--;
 	return ret;
 }
 
+/**
+ * Similar to `with_restarting_checks`, but for the driver thread.
+ *
+ * The compartment API entry points exposed to the firewall can only be called
+ * by the firewall, and we trust the firewall not to call us at inappropriate
+ * times during a restart. The firewall has access to `restartState` and knows
+ * when not to call - if it does call at an inapproriate time during reset,
+ * this is a firewall bug. Thus, do not check `restartState` here.
+ */
 auto with_restarting_checks_driver(auto operation, auto errorValue)
 {
-	uint32_t state = restartState.load();
-	if ((state != 0) && ((state & DriverKicked) == 0))
-	{
-		// We are restarting and the driver isn't yet supposed to send
-		// packets.
-		return errorValue;
-	}
-
 	userThreadCount++;
 	auto ret = operation();
 	userThreadCount--;

@@ -22,6 +22,14 @@ void ip_thread_start(void);
  * Backup of the constant UDP packet header (`xDefaultPartUDPPacketHeader`).
  *
  * This should not be reset by the error handler.
+ *
+ * Note (which also applies to `threadEntryGuard` and `isRestart`): ultimately
+ * we should move these to a separate "network stack TCB" compartment to be
+ * able to reset all the state of this compartment unconditionally, with simple
+ * operations like re-zeroing the BSS.
+ *
+ * Note 2: we *cannot* make this immutable through a read-only capability,
+ * since we cannot heap-allocate it (as it must survive a reset).
  */
 static UDPPacketHeader_t defaultUDPPacketHeaderCopy;
 
@@ -43,10 +51,6 @@ static uint8_t isRestart = 0;
 
 /**
  * Store the thread ID of the TCP/IP thread for use in the error handler.
- *
- * TODO: is this necessary or do we store this somewhere else already? The
- * FreeRTOS `xIPTaskHandle` global is static unfortunately so we cannot access
- * it from the error handler.
  */
 uint16_t networkThreadID;
 
@@ -67,25 +71,17 @@ void ip_thread_start(void)
 }
 
 /**
- * Set some constants which will outlive resets of the network stack. This will
- * be run exactly once the first time the network stack starts.
- */
-void ip_set_constants(void)
-{
-	// Make a backup of the default UDP header to reset it later.
-	// It would be nice if we could make this immutable through a read-only
-	// capability, but we cannot heap-allocate it since it must survive a
-	// reset. The proper way to fix it would be through a separate
-	// compartment.
-	memcpy(&defaultUDPPacketHeaderCopy,
-	       &xDefaultPartUDPPacketHeader,
-	       sizeof(defaultUDPPacketHeaderCopy));
-}
-
-/**
- * Cleanup to perform when restarting the network stack, including reseting
- * some globals which cannot be reset in the error handler because they are
- * static.
+ * Cleanup to perform when restarting the network stack, including resetting
+ * global state.
+ *
+ * This must be here because most of this state is static (we can edit them
+ * here through the evil "include C files" hack above.
+ *
+ * This global state was identified by going through all entries of the .bss
+ * and .data sections of this compartment. This *will* break if new FreeRTOS
+ * releases introduce new global state. Ideally we would later reset all this
+ * state automatically by zero-ing the entire .bss and resetting .data with
+ * snapshots taken at startup time. See note of `defaultUDPPacketHeaderCopy`.
  */
 void ip_cleanup(void)
 {
@@ -141,7 +137,10 @@ void __cheri_compartment("TCPIP") ip_thread_entry(void)
 {
 	if (isRestart == 0)
 	{
-		ip_set_constants();
+		// Make a backup of the default UDP header to reset it later.
+		memcpy(&defaultUDPPacketHeaderCopy,
+		       &xDefaultPartUDPPacketHeader,
+		       sizeof(defaultUDPPacketHeaderCopy));
 	}
 
 	networkThreadID = thread_id_get();
