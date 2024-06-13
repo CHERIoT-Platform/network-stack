@@ -30,7 +30,36 @@ extern void network_restart();
 /// Thread ID of the network thread.
 extern uint16_t networkThreadID;
 
-// TODO document how we found the different locks and futexes to destroy
+/**
+ * Free the compartment's heap memory.
+ *
+ * Note that socket memory will not be freed because sockets are allocated with
+ * user-passed capabilities which we do not store. API users are supposed to
+ * close them, which will trigger a free.
+ */
+__always_inline static inline void free_compartment_memory()
+{
+	// Global heap capability.
+	heap_free_all(MALLOC_CAPABILITY);
+	// Buffer manager capability. If the buffer manager is using the global
+	// heap capability, this will do nothing.
+	free_buffer_manager_memory();
+}
+
+/**
+ * Reset the network stack state.
+ *
+ * We go through all locks used in the TCP/IP compartment and set them for
+ * destruction. The list of synchronization primitives resetted here was
+ * extracted through a manual study of the compartment's code-base: this may
+ * therefore break if new releases of FreeRTOS+TCP introduce new locks. In the
+ * future, we may want to come up with a more systematic approach.
+ *
+ * This function is designed to be robust against most types of compartment
+ * corruption, however we do assume that:
+ * - 'reset-critical' data has not been corrupted
+ * - the control-flow of threads in the compartment has not been altered
+ */
 extern "C" void reset_network_stack_state()
 {
 	const bool isUserThread = thread_id_get() != networkThreadID;
@@ -48,7 +77,13 @@ extern "C" void reset_network_stack_state()
 		  "Network thread TCP/IP stack error handler called!");
 	}
 
-	// TODO manually unlock the sealed sockets lock list if it was held.
+	// Manually unlock the sealed sockets lock list if it was held.
+	if (sealedSocketsListLock.get_owner_thread_id() == thread_id_get())
+	{
+		DebugErrorHandler::log("The sealed sockets lock was held by the "
+		                       "crashing thread. Forcefully unlocking it.");
+		sealedSocketsListLock.unlock();
+	}
 
 	// Set the currently restarting flag. This will do several things:
 	// 1. ensure that only one call to this error handler triggers a reset
@@ -61,12 +96,12 @@ extern "C" void reset_network_stack_state()
 		if (isIpThread && ((restartState.load() & IpThreadKicked) != 0))
 		{
 			// Currently recovering from a crash that happens
-			// during the reset process isn't possible. It's not
+			// during the reset process is not possible. It is not
 			// clear if we ever really want to do that: we will
 			// only crash during reset if 1) there is a bug in the
 			// reset code, or 2) there is some global data that we
 			// cannot reset and which is corrupted. In either case,
-			// re-reseting the same way won't make the situation
+			// re-reseting the same way will not make the situation
 			// better.
 			DebugErrorHandler::log("The network thread crashed while "
 			                       "restarting. This may be unrecoverable.");
@@ -79,13 +114,15 @@ extern "C" void reset_network_stack_state()
 
 	DebugErrorHandler::log("Reset-ing the network stack.");
 
-	// If someone is holding the lock, wait for them to release it. We know
-	// that they will release it because they will 1) either exit the
-	// critical section or 2) crash into it, in which case we (the error
-	// handler) will manually unlock it - see above.
+	// We need to acquire the sealed sockets lock because we do not want
+	// the sealed sockets list to be in an inconsistent state when we go
+	// over it.
 	//
-	// We need to acquire the lock because we do not want the sealed
-	// sockets list to be in an inconsistent state when we go over it.
+	// Waiting to acquire the lock is fine, as we know that any thread
+	// which holds the it will eventually release it, either 1) exiting the
+	// critical section, or 2) crashing into it, in which case we (the
+	// error handler) will manually unlock it (see manual unlock above).
+	DebugErrorHandler::log("Acquiring the sealed sockets lock.");
 	sealedSocketsListLock.lock();
 
 	DebugErrorHandler::log(
@@ -135,38 +172,34 @@ extern "C" void reset_network_stack_state()
 		  err);
 	}
 
-	// Threads may also be waiting on the allocator in an out-of-memory
-	// situation. Do a first `heap_free_all` to unblock them. We will do
-	// another one later to ensure that everything is cleaned up if threads
-	// allocate memory again before terminating.
-	//
-	// Note that socket memory will not be freed because sockets are
-	// allocated with user-passed capabilities which we do not store.
-	DebugErrorHandler::log("Unblocking threads waiting on the allocator.");
-	// Global heap capability.
-	heap_free_all(MALLOC_CAPABILITY);
-	// Buffer manager capability. If the buffer manager is using the global
-	// heap capability, this will do nothing.
-	free_buffer_manager_memory();
-
-	DebugErrorHandler::log("Waiting for all threads to exit.");
-
 	// Wait for all user threads to exit.
+	// TODO Here, we can experiment with `switcher_interrupt_thread` to get
+	// threads to die faster.
+	DebugErrorHandler::log("Waiting for all threads to exit.");
 	while (userThreadCount.load() != 0)
 	{
-		// TODO here, we can experiment with
-		// `switcher_interrupt_thread` to get threads to die faster
 		DebugErrorHandler::log("Waiting for {} user thread(s) to terminate.",
 		                       userThreadCount.load());
+
+		// Threads may also be waiting on the allocator in an
+		// out-of-memory situation. Do a `heap_free_all` to unblock
+		// them. We must do this in the loop body in case threads
+		// re-enter OOM multiple times.
+		//
+		// We will do another free at the end of the reset to ensure
+		// that everything is cleaned up in case threads allocate
+		// memory again before terminating.
+		free_compartment_memory();
+
 		Timeout t{1};
 		thread_sleep(&t);
 	}
 
-	// Wait for the IP thread to exit (unless this error handler is running
-	// from the IP thread)
+	// Wait for the IP thread to reset (unless this error handler is
+	// running from the IP thread).
 	if (isUserThread)
 	{
-		DebugErrorHandler::log("Waiting for the IP thread to terminate.");
+		DebugErrorHandler::log("Waiting for the IP thread to reset.");
 		// We will only manage to lock this when the IP thread releases
 		// the lock, which will happen when it re-enters its
 		// initialization phase.
@@ -179,19 +212,20 @@ extern "C" void reset_network_stack_state()
 	// At this point all user threads have exited the TCP/IP stack
 	// compartment and the network thread context has been reinstalled.
 	DebugErrorHandler::Assert(userThreadCount.load() == 0,
-	                          "All user threads should be terminated.");
+	                          "All user threads should be terminated by now.");
 
 	// Free heap memory.  We must do this *again*, because threads may have
 	// allocated memory since the previous calls to `heap_free_all`.
 	DebugErrorHandler::log("Freeing heap memory.");
-	heap_free_all(MALLOC_CAPABILITY);
-	free_buffer_manager_memory();
+	free_compartment_memory();
 
-	// Update the socket epoch.
+	// Update the socket epoch. We want to do this after all threads have
+	// terminated in case some threads were allocating new sockets during
+	// the restart.
 	currentSocketEpoch++;
 
 	// Re-initialize the critical section locks we updated for destruction
-	// earlier
+	// earlier.
 	__CriticalSectionFlagLock.lock.lockWord = 0;
 	__CriticalSectionFlagLock.depth         = 0;
 	__SuspendFlagLock.lock.lockWord         = 0;
