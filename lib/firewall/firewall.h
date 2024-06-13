@@ -12,9 +12,13 @@ bool __cheri_compartment("Firewall")
   ethernet_send_frame(uint8_t *packet, size_t length);
 
 /**
- * Start the Firewall driver.  This returns true if the driver is successfully
- * started, false otherwise.  This should fail only if the driver is already
- * initialised.
+ * Start the Firewall driver.
+ *
+ * `state` should point to the reset state of the TCP/IP stack.
+ *
+ * This returns true if the driver is successfully started, false otherwise.
+ * This should fail only if the driver is already initialised (outside of a
+ * reset), or if `state` is invalid.
  */
 bool __cheri_compartment("Firewall") ethernet_driver_start(std::atomic<uint32_t> *state);
 

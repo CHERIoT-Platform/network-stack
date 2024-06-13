@@ -25,11 +25,11 @@ void ip_thread_start(void);
  *
  * Note (which also applies to `threadEntryGuard` and `isRestart`): ultimately
  * we should move these to a separate "network stack TCB" compartment to be
- * able to reset all the state of this compartment unconditionally, with simple
- * operations like re-zeroing the BSS.
+ * able to reset all the state of this compartment unconditionally by
+ * re-zeroing the BSS and resetting .data from snapshots.
  *
- * Note 2: we *cannot* make this immutable through a read-only capability,
- * since we cannot heap-allocate it (as it must survive a reset).
+ * We *cannot* make this immutable through a read-only capability, since we
+ * cannot heap-allocate it (it must survive a reset).
  */
 static UDPPacketHeader_t defaultUDPPacketHeaderCopy;
 
@@ -74,8 +74,8 @@ void ip_thread_start(void)
  * Cleanup to perform when restarting the network stack, including resetting
  * global state.
  *
- * This must be here because most of this state is static (we can edit them
- * here through the evil "include C files" hack above.
+ * This must be here as most of this state is static (we can edit them here
+ * through the evil "include C files" hack above).
  *
  * This global state was identified by going through all entries of the .bss
  * and .data sections of this compartment. This *will* break if new FreeRTOS
