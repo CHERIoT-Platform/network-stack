@@ -12,6 +12,7 @@
 #include <vector>
 
 using DebugErrorHandler = ConditionalDebug<true, "TCP/IP Stack error handler">;
+using CHERI::Capability;
 
 // Global state to update as part of the reset.
 extern std::atomic<uint32_t> currentSocketEpoch;
@@ -132,6 +133,7 @@ extern "C" void reset_network_stack_state()
 	// Upgrade socket locks for destruction and destroy event groups to
 	// ensure that threads waiting on them exit the compartment. We will
 	// empty the list later.
+	// TODO here we may want to check if the ring is well-formed
 	DebugErrorHandler::log(
 	  "Setting socket locks for destruction and destroying event groups.");
 	if (!sealedSockets.is_empty())
@@ -142,17 +144,34 @@ extern "C" void reset_network_stack_state()
 			struct SealedSocket *socket = SealedSocket::from_ring(cell);
 
 			FlagLockPriorityInherited *lock = &(socket->socketLock);
-			DebugErrorHandler::log("Destroying lock {}", lock);
-			lock->upgrade_for_destruction();
+			if (Capability{lock}.is_valid())
+			{
+				DebugErrorHandler::log("Destroying lock {}.", lock);
+				lock->upgrade_for_destruction();
+			}
+			else
+			{
+				DebugErrorHandler::log("Ignoring corrupted lock {}.", lock);
+			}
 
 			FreeRTOS_Socket_t *s = socket->socket;
-			DebugErrorHandler::log("Destroying event group {}", s->xEventGroup);
-			eventgroup_destroy_force(MALLOC_CAPABILITY, s->xEventGroup);
+			if (Capability{s}.is_valid() &&
+			    Capability{s->xEventGroup}.is_valid())
+			{
+				DebugErrorHandler::log("Destroying event group {}.",
+				                       s->xEventGroup);
+				eventgroup_destroy_force(MALLOC_CAPABILITY, s->xEventGroup);
+			}
+			else
+			{
+				DebugErrorHandler::log("Ignoring corrupted socket {}.", s);
+			}
 
 			cell = cell->cell_next();
 		}
 	}
 
+	DebugErrorHandler::log("Resetting the sealed sockets list.");
 	sealedSockets.reset();
 
 	// Upgrade the two critical section locks for destruction
@@ -259,9 +278,9 @@ compartment_error_handler(ErrorState *frame, size_t mcause, size_t mtval)
 		// 2) faulting register is CRA
 		// 3) value of CRA is NULL
 		// 4) we've reached the top of the thread's stack
-		CHERI::Capability stackCapability{
+		Capability stackCapability{
 		  frame->get_register_value<CHERI::RegisterNumber::CSP>()};
-		CHERI::Capability returnCapability{
+		Capability returnCapability{
 		  frame->get_register_value<CHERI::RegisterNumber::CRA>()};
 		if (registerNumber == CHERI::RegisterNumber::CRA &&
 		    returnCapability.address() == 0 &&
@@ -308,7 +327,7 @@ compartment_error_handler(ErrorState *frame, size_t mcause, size_t mtval)
 			if (threadID == networkThreadID)
 			{
 				// Reset the stack pointer to the top of the stack.
-				CHERI::Capability<void *> stack{
+				Capability<void *> stack{
 				  frame->get_register_value(CHERI::RegisterNumber::CSP)};
 				DebugErrorHandler::log("Resetting the stack from {} -> {}.",
 				                       stack.address(),
@@ -338,7 +357,7 @@ compartment_error_handler(ErrorState *frame, size_t mcause, size_t mtval)
 		                       mcause,
 		                       frame->pcc,
 		                       threadID);
-		CHERI::Capability<void *> stack{
+		Capability<void *> stack{
 		  frame->get_register_value(CHERI::RegisterNumber::CSP)};
 		DebugErrorHandler::log("Stack length is {}.", stack.length());
 	}

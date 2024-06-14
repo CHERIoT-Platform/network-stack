@@ -22,7 +22,7 @@ enum [[clang::flag_enum]] RestartState{
   DriverKicked   = 4,
 };
 
-using ChunkFreeLink = ds::linked_list::cell::PtrAddr;
+using ChunkFreeLink = ds::linked_list::cell::Pointer;
 
 /**
  * The sealed wrapper around a FreeRTOS socket.

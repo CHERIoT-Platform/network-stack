@@ -545,6 +545,7 @@ SObj network_socket_create_and_bind(Timeout       *timeout,
 		  if (LockGuard g{sealedSocketsListLock, timeout})
 		  {
 			  // Add the socket to the sealed socket reset list.
+			  socketWrapper->ring.cell_reset();
 			  sealedSockets.append(&(socketWrapper->ring));
 
 			  freertos_sockaddr localAddress;
