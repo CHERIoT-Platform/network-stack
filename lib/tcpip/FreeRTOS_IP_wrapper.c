@@ -91,15 +91,6 @@ void ip_cleanup(void)
 
 	xIPTaskInitialised = 0;
 
-	// Set to != 0 when a network down event is pending, needs reset.
-	xNetworkDownEventPending = 0;
-
-	// Not sure if we need to reset this.
-	xProcessedTCPMessage = 0;
-
-	// Count of users to the DHCP socket, we need to reset
-	xDHCPSocketUserCount = 0;
-
 	// Timers to reset
 	memset(&xARPTimer, 0, sizeof(xARPTimer));
 	memset(&xARPResolutionTimer, 0, sizeof(xARPResolutionTimer));
@@ -113,7 +104,7 @@ void ip_cleanup(void)
 	memset(&xBoundUDPSocketsList, 0, sizeof(xBoundUDPSocketsList));
 	memset(&xDHCPv4Socket, 0, sizeof(xDHCPv4Socket));
 
-	// Other buffer (pointers) stored in globals, which we must reset.
+	// Other globals which we must reset.
 	xNetworkEventQueue        = NULL;
 	pxARPWaitingNetworkBuffer = NULL;
 	memset(&xSegmentList, 0, sizeof(xSegmentList));
@@ -122,6 +113,9 @@ void ip_cleanup(void)
 	pxARPWaitingNetworkBuffer = NULL;
 	memset(&xARPCache, 0, sizeof(xARPCache));
 	memset(&xDNSCache, 0, sizeof(xDNSCache));
+	xNetworkDownEventPending = 0;
+	xProcessedTCPMessage = 0;
+	xDHCPSocketUserCount = 0;
 
 	/// Reset data from `.data`
 
@@ -135,6 +129,7 @@ void ip_cleanup(void)
 
 void __cheri_compartment("TCPIP") ip_thread_entry(void)
 {
+	FreeRTOS_printf(("ip_thread_entry\n"));
 	if (isRestart == 0)
 	{
 		// Make a backup of the default UDP header to reset it later.
@@ -150,8 +145,6 @@ void __cheri_compartment("TCPIP") ip_thread_entry(void)
 		// After the initial start, all further invokations of this
 		// function or iterations of this loop are restarts.
 		isRestart = 1;
-
-		FreeRTOS_printf(("ip_thread_entry\n"));
 
 		while (threadEntryGuard == 0)
 		{

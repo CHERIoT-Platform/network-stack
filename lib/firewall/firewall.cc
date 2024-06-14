@@ -70,8 +70,7 @@ namespace
 	std::atomic<uint32_t> barrier;
 
 	/**
-	 * This points to the reset state of the TCP/IP stack and is used to
-	 * synchronize with the TCP/IP stack during resets.
+	 * This is used to synchronize with the TCP/IP stack during resets.
 	 */
 	std::atomic<uint32_t> *TCPIPRestartState = nullptr;
 
