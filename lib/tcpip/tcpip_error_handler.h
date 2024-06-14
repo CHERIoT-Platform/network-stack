@@ -127,7 +127,7 @@ extern "C" void reset_network_stack_state()
 	sealedSocketsListLock.lock();
 
 	DebugErrorHandler::log(
-	  "Setting the sealed socket list lock for destruction.");
+	  "Setting the sealed sockets list lock for destruction.");
 	sealedSocketsListLock.upgrade_for_destruction();
 
 	// Upgrade socket locks for destruction and destroy event groups to
@@ -146,12 +146,13 @@ extern "C" void reset_network_stack_state()
 			FlagLockPriorityInherited *lock = &(socket->socketLock);
 			if (Capability{lock}.is_valid())
 			{
-				DebugErrorHandler::log("Destroying lock {}.", lock);
+				DebugErrorHandler::log("Destroying socket lock {}.", lock);
 				lock->upgrade_for_destruction();
 			}
 			else
 			{
-				DebugErrorHandler::log("Ignoring corrupted lock {}.", lock);
+				DebugErrorHandler::log("Ignoring corrupted socket lock {}.",
+				                       lock);
 			}
 
 			FreeRTOS_Socket_t *s = socket->socket;
@@ -243,12 +244,12 @@ extern "C" void reset_network_stack_state()
 	// the restart.
 	currentSocketEpoch++;
 
-	// Re-initialize the critical section locks we updated for destruction
-	// earlier.
+	// Re-initialize the locks we updated for destruction earlier.
 	__CriticalSectionFlagLock.lock.lockWord = 0;
 	__CriticalSectionFlagLock.depth         = 0;
 	__SuspendFlagLock.lock.lockWord         = 0;
 	__SuspendFlagLock.depth                 = 0;
+	memset(&sealedSocketsListLock, 0, sizeof(FlagLockPriorityInherited));
 
 	// Restart the network stack. This resets the startup state before
 	// calling `network_start`.
