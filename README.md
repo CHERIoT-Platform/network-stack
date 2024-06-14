@@ -76,12 +76,11 @@ graph TD
 ```
 
 The TCP/IP stack is a large compartment with a lot of state.
-It is fault-tolerant: when an error is triggered (CHERI spatial or temporal safety fault, assertion), the TCP/IP stack is automatically reset to a pristine state and restarted.
-We expand on this capability [below](#automatic-restart-of-the-tcp-ip-stack).
+It is fault-tolerant: when an error is triggered (CHERI spatial or temporal safety fault, assertion), the compartment is automatically reset to a pristine state and restarted.
+We expand on this capability [below](#automatic-restart-of-the-tcpip-stack).
 
 Unlike the TCP/IP stack, the TLS compartment is almost completely stateless.
-This gives strong flow isolation properties: Even if an attacker compromises the TLS compartment by sending malicious data over one connection that triggers a bug in BearSSL (unlikely), it is extraordinarily difficult for them to interfere with any other TLS connection.
-And if the TLS compartment crashes, the reset is trivial.
+This makes resetting the compartment trivial, and gives strong flow isolation properties: Even if an attacker compromises the TLS compartment by sending malicious data over one connection that triggers a bug in BearSSL (unlikely), it is extraordinarily difficult for them to interfere with any other TLS connection.
 
 Similarly, the firewall is controlled by the Network API compartment.
 The TCP/IP stack has no access to the control-plane interface for the compartment.
@@ -229,18 +228,18 @@ Now that you know that the SNTP compartment is the only one that can send and re
 If you've modified the SNTP compartment to point to your NTP service and use its authentication credentials, then this should be different.
 This can all be part of your firmware's auditing policy.
 
-Automatic Restart of the TCP/IP stack
+Automatic restart of the TCP/IP stack
 -------------------------------------
 
 We designed the TCP/IP stack to automatically and transparently restart on failure (e.g., a CHERI fault or an assertion).
 The restart procedure broadly works like this (simplified for didactic reasons):
 
-- The error handler of the TCP/IP compartment is triggered and starts the reset procedure.
-- It first sets a flag to prevent any new thread from entering the compartment.
-- Then, it sets all synchronization primitives of the compartment (locks, futexes) for destruction. This wakes up any sleeping thread present in the compartment, and prevents them from blocking again.
-- Then, it waits for all threads present in the compartment (apart from the FreeRTOS network thread) to exit, either through normal control-flow, or by crashing.
-- Finally, it frees all the memory of the compartment, resets all global state, and calls the start function of the network stack, which resets the TCP/IP stack into a pristine working state.
-- Any further call to the socket API (apart from `network_socket_close`) will be detected through a socket epoch, and will fail with `-ENOTCONN`. This pushes callers to close the sockets and create new ones associated with the new instance of the TCP/IP stack.
+1. The error handler of the TCP/IP compartment is triggered and starts the reset procedure.
+2. It first sets a flag to prevent any new thread from entering the compartment.
+3. Then, it sets all synchronization primitives of the compartment (locks, futexes) for destruction. This wakes up sleeping threads present in the compartment, and prevents them from blocking again.
+4. Then, it waits for all threads present in the compartment (apart from the FreeRTOS network thread) to exit, either through normal control-flow, or by crashing.
+5. Finally, it frees all the memory of the compartment, resets all global state, and calls the start function of the network stack, which restarts the TCP/IP stack into a pristine working state.
+6. After the reset, any further call to the socket API (apart from `network_socket_close`) with an old socket from the previous instance of the network stack will be detected and failed with an `-ENOTCONN` code. This pushes callers to close the sockets and create new ones with the new instance of the TCP/IP stack.
 
 The implementation details of the reset slightly deviate from this description.
 See the technical documentation in `tcpip_error_handler.h` for a full perspective.
