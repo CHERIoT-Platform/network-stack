@@ -85,8 +85,6 @@ void ip_thread_start(void)
  */
 void ip_cleanup(void)
 {
-	flaglock_unlock(&ipThreadLockState);
-
 	/// Reset data from `.bss`
 
 	xIPTaskInitialised = 0;
@@ -169,10 +167,13 @@ void __cheri_compartment("TCPIP") ip_thread_entry(void)
 		xIPTaskHandle = networkThreadID;
 		FreeRTOS_printf(
 		  ("ip_thread_entry starting, thread ID is %p\n", xIPTaskHandle));
+
 		flaglock_priority_inheriting_lock(&ipThreadLockState);
 
 		// FreeRTOS event loop. This will only return if a user thread
 		// crashed.
 		prvIPTask(NULL);
+
+		flaglock_unlock(&ipThreadLockState);
 	}
 }
