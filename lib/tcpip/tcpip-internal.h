@@ -28,7 +28,7 @@ using ChunkFreeLink = ds::linked_list::cell::Pointer;
  * The sealed wrapper around a FreeRTOS socket.
  *
  * These sealed wrappers are part of a doubly linked list which is used by the
- * compartment reset code to reset locks, etc. TODO more documentation here.
+ * compartment reset code to reset locks and other per-socket structures.
  */
 struct SealedSocket
 {
@@ -47,9 +47,13 @@ struct SealedSocket
 	 * use case.
 	 */
 	FreeRTOS_Socket_t *socket;
+	/**
+	 * Link into the sealed sockets doubly-linked list.
+	 */
 	ChunkFreeLink      ring __attribute__((__cheri_no_subobject_bounds__)) = {};
 	/**
-	 * Container-of for the above field.
+	 * Container-of for the above field. This is used to retrieve the
+	 * corresponding sealed socket from a list element.
 	 */
 	__always_inline static struct SealedSocket *from_ring(ChunkFreeLink *c)
 	{
