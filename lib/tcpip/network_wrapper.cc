@@ -29,8 +29,10 @@ extern "C" int ipFOREVER(void)
 {
 	// We must interrupt the loop if a reset is ongoing (`Restarting`).
 	// However, we must still allow the loop to run during the early stages
-	// of a reset (`IpThreadKicked`).
-	uint32_t state = restartState.load();
+	// of a reset (`IpThreadKicked`). Note that it is absolutely fine if
+	// the state changes after the check, as we will detect that change in
+	// the next loop iteration.
+	uint8_t state = restartState.load();
 	return (state == 0) || ((state & IpThreadKicked) != 0);
 }
 
@@ -38,7 +40,7 @@ extern "C" int ipFOREVER(void)
  * State machine of the restart process. Used for synchronization across the
  * TCP/IP stack and with the firewall.
  */
-std::atomic<uint32_t> restartState = 0;
+std::atomic<uint8_t> restartState = 0;
 
 /**
  * Keep track of the total number of user threads live in the network stack.

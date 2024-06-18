@@ -72,7 +72,7 @@ namespace
 	/**
 	 * This is used to synchronize with the TCP/IP stack during resets.
 	 */
-	std::atomic<uint32_t> *TCPIPRestartState = nullptr;
+	std::atomic<uint8_t> *TCPIPRestartState = nullptr;
 
 	auto &lazy_network_interface()
 	{
@@ -505,7 +505,8 @@ namespace
 	bool packet_filter_ingress(const uint8_t *data, size_t length)
 	{
 		uint32_t stateSnapshot = TCPIPRestartState->load();
-		if (stateSnapshot != 0 && ((stateSnapshot & RestartStateDriverKickedBit) == 0))
+		if (stateSnapshot != 0 &&
+		    ((stateSnapshot & RestartStateDriverKickedBit) == 0))
 		{
 			// We are in a reset and the driver has not yet been
 			// restarted.
@@ -750,7 +751,7 @@ void firewall_remove_udpipv6_remote_endpoint(uint8_t *remoteAddress,
 	}
 }
 
-bool ethernet_driver_start(std::atomic<uint32_t> *state)
+bool ethernet_driver_start(std::atomic<uint8_t> *state)
 {
 	if (TCPIPRestartState == nullptr)
 	{

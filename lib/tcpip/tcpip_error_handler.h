@@ -91,7 +91,7 @@ extern "C" void reset_network_stack_state()
 	// 2. ensure that no thread enters the compartment while we are
 	//    restarting
 	// 3. reset the network thread whenever it wakes up
-	uint32_t expected = NotRestarting;
+	uint8_t expected = NotRestarting;
 	if (!restartState.compare_exchange_strong(expected, Restarting))
 	{
 		// `expected` now contains a snapshot of `restartState`.

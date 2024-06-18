@@ -67,7 +67,7 @@ struct SealedSocket
 
 extern FlagLockPriorityInherited                 sealedSocketsListLock;
 extern ds::linked_list::Sentinel<SocketRingLink> sealedSockets;
-extern std::atomic<uint32_t>                     restartState;
+extern std::atomic<uint8_t>                      restartState;
 extern std::atomic<uint8_t>                      userThreadCount;
 
 /**

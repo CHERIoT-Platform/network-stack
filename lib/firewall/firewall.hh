@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: MIT
 
 #pragma once
-#include <compartment.h>
 #include <atomic>
+#include <compartment.h>
 
 /**
  * Send a frame through the on-device firewall.  This returns true if the
@@ -21,7 +21,8 @@ bool __cheri_compartment("Firewall")
  * This should fail only if the driver is already initialised (outside of a
  * reset), or if `state` is invalid.
  */
-bool __cheri_compartment("Firewall") ethernet_driver_start(std::atomic<uint32_t> *state);
+bool __cheri_compartment("Firewall")
+  ethernet_driver_start(std::atomic<uint8_t> *state);
 
 /**
  * Bit of the `state` atomic variable passed to `ethernet_driver_start` which
