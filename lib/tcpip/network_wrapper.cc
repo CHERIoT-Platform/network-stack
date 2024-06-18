@@ -62,8 +62,8 @@ std::atomic<uint32_t> currentSocketEpoch = 0;
  *
  * This *will* be reset by the error handler, however it *is* reset-critical.
  */
-ds::linked_list::Sentinel<ChunkFreeLink> sealedSockets;
-FlagLockPriorityInherited                sealedSocketsListLock;
+ds::linked_list::Sentinel<SocketRingLink> sealedSockets;
+FlagLockPriorityInherited                 sealedSocketsListLock;
 
 using CHERI::Capability;
 using CHERI::check_pointer;

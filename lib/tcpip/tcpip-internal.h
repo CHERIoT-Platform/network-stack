@@ -2,10 +2,10 @@
 // SPDX-License-Identifier: MIT
 
 #pragma once
+#include "../firewall/firewall.hh"
 #include <FreeRTOS_IP.h>
 #include <ds/linked_list.h>
 #include <locks.hh>
-#include "../firewall/firewall.hh"
 
 /**
  * Internal helpers and data structures for use inside of the TCP/IP
@@ -25,7 +25,7 @@ enum [[clang::flag_enum]] RestartState{
 
 static_assert(RestartStateDriverKickedBit == DriverKicked);
 
-using ChunkFreeLink = ds::linked_list::cell::Pointer;
+using SocketRingLink = ds::linked_list::cell::Pointer;
 
 /**
  * The sealed wrapper around a FreeRTOS socket.
@@ -53,22 +53,22 @@ struct SealedSocket
 	/**
 	 * Link into the sealed sockets doubly-linked list.
 	 */
-	ChunkFreeLink      ring __attribute__((__cheri_no_subobject_bounds__)) = {};
+	SocketRingLink ring __attribute__((__cheri_no_subobject_bounds__)) = {};
 	/**
 	 * Container-of for the above field. This is used to retrieve the
 	 * corresponding sealed socket from a list element.
 	 */
-	__always_inline static struct SealedSocket *from_ring(ChunkFreeLink *c)
+	__always_inline static struct SealedSocket *from_ring(SocketRingLink *c)
 	{
 		return reinterpret_cast<struct SealedSocket *>(
 		  reinterpret_cast<uintptr_t>(c) - offsetof(struct SealedSocket, ring));
 	}
 };
 
-extern FlagLockPriorityInherited                sealedSocketsListLock;
-extern ds::linked_list::Sentinel<ChunkFreeLink> sealedSockets;
-extern std::atomic<uint32_t>                    restartState;
-extern std::atomic<uint8_t>                     userThreadCount;
+extern FlagLockPriorityInherited                 sealedSocketsListLock;
+extern ds::linked_list::Sentinel<SocketRingLink> sealedSockets;
+extern std::atomic<uint32_t>                     restartState;
+extern std::atomic<uint8_t>                      userThreadCount;
 
 /**
  * Helper to run a function ensuring that the thread counters are updated
