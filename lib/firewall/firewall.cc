@@ -504,12 +504,8 @@ namespace
 
 	bool packet_filter_ingress(const uint8_t *data, size_t length)
 	{
-		// This should match the `DriverKicked` bit of enum
-		// `RestartState` (see `tcpip-internal.h`).
-		constexpr uint32_t DriverKickedBit = 0x4;
-
 		uint32_t stateSnapshot = TCPIPRestartState->load();
-		if (stateSnapshot != 0 && ((stateSnapshot & DriverKickedBit) == 0))
+		if (stateSnapshot != 0 && ((stateSnapshot & RestartStateDriverKickedBit) == 0))
 		{
 			// We are in a reset and the driver has not yet been
 			// restarted.

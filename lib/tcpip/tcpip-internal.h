@@ -5,6 +5,7 @@
 #include <FreeRTOS_IP.h>
 #include <ds/linked_list.h>
 #include <locks.hh>
+#include "../firewall/firewall.h"
 
 /**
  * Internal helpers and data structures for use inside of the TCP/IP
@@ -21,6 +22,8 @@ enum [[clang::flag_enum]] RestartState{
   IpThreadKicked = 2,
   DriverKicked   = 4,
 };
+
+static_assert(RestartStateDriverKickedBit == DriverKicked);
 
 using ChunkFreeLink = ds::linked_list::cell::Pointer;
 

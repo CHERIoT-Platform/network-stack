@@ -1,6 +1,7 @@
 // Copyright SCI Semiconductor and CHERIoT Contributors.
 // SPDX-License-Identifier: MIT
 
+#pragma once
 #include <compartment.h>
 #include <atomic>
 
@@ -21,6 +22,15 @@ bool __cheri_compartment("Firewall")
  * reset), or if `state` is invalid.
  */
 bool __cheri_compartment("Firewall") ethernet_driver_start(std::atomic<uint32_t> *state);
+
+/**
+ * Bit of the `state` atomic variable passed to `ethernet_driver_start` which
+ * indicates that the driver may send packets to the network stack.
+ *
+ * This must match the `DriverKicked` bit of enum `RestartState` (see
+ * `tcpip-internal.h`). This is statically asserted in the TCP/IP stack.
+ */
+static constexpr uint32_t RestartStateDriverKickedBit = 0x4;
 
 /**
  * Query the link status of the Firewall driver.  This returns true if the link
