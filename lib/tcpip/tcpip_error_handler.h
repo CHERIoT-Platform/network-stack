@@ -94,7 +94,8 @@ extern "C" void reset_network_stack_state()
 	uint32_t expected = NotRestarting;
 	if (!restartState.compare_exchange_strong(expected, Restarting))
 	{
-		if (isIpThread && ((restartState.load() & IpThreadKicked) != 0))
+		// `expected` now contains a snapshot of `restartState`.
+		if (isIpThread && ((expected & IpThreadKicked) != 0))
 		{
 			// Currently recovering from a crash that happens
 			// during the reset process is not possible. It is not
