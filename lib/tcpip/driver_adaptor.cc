@@ -12,7 +12,7 @@
 #include <platform-ethernet.hh>
 #include <timeout.h>
 
-#include "../firewall/firewall.h"
+#include "../firewall/firewall.hh"
 #include "tcpip-internal.h"
 
 // FreeRTOS APIs

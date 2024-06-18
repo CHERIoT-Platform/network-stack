@@ -5,7 +5,7 @@
 #include <FreeRTOS_IP.h>
 #include <ds/linked_list.h>
 #include <locks.hh>
-#include "../firewall/firewall.h"
+#include "../firewall/firewall.hh"
 
 /**
  * Internal helpers and data structures for use inside of the TCP/IP

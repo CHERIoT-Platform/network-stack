@@ -36,7 +36,7 @@ static constexpr uint32_t RestartStateDriverKickedBit = 0x4;
  * Query the link status of the Firewall driver.  This returns true if the link
  * is up, false otherwise.
  */
-bool __cheri_compartment("Firewall") ethernet_link_is_up(void);
+bool __cheri_compartment("Firewall") ethernet_link_is_up();
 
 /**
  * Receive a frame from the Firewall device via the on-device firewall.
@@ -57,7 +57,7 @@ void __cheri_compartment("Firewall") firewall_dns_server_ip_set(uint32_t ip);
  * This should be called only by the NetAPI compartment.
  */
 void __cheri_compartment("Firewall")
-  firewall_permit_dns(bool dnsIsPermitted __if_cxx(= true));
+  firewall_permit_dns(bool dnsIsPermitted = true);
 
 /**
  * Open a hole in the firewall for TCP packets to and from the given endpoint.

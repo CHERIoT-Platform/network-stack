@@ -6,7 +6,7 @@
 #include <FreeRTOS_ND.h>
 #include <tcpip_error_handler.h>
 
-#include "../firewall/firewall.h"
+#include "../firewall/firewall.hh"
 #include "network-internal.h"
 #include "tcpip-internal.h"
 
