@@ -7,6 +7,7 @@
 #include <tcpip_error_handler.h>
 
 #include "../firewall/firewall.hh"
+#include "checksum-internal.h"
 #include "network-internal.h"
 #include "tcpip-internal.h"
 
@@ -471,6 +472,40 @@ namespace
 		return ret;
 	}
 } // namespace
+
+uint16_t network_calculate_ipv4_checksum(const uint8_t *ipv4Header,
+                                         size_t         headerLength)
+{
+	// Note: no restarting checks because stateless.
+
+	// `usGenerateChecksum` returns a checksum which is 1) not negated (we
+	// must bitwise NOT it) and 2) in host byte order.
+	return htons(~usGenerateChecksum(
+	  0 /* generate checksum for the full packet */, ipv4Header, headerLength));
+}
+
+uint16_t network_calculate_tcp_checksum(const uint8_t *frame,
+                                        size_t         frameLength,
+                                        size_t         tcpChecksumOffset)
+{
+	// Note: no restarting checks because stateless.
+
+	// `usGenerateProtocolChecksum` *writes* the checksum into the packet
+	// buffer. It is not possible to have it return the checksum instead of
+	// modifying the buffer. This is really annoying because we only have a
+	// read-only capability to the frame, as we want to *return* the
+	// checksum.
+	//
+	// To workaround this, make a local copy of the Ethernet frame and
+	// extract the computed checksum from it using `tcpChecksumOffset`.
+	// Putting this copy on the stack should be fine since this is only
+	// used in RST packets which have no payload.
+	uint8_t copy[frameLength];
+	memcpy(copy, frame, frameLength);
+	uint16_t *checksum = reinterpret_cast<uint16_t *>(&copy[tcpChecksumOffset]);
+	usGenerateProtocolChecksum(copy, frameLength, true /* write checksum */);
+	return *checksum;
+}
 
 int network_host_resolve(const char     *hostname,
                          bool            useIPv6,
