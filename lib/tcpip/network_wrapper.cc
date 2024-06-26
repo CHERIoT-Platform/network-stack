@@ -81,7 +81,7 @@ ds::linked_list::Sentinel<SocketRingLink> sealedSockets;
 /**
  * Synchronize accesses to the sealed sockets list above.
  */
-FlagLockPriorityInherited                 sealedSocketsListLock;
+FlagLockPriorityInherited sealedSocketsListLock;
 
 using CHERI::Capability;
 using CHERI::check_pointer;
@@ -121,13 +121,24 @@ namespace
 	}
 
 	/**
-	 * Unseal `sealedSocket` and, if it is sealed with the correct type, pass
-	 * it to `operation`.  If the unsealing fails, return `-EINVAL`.  This is a
-	 * helper function used for operations on sockets.
+	 * Unseal `sealedSocket` and, if it is sealed with the correct type,
+	 * pass it to `operation`. This is a helper function used for
+	 * operations on sockets.
+	 *
+	 * This function will return a negative code on error:
+	 *
+	 * `-EINVAL` if the unsealing fails;
+	 *
+	 * `-EAGAIN` if the network stack is undergoing a reset;
+	 *
+	 * `-ENOTCONN` if the epoch of the socket does not match the current
+	 * epoch of the network stack, and `operation` is not a close
+	 * operation, as specified by `isCloseOperation`. This will happen if
+	 * the socket is coming from a previous instantiation of the network
+	 * stack.
 	 */
-	int with_sealed_socket(bool                 isCloseOperation,
-	                       auto                 operation,
-	                       Sealed<SealedSocket> sealedSocket)
+	template<bool isCloseOperation = false>
+	int with_sealed_socket(auto operation, Sealed<SealedSocket> sealedSocket)
 	{
 		return with_restarting_checks(
 		  [&]() {
@@ -145,7 +156,7 @@ namespace
 				    "(epochs mismatch: socket = {}; current = {}).",
 				    socket->socketEpoch,
 				    currentSocketEpoch.load());
-				  if (!isCloseOperation)
+				  if constexpr (!isCloseOperation)
 				  {
 					  // This should push the caller to free the socket.
 					  return -ENOTCONN;
@@ -169,7 +180,6 @@ namespace
 	                       Sealed<SealedSocket> sealedSocket)
 	{
 		return with_sealed_socket(
-		  false /* not a close operation */,
 		  [&](SealedSocket *socket) {
 			  if (LockGuard g{socket->socketLock, timeout})
 			  {
@@ -610,7 +620,6 @@ int network_socket_connect_tcp_internal(Timeout       *timeout,
                                         short          port)
 {
 	return with_sealed_socket(
-	  false /* not a close operation */,
 	  [&](SealedSocket *socket) {
 		  bool                     isIPv6 = socket->socket->bits.bIsIPv6;
 		  struct freertos_sockaddr server;
@@ -660,8 +669,7 @@ int network_socket_close(Timeout *t, SObj mallocCapability, SObj sealedSocket)
 	{
 		return -EINVAL;
 	}
-	return with_sealed_socket(
-	  true /* we are closing the socket */,
+	return with_sealed_socket<true /* this is a close operation */>(
 	  [=](SealedSocket *socket) {
 		  // We will fail to lock if the socket is coming from
 		  // a previous instance of the network stack as it set
@@ -1108,7 +1116,6 @@ int network_socket_kind(SObj socket, SocketKind *kind)
 		  kind->protocol  = SocketKind::Invalid;
 		  kind->localPort = 0;
 		  int ret         = with_sealed_socket(
-		            false /* not a close operation */,
 		            [&](SealedSocket *socket) {
                 if (socket->socket->ucProtocol == FREERTOS_IPPROTO_TCP)
                 {
