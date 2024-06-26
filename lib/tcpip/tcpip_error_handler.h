@@ -3,6 +3,7 @@
 #include "FreeRTOS_Sockets.h"
 #include "compartment.h"
 #include "tcpip-internal.h"
+#include <BufferManagement.hh>
 #include <atomic>
 #include <cheri.hh>
 #include <debug.hh>
