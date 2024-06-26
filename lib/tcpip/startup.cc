@@ -178,10 +178,12 @@ void __cheri_compartment("TCPIP") network_start()
 	Debug::log("Network stack startup finished");
 }
 
+/**
+ * Call `network_start`, after ensuring that globals are reset to a pristine
+ * state.
+ */
 void network_restart()
 {
-	// Before restarting, ensure that globals are reset to a pristine
-	// state.
 	state = Uninitialised;
 	ip_cleanup();
 	network_start();

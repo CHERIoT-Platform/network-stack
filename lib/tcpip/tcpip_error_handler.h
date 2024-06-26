@@ -15,21 +15,30 @@
 using DebugErrorHandler = ConditionalDebug<true, "TCP/IP Stack error handler">;
 using CHERI::Capability;
 
-// Global state to update as part of the reset.
+/**
+ * Global state to update as part of the reset. These are documented in
+ * `network_wrapper.cc` and `tcpip-internal.h`.
+ */
 extern std::atomic<uint32_t> currentSocketEpoch;
 extern std::atomic<uint8_t>  userThreadCount;
 
-// Locks and futexes to release as part of the reset
+/**
+ * Locks and futexes to release as part of the reset.
+ */
 extern struct FlagLockState       ipThreadLockState;
 extern struct RecursiveMutexState __CriticalSectionFlagLock;
 extern struct RecursiveMutexState __SuspendFlagLock;
 extern QueueHandle_t              xNetworkEventQueue;
 
-// APIs to call as part of the reset
-extern void free_buffer_manager_memory();
+/**
+ * Restart the network stack. See documentation in `startup.cc`
+ */
 extern void network_restart();
 
-/// Thread ID of the network thread.
+/**
+ * Thread ID of the network thread. See documentation in
+ * `FreeRTOS_IP_wrapper.c`.
+ */
 extern uint16_t networkThreadID;
 
 /**
