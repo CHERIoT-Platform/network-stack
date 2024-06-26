@@ -65,9 +65,37 @@ struct SealedSocket
 	}
 };
 
-extern FlagLockPriorityInherited                 sealedSocketsListLock;
+/**
+ * Store pointers to the sealed sockets.
+ *
+ * This is used as part of the network stack reset to clean up sockets and
+ * unblock threads waiting on message queues.
+ *
+ * This will be reset by the error handler, however it *is* reset-critical.
+ */
 extern ds::linked_list::Sentinel<SocketRingLink> sealedSockets;
+
+/**
+ * Synchronize accesses to the sealed sockets list above.
+ */
+extern FlagLockPriorityInherited                 sealedSocketsListLock;
+
+/**
+ * State machine of the restart process. Used for synchronization across the
+ * TCP/IP stack and with the firewall.
+ *
+ * TODO This could be merged together in the upper bits of
+ * `currentSocketEpoch`.
+ */
 extern std::atomic<uint8_t>                      restartState;
+
+/**
+ * Keep track of the total number of user threads live in the network stack.
+ * This is used to ensure that all threads have been adequately terminated when
+ * performing a network stack reset.
+ *
+ * This should not be reset by the error handler and is reset-critical.
+ */
 extern std::atomic<uint8_t>                      userThreadCount;
 
 /**

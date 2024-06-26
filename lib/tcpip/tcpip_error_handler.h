@@ -88,6 +88,14 @@ extern "C" void reset_network_stack_state()
 	// Manually unlock the sealed sockets lock list if it was held.
 	if (sealedSocketsListLock.get_owner_thread_id() == thread_id_get())
 	{
+		// This situation may happen if we crash in
+		// `network_socket_create_and_bind` because we hold the lock
+		// for more than simply editing the list (to simplify error
+		// handling).
+		//
+		// If that is not the case, and we are here because we crashed
+		// while adding to the list, we may not be able to recover
+		// later because the list is reset-critical.
 		DebugErrorHandler::log("The sealed sockets lock was held by the "
 		                       "crashing thread. Forcefully unlocking it.");
 		sealedSocketsListLock.unlock();

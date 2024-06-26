@@ -22,7 +22,7 @@
 using Debug            = ConditionalDebug<false, "Network stack wrapper">;
 constexpr bool UseIPv6 = CHERIOT_RTOS_OPTION_IPv6;
 
-// IP thread global lock. See comment in FreeRTOS_IP_wrapper.c.
+// IP thread global lock. See comment in `FreeRTOS_IP_wrapper.c`.
 extern struct FlagLockState ipThreadLockState;
 
 /**
@@ -43,24 +43,6 @@ extern "C" int ipFOREVER(void)
 }
 
 /**
- * State machine of the restart process. Used for synchronization across the
- * TCP/IP stack and with the firewall.
- *
- * TODO This could be merged together in the upper bits of
- * `currentSocketEpoch`.
- */
-std::atomic<uint8_t> restartState = 0;
-
-/**
- * Keep track of the total number of user threads live in the network stack.
- * This is used to ensure that all threads have been adequately terminated when
- * performing a network stack reset.
- *
- * This should not be reset by the error handler and is reset-critical.
- */
-std::atomic<uint8_t> userThreadCount = 0;
-
-/**
  * Current socket epoch. This is used to detect sockets that belong to a
  * previous instance of the network stack.
  *
@@ -68,19 +50,10 @@ std::atomic<uint8_t> userThreadCount = 0;
  */
 std::atomic<uint32_t> currentSocketEpoch = 0;
 
-/**
- * Store pointers to the sealed sockets.
- *
- * This is used as part of the network stack reset to clean up sockets and
- * unblock threads waiting on message queues.
- *
- * This will be reset by the error handler, however it *is* reset-critical.
- */
+// Network stack reset globals. See comments in `tcpip-internal.h`.
+std::atomic<uint8_t> restartState = 0;
+std::atomic<uint8_t> userThreadCount = 0;
 ds::linked_list::Sentinel<SocketRingLink> sealedSockets;
-
-/**
- * Synchronize accesses to the sealed sockets list above.
- */
 FlagLockPriorityInherited sealedSocketsListLock;
 
 using CHERI::Capability;
