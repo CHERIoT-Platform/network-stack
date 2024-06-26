@@ -51,6 +51,10 @@ __always_inline static inline void free_compartment_memory()
 /**
  * Reset the network stack state.
  *
+ * This is meant to be called by the error handler below. Some of it may be
+ * moved to a normal (non-error-handler context) at a later point - mainly
+ * Phase 3, see comments in the body.
+ *
  * We go through all locks used in the TCP/IP compartment and set them for
  * destruction. The list of synchronization primitives resetted here was
  * extracted through a manual study of the compartment's code-base: this may
@@ -64,6 +68,8 @@ __always_inline static inline void free_compartment_memory()
  */
 extern "C" void reset_network_stack_state()
 {
+	/// Phase 1: Do bookkeeping and determine if we are already in a reset:
+	/// should we do anything at all?
 	const bool isUserThread = thread_id_get() != networkThreadID;
 	const bool isIpThread   = !isUserThread;
 
@@ -115,7 +121,9 @@ extern "C" void reset_network_stack_state()
 		return;
 	}
 
-	DebugErrorHandler::log("Reset-ing the network stack.");
+	/// Phase 2: Unblock and evacuate all threads from the network stack
+	/// (apart from the network thread).
+	DebugErrorHandler::log("Resetting the network stack.");
 
 	// We need to acquire the sealed sockets lock because we do not want
 	// the sealed sockets list to be in an inconsistent state when we go
@@ -125,6 +133,10 @@ extern "C" void reset_network_stack_state()
 	// which holds the it will eventually release it, either 1) exiting the
 	// critical section, or 2) crashing into it, in which case we (the
 	// error handler) will manually unlock it (see manual unlock above).
+	//
+	// FIXME: This is not true if the thread runs out of call stack. This
+	// will be fixed when we allow the error handler to run on stack
+	// overflow.
 	DebugErrorHandler::log("Acquiring the sealed sockets lock.");
 	sealedSocketsListLock.lock();
 
@@ -135,7 +147,9 @@ extern "C" void reset_network_stack_state()
 	// Upgrade socket locks for destruction and destroy event groups to
 	// ensure that threads waiting on them exit the compartment. We will
 	// empty the list later.
-	// TODO here we may want to check if the ring is well-formed
+	//
+	// FIXME This should be made more resilient against corruption of the
+	// linked list by checking all pointers.
 	DebugErrorHandler::log(
 	  "Setting socket locks for destruction and destroying event groups.");
 	if (!sealedSockets.is_empty())
@@ -178,14 +192,12 @@ extern "C" void reset_network_stack_state()
 	sealedSockets.reset();
 
 	// Upgrade the two critical section locks for destruction
-	// TODO document what this will do
 	DebugErrorHandler::log("Upgrading critical sections for destruction.");
 	flaglock_upgrade_for_destruction(&__CriticalSectionFlagLock.lock);
 	flaglock_upgrade_for_destruction(&__SuspendFlagLock.lock);
 
 	// Upgrade the message queue lock for destruction
 	DebugErrorHandler::log("Upgrading the message queue for destruction.");
-	// TODO document what this will do
 	auto *queueHandle = &xNetworkEventQueue->handle;
 	if (int err = queue_destroy(MALLOC_CAPABILITY, queueHandle); err != 0)
 	{
@@ -195,11 +207,12 @@ extern "C" void reset_network_stack_state()
 	}
 
 	// Wait for all user threads to exit.
-	// TODO Here, we can experiment with `switcher_interrupt_thread` to get
-	// threads to die faster.
 	DebugErrorHandler::log("Waiting for all threads to exit.");
 	while (userThreadCount.load() != 0)
 	{
+		// Here, we may also want to experiment with
+		// `switcher_interrupt_thread` to get threads to die faster.
+
 		DebugErrorHandler::log("Waiting for {} user thread(s) to terminate.",
 		                       userThreadCount.load());
 
@@ -230,6 +243,10 @@ extern "C" void reset_network_stack_state()
 		// when we unleash it.
 		flaglock_unlock(&ipThreadLockState);
 	}
+
+	/// Phase 3: Now that only the network thread is present in the
+	/// compartment, reset the network stack into a pristine state. With
+	/// some more work, this may be moved to a non-error-handler context.
 
 	// At this point all user threads have exited the TCP/IP stack
 	// compartment and the network thread context has been reinstalled.

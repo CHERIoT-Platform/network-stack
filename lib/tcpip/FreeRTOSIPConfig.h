@@ -97,5 +97,9 @@
 #define ipconfigALLOW_SOCKET_SEND_WITHOUT_BIND 0
 #define ipconfigUSE_NETWORK_EVENT_HOOK 1
 
-// Necessary to have FreeRTOS+TCP invoke our own `ipFOREVER` function.
+// Necessary to have FreeRTOS+TCP invoke our own `ipFOREVER` function.  As of
+// FreeRTOS+TCP 3.1.0 this only enables external `ipFOREVER`. It would be nice
+// to upstream a patch to have this variable renamed into something specific to
+// `ipFOREVER` to ensure that we do not enable additional undesired options in
+// future releases.
 #define TEST

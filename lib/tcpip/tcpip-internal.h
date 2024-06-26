@@ -88,6 +88,13 @@ auto with_restarting_checks(auto operation, auto errorValue)
 	}
 	userThreadCount++;
 	auto ret = operation();
+	// The decrement will happen in the error handler if the thread
+	// crashes.
+	//
+	// FIXME The decrement will *not* happen when a thread runs out of call
+	// stack in the TCP/IP compartment (because the error handler does not
+	// execute in that case). This will be fixed when we enable the error
+	// handler to run on stack overflow.
 	userThreadCount--;
 	return ret;
 }
