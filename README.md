@@ -246,6 +246,7 @@ See the technical documentation in `tcpip_error_handler.h` for a full perspectiv
 
 Note that the current implementation of the automatic reset makes a few assumptions:
 
+- The TCP/IP stack cannot currently recover from a crash due to a stack overflow in the TCP/IP compartment. This is due to a limitation of the implementation of the switcher, which cannot trigger the error handler on stack overflow. This limitation should be addressed soon.
 - A small set of globals called 'reset-critical' outlive resets and/or are necessary for the reset. We assume that this data has not been corrupted. This data is correspondingly annotated in the source code.
 - The control-flow of threads in the compartment has not been altered.
 

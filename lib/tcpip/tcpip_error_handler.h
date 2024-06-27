@@ -26,7 +26,7 @@ extern std::atomic<uint8_t>  userThreadCount;
  * Global lock acquired by the IP thread at startup time. See documentation in
  * `FreeRTOS_IP_wrapper.c`.
  */
-extern struct FlagLockState       ipThreadLockState;
+extern struct FlagLockState ipThreadLockState;
 
 /**
  * Other locks and futexes to release as part of the reset. These are
@@ -88,10 +88,10 @@ extern "C" void reset_network_stack_state()
 {
 	/// Phase 1: Do bookkeeping and determine if we are already in a reset:
 	/// should we do anything at all?
-	const bool isUserThread = thread_id_get() != networkThreadID;
-	const bool isIpThread   = !isUserThread;
+	const bool IsUserThread = thread_id_get() != networkThreadID;
+	const bool IsIpThread   = !IsUserThread;
 
-	if (isUserThread)
+	if (IsUserThread)
 	{
 		DebugErrorHandler::log(
 		  "User thread TCP/IP stack error handler called!");
@@ -128,7 +128,7 @@ extern "C" void reset_network_stack_state()
 	if (!restartState.compare_exchange_strong(expected, Restarting))
 	{
 		// `expected` now contains a snapshot of `restartState`.
-		if (isIpThread && ((expected & IpThreadKicked) != 0))
+		if (IsIpThread && ((expected & IpThreadKicked) != 0))
 		{
 			// Currently recovering from a crash that happens
 			// during the reset process is not possible. It is not
@@ -266,7 +266,7 @@ extern "C" void reset_network_stack_state()
 
 	// Wait for the IP thread to reset (unless this error handler is
 	// running from the IP thread).
-	if (isUserThread)
+	if (IsUserThread)
 	{
 		DebugErrorHandler::log("Waiting for the IP thread to reset.");
 		// We will only manage to lock this when the IP thread releases

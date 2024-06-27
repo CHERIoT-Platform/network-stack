@@ -112,8 +112,8 @@ void ip_cleanup(void)
 	memset(&xARPCache, 0, sizeof(xARPCache));
 	memset(&xDNSCache, 0, sizeof(xDNSCache));
 	xNetworkDownEventPending = 0;
-	xProcessedTCPMessage = 0;
-	xDHCPSocketUserCount = 0;
+	xProcessedTCPMessage     = 0;
+	xDHCPSocketUserCount     = 0;
 
 	/// Reset data from `.data`
 

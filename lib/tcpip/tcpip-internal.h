@@ -78,7 +78,7 @@ extern ds::linked_list::Sentinel<SocketRingLink> sealedSockets;
 /**
  * Synchronize accesses to the sealed sockets list above.
  */
-extern FlagLockPriorityInherited                 sealedSocketsListLock;
+extern FlagLockPriorityInherited sealedSocketsListLock;
 
 /**
  * State machine of the restart process. Used for synchronization across the
@@ -87,7 +87,7 @@ extern FlagLockPriorityInherited                 sealedSocketsListLock;
  * TODO This could be merged together in the upper bits of
  * `currentSocketEpoch`.
  */
-extern std::atomic<uint8_t>                      restartState;
+extern std::atomic<uint8_t> restartState;
 
 /**
  * Keep track of the total number of user threads live in the network stack.
@@ -96,7 +96,7 @@ extern std::atomic<uint8_t>                      restartState;
  *
  * This should not be reset by the error handler and is reset-critical.
  */
-extern std::atomic<uint8_t>                      userThreadCount;
+extern std::atomic<uint8_t> userThreadCount;
 
 /**
  * Helper to run a function ensuring that the thread counters are updated

@@ -51,10 +51,10 @@ extern "C" int ipFOREVER(void)
 std::atomic<uint32_t> currentSocketEpoch = 0;
 
 // Network stack reset globals. See comments in `tcpip-internal.h`.
-std::atomic<uint8_t> restartState = 0;
-std::atomic<uint8_t> userThreadCount = 0;
+std::atomic<uint8_t>                      restartState    = 0;
+std::atomic<uint8_t>                      userThreadCount = 0;
 ds::linked_list::Sentinel<SocketRingLink> sealedSockets;
-FlagLockPriorityInherited sealedSocketsListLock;
+FlagLockPriorityInherited                 sealedSocketsListLock;
 
 using CHERI::Capability;
 using CHERI::check_pointer;
@@ -106,11 +106,11 @@ namespace
 	 *
 	 * `-ENOTCONN` if the epoch of the socket does not match the current
 	 * epoch of the network stack, and `operation` is not a close
-	 * operation, as specified by `isCloseOperation`. This will happen if
+	 * operation, as specified by `IsCloseOperation`. This will happen if
 	 * the socket is coming from a previous instantiation of the network
 	 * stack.
 	 */
-	template<bool isCloseOperation = false>
+	template<bool IsCloseOperation = false>
 	int with_sealed_socket(auto operation, Sealed<SealedSocket> sealedSocket)
 	{
 		return with_restarting_checks(
@@ -129,7 +129,7 @@ namespace
 				    "(epochs mismatch: socket = {}; current = {}).",
 				    socket->socketEpoch,
 				    currentSocketEpoch.load());
-				  if constexpr (!isCloseOperation)
+				  if constexpr (!IsCloseOperation)
 				  {
 					  // This should push the caller to free the socket.
 					  return -ENOTCONN;
@@ -584,7 +584,7 @@ SObj network_socket_create_and_bind(Timeout       *timeout,
 		  c.release();
 		  return sealedSocket;
 	  },
-	  (SObj) nullptr /* return nullptr if we are restarting */);
+	  static_cast<SObj>(nullptr) /* return nullptr if we are restarting */);
 }
 
 int network_socket_connect_tcp_internal(Timeout       *timeout,
