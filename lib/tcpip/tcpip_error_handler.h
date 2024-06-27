@@ -23,9 +23,17 @@ extern std::atomic<uint32_t> currentSocketEpoch;
 extern std::atomic<uint8_t>  userThreadCount;
 
 /**
- * Locks and futexes to release as part of the reset.
+ * Global lock acquired by the IP thread at startup time. See documentation in
+ * `FreeRTOS_IP_wrapper.c`.
  */
 extern struct FlagLockState       ipThreadLockState;
+
+/**
+ * Other locks and futexes to release as part of the reset. These are
+ * documentated in `sdk/include/FreeRTOS-Compat/task.h` in the main tree
+ * (`__CriticalSectionFlagLock` and `__SuspendFlagLock`) and
+ * `source/FreeRTOS_IP.c` in the FreeRTOS+TCP tree (`xNetworkEventQueue`).
+ */
 extern struct RecursiveMutexState __CriticalSectionFlagLock;
 extern struct RecursiveMutexState __SuspendFlagLock;
 extern QueueHandle_t              xNetworkEventQueue;
@@ -74,6 +82,7 @@ __always_inline static inline void free_compartment_memory()
  * corruption, however we do assume that:
  * - 'reset-critical' data has not been corrupted
  * - the control-flow of threads in the compartment has not been altered
+ * - spatial and temporal memory safety are not violated
  */
 extern "C" void reset_network_stack_state()
 {
@@ -154,6 +163,9 @@ extern "C" void reset_network_stack_state()
 	// FIXME: This is not true if the thread runs out of call stack. This
 	// will be fixed when we allow the error handler to run on stack
 	// overflow.
+	//
+	// Note that the internal state of the lock should not be corrupted
+	// unless spatial or temporal memory safety was somehow violated.
 	DebugErrorHandler::log("Acquiring the sealed sockets lock.");
 	sealedSocketsListLock.lock();
 
@@ -198,6 +210,11 @@ extern "C" void reset_network_stack_state()
 			}
 			else
 			{
+				// The memory of the event group will still be
+				// freed later with the `heap_free_all`,
+				// however we run the risk to have the IP
+				// thread stuck on the event queue which we
+				// didn't manage to destroy.
 				DebugErrorHandler::log("Ignoring corrupted socket {}.", s);
 			}
 
