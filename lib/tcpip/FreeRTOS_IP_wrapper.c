@@ -19,35 +19,17 @@ void ip_thread_start(void);
 #include <stdatomic.h>
 
 /**
- * Backup of the constant UDP packet header (`xDefaultPartUDPPacketHeader`).
- *
- * This should not be reset by the error handler and is reset-critical.
- *
- * Note (which also applies to `threadEntryGuard` and `isRestart`): ultimately
- * we should move these to a separate "network stack TCB" compartment to be
- * able to reset all the state of this compartment unconditionally by
- * re-zeroing the BSS and resetting .data from snapshots.
- *
- * We *cannot* make this immutable through a read-only capability, since we
- * cannot heap-allocate it (it must survive a reset).
- */
-static UDPPacketHeader_t defaultUDPPacketHeaderCopy;
-
-/**
  * Flag used to synchronize the network stack thread and user threads at
  * startup.
  *
  * This should not be reset by the error handler and is reset-critical.
+ *
+ * Note (which also applies to other reset-critical data): ultimately we should
+ * move this to a separate "network stack TCB" compartment to be able to reset
+ * all the state of this compartment unconditionally by re-zeroing the BSS and
+ * resetting .data from snapshots.
  */
 static uint32_t threadEntryGuard;
-
-/**
- * Flag used to distinguish a normal TCP/IP thread start from a restart due to
- * a reset of the TCP/IP thread.
- *
- * This should not be reset by the error handler and is reset-critical.
- */
-static uint8_t isRestart = 0;
 
 /**
  * Store the thread ID of the TCP/IP thread for use in the error handler.
@@ -112,38 +94,25 @@ void ip_cleanup(void)
 	memset(&xARPCache, 0, sizeof(xARPCache));
 	memset(&xDNSCache, 0, sizeof(xDNSCache));
 	xNetworkDownEventPending = 0;
-	xProcessedTCPMessage     = 0;
 	xDHCPSocketUserCount     = 0;
 
 	/// Reset data from `.data`
 
-	// Reset the default UDP header from the backup we made at startup.
-	memcpy(&xDefaultPartUDPPacketHeader,
-	       &defaultUDPPacketHeaderCopy,
-	       sizeof(xDefaultPartUDPPacketHeader));
-
 	xDNS_IP_Preference = xPreferenceIPv4;
+
+	// FIXME: we should also reset `ucDefaultPartUDPPacketHeader` and
+	// `xDefaultPartARPPacketHeader` from a backup, however we cannot do
+	// this at the moment because they are scoped within a function.
 }
 
 void __cheri_compartment("TCPIP") ip_thread_entry(void)
 {
 	FreeRTOS_printf(("ip_thread_entry\n"));
-	if (isRestart == 0)
-	{
-		// Make a backup of the default UDP header to reset it later.
-		memcpy(&defaultUDPPacketHeaderCopy,
-		       &xDefaultPartUDPPacketHeader,
-		       sizeof(defaultUDPPacketHeaderCopy));
-	}
 
 	networkThreadID = thread_id_get();
 
 	while (1)
 	{
-		// After the initial start, all further invokations of this
-		// function or iterations of this loop are restarts.
-		isRestart = 1;
-
 		while (threadEntryGuard == 0)
 		{
 			FreeRTOS_printf(
