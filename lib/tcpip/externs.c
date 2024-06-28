@@ -28,7 +28,3 @@ uint32_t ulApplicationGetNextSequenceNumber( uint32_t ulSourceAddress,
 	// This is also bad.
 	return rdcycle64();
 }
-
-
-
-
