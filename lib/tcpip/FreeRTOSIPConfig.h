@@ -2,6 +2,42 @@
 // SPDX-License-Identifier: MIT
 
 #pragma once
+
+#ifndef FREERTOS_CONFIG_H
+/**
+ * This macro would usually be defined in FreeRTOSConfig.h, which we do not
+ * implement here because we do not use the FreeRTOS core. We define it here
+ * because FreeRTOS+TCP refuses to compile without.
+ */
+#define FREERTOS_CONFIG_H
+#endif
+
+/**
+ * FreeRTOS+TCP errno codes. See the header documentation.
+ */
+#include <FreeRTOS_errno.h>
+
+/**
+ * `INCLUDE_*` macros have no effect here since we do not use the FreeRTOS
+ * core, however FreeRTOS+TCP refuses to compile without defining these.
+ */
+#define INCLUDE_vTaskDelay 1
+#define INCLUDE_xTaskGetCurrentTaskHandle 1
+
+/**
+ * Scheduling-related settings have no impact since we do not use the FreeRTOS
+ * core, however FreeRTOS+TCP refuses to compile without defining these.
+ */
+#define ipconfigIP_TASK_PRIORITY 0
+#define configMAX_PRIORITIES 1
+#define configMINIMAL_STACK_SIZE 128
+
+/**
+ * Enable counting semaphore functionality in the build, as this is necessary
+ * to build FreeRTOS+TCP.
+ */
+#define configUSE_COUNTING_SEMAPHORES 1
+
 /**
  * Macro defined to flag that this file has been included.
  */
@@ -48,6 +84,9 @@
 
 #define xPortGetMinimumEverFreeHeapSize() 0
 #define xPortGetFreeHeapSize() 0
+
+// Use dynamic allocation
+#define configSUPPORT_DYNAMIC_ALLOCATION 1
 
 // We don't support static allocation
 #define configSUPPORT_STATIC_ALLOCATION 0
