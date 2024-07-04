@@ -33,6 +33,28 @@
 #define configMINIMAL_STACK_SIZE 128
 
 /**
+ * FreeRTOS+TCP uses descriptors to track information about the packets in a
+ * window. A pool of descriptors is allocated when the first TCP connection is
+ * made. This configuration entry sets the size of the pool.
+ *
+ * In the worst case, each TCP connection will have an Rx and Tx window of at
+ * most 8 segments (according to the FreeRTOS+TCP documentation), requiring 16
+ * descriptors in total per TCP connection. This configuration entry should
+ * thus be set to `(expected maximum number of TCP connections) x 16`.
+ *
+ * If we assume at most 6 TCP connections, this results in 96 segments.
+ *
+ * Each descriptor is 104 bytes, i.e., set to 96 this results in a memory
+ * footprint of 9,984 bytes.
+ *
+ * Note that the pool of descriptors is reallocated at every network stack
+ * reset. Setting this number to a large value (e.g., 256, the FreeRTOS+TCP
+ * default) is known to cause reset failures due to fragmentation preventing us
+ * from reallocating the pool.
+ */
+#define ipconfigTCP_WIN_SEG_COUNT 96
+
+/**
  * Enable counting semaphore functionality in the build, as this is necessary
  * to build FreeRTOS+TCP.
  */
@@ -62,7 +84,6 @@
 #define ipconfigREPLY_TO_INCOMING_PINGS 1
 
 #define ipconfigNUM_NETWORK_BUFFER_DESCRIPTORS 8
-
 
 #define ipconfigTCP_RX_BUFFER_LENGTH ( 1280 )
 #define ipconfigTCP_TX_BUFFER_LENGTH ( 1280 )
@@ -97,3 +118,10 @@
 
 #define ipconfigALLOW_SOCKET_SEND_WITHOUT_BIND 0
 #define ipconfigUSE_NETWORK_EVENT_HOOK 1
+
+// Necessary to have FreeRTOS+TCP invoke our own `ipFOREVER` function.  As of
+// FreeRTOS+TCP 3.1.0 this only enables external `ipFOREVER`. It would be nice
+// to upstream a patch to have this variable renamed into something specific to
+// `ipFOREVER` to ensure that we do not enable additional undesired options in
+// future releases.
+#define TEST

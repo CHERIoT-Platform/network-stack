@@ -3,6 +3,7 @@
 
 #include "FreeRTOS.h"
 #include "FreeRTOS_IP.h"
+#include <BufferManagement.hh>
 #include <NetworkBufferManagement.h>
 #include <cstdlib>
 #include <debug.hh>
@@ -11,13 +12,6 @@
 using Debug = ConditionalDebug<false, "Buffer management">;
 
 using CHERI::Capability;
-
-// Use a separate allocator quota for the buffer manager (false by default).
-// The buffer manager is responsible for allocating network buffers, which
-// differs from the other types of allocations the TCP/IP stack performs. It
-// may thus make sense to give it its own quota. We may want to expose this as
-// a build system configuration option at some point.
-#define USE_DEDICATED_BUFFERMANAGER_POOL false
 
 #if USE_DEDICATED_BUFFERMANAGER_POOL
 // Size of the buffer manager allocator quota.
@@ -29,6 +23,14 @@ DECLARE_AND_DEFINE_ALLOCATOR_CAPABILITY(BufferManagementMallocQuota,
                                         BM_MALLOC_QUOTA);
 #	define BM_MALLOC_CAPABILITY                                               \
 		STATIC_SEALED_VALUE(BufferManagementMallocQuota)
+
+/**
+ * Free the buffer manager's memory.
+ */
+void free_buffer_manager_memory()
+{
+	heap_free_all(BM_MALLOC_CAPABILITY);
+}
 #else
 #	define BM_MALLOC_CAPABILITY MALLOC_CAPABILITY
 #endif
@@ -132,7 +134,9 @@ void vReleaseNetworkBufferAndDescriptor(
 
 		// Failure is not supposed to happen unless we have a bug here
 		// or in FreeRTOS.
-		Debug::Assert(ret == 0, "Failed to free network buffer or descriptor.");
+		Debug::Assert(ret == 0,
+		              "Failed to free network buffer or descriptor (error {}).",
+		              ret);
 	}
 }
 

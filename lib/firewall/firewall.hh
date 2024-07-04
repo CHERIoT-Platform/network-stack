@@ -1,6 +1,8 @@
 // Copyright SCI Semiconductor and CHERIoT Contributors.
 // SPDX-License-Identifier: MIT
 
+#pragma once
+#include <atomic>
 #include <compartment.h>
 
 /**
@@ -11,17 +13,31 @@ bool __cheri_compartment("Firewall")
   ethernet_send_frame(uint8_t *packet, size_t length);
 
 /**
- * Start the Firewall driver.  This returns true if the driver is successfully
- * started, false otherwise.  This should fail only if the driver is already
- * initialised.
+ * Start the Firewall driver.
+ *
+ * `state` should point to the reset state of the TCP/IP stack.
+ *
+ * This returns true if the driver is successfully started, false otherwise.
+ * This should fail only if the driver is already initialised (outside of a
+ * reset), or if `state` is invalid.
  */
-bool __cheri_compartment("Firewall") ethernet_driver_start(void);
+bool __cheri_compartment("Firewall")
+  ethernet_driver_start(std::atomic<uint8_t> *state);
+
+/**
+ * Bit of the `state` atomic variable passed to `ethernet_driver_start` which
+ * indicates that the driver may send packets to the network stack.
+ *
+ * This must match the `DriverKicked` bit of enum `RestartState` (see
+ * `tcpip-internal.h`). This is statically asserted in the TCP/IP stack.
+ */
+static constexpr uint32_t RestartStateDriverKickedBit = 0x4;
 
 /**
  * Query the link status of the Firewall driver.  This returns true if the link
  * is up, false otherwise.
  */
-bool __cheri_compartment("Firewall") ethernet_link_is_up(void);
+bool __cheri_compartment("Firewall") ethernet_link_is_up();
 
 /**
  * Receive a frame from the Firewall device via the on-device firewall.
@@ -42,7 +58,7 @@ void __cheri_compartment("Firewall") firewall_dns_server_ip_set(uint32_t ip);
  * This should be called only by the NetAPI compartment.
  */
 void __cheri_compartment("Firewall")
-  firewall_permit_dns(bool dnsIsPermitted __if_cxx(= true));
+  firewall_permit_dns(bool dnsIsPermitted = true);
 
 /**
  * Open a hole in the firewall for TCP packets to and from the given endpoint.

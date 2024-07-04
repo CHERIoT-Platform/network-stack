@@ -10,10 +10,13 @@
 
 #include <debug.hh>
 #include <platform-ethernet.hh>
+#include <tcpip-internal.h>
 
-#include "../firewall/firewall.h"
+#include "../firewall/firewall.hh"
 
 using Debug = ConditionalDebug<false, "TCP/IP Stack startup">;
+
+extern "C" void ip_cleanup(void);
 
 /**
  * Exposed by the driver adaptor.  Uses a CHERIoT driver to provide a FreeRTOS
@@ -159,15 +162,31 @@ void __cheri_compartment("TCPIP") network_start()
 	{
 		Debug::log("Failed to initialize IP stack\n");
 	}
-	// Wait until the network is fully initialised.
-	constexpr uint32_t RequiredBits = UseIPv6 ? DoneIPv4 | DoneIPv6 : DoneIPv4;
-	for (uint32_t stateBits = state.load();
-	     (stateBits & RequiredBits) != RequiredBits;
-	     stateBits = state.load())
+	if (restartState.load() == 0)
 	{
-		state.wait(stateBits);
+		// Wait until the network is fully initialised.
+		constexpr uint32_t RequiredBits =
+		  UseIPv6 ? DoneIPv4 | DoneIPv6 : DoneIPv4;
+		for (uint32_t stateBits = state.load();
+		     (stateBits & RequiredBits) != RequiredBits;
+		     stateBits = state.load())
+		{
+			state.wait(stateBits);
+		}
 	}
+
 	Debug::log("Network stack startup finished");
+}
+
+/**
+ * Call `network_start`, after ensuring that globals are reset to a pristine
+ * state.
+ */
+void network_restart()
+{
+	state = Uninitialised;
+	ip_cleanup();
+	network_start();
 }
 
 void vApplicationIPNetworkEventHook_Multi(eIPCallbackEvent_t eNetworkEvent,
@@ -211,6 +230,17 @@ void vApplicationIPNetworkEventHook_Multi(eIPCallbackEvent_t eNetworkEvent,
 			{
 				setBit(StartupState::DoneIPv6);
 			}
+		}
+	}
+
+	if (restartState.load() != 0)
+	{
+		constexpr uint32_t RequiredBits =
+		  UseIPv6 ? DoneIPv4 | DoneIPv6 : DoneIPv4;
+		if ((state.load() & RequiredBits) == RequiredBits)
+		{
+			Debug::log("Now officially done restarting");
+			restartState.store(NotRestarting);
 		}
 	}
 }
