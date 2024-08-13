@@ -4,9 +4,11 @@
 #include <FreeRTOS.h>
 #include <FreeRTOS_IP.h>
 #include <FreeRTOS_ND.h>
+#include <tcpip_error_handler.h>
 
-#include "../firewall/firewall.h"
+#include "../firewall/firewall.hh"
 #include "network-internal.h"
+#include "tcpip-internal.h"
 
 #include <FreeRTOS_IP_Private.h>
 #include <NetAPI.h>
@@ -20,8 +22,39 @@
 using Debug            = ConditionalDebug<false, "Network stack wrapper">;
 constexpr bool UseIPv6 = CHERIOT_RTOS_OPTION_IPv6;
 
-// IP thread global lock. See comment in FreeRTOS_IP_wrapper.c.
+// IP thread global lock. See comment in `FreeRTOS_IP_wrapper.c`.
 extern struct FlagLockState ipThreadLockState;
+
+/**
+ * This function controls the FreeRTOS+TCP network thread event loop.
+ *
+ * Returning 0 will cause the event loop to return, which we want to do when a
+ * reset of the network stack is triggered.
+ */
+extern "C" int ipFOREVER(void)
+{
+	// We must interrupt the loop if a reset is ongoing (`Restarting`).
+	// However, we must still allow the loop to run during the early stages
+	// of a reset (`IpThreadKicked`). Note that it is absolutely fine if
+	// the state changes after the check, as we will detect that change in
+	// the next loop iteration.
+	uint8_t state = restartState.load();
+	return (state == 0) || ((state & IpThreadKicked) != 0);
+}
+
+/**
+ * Current socket epoch. This is used to detect sockets that belong to a
+ * previous instance of the network stack.
+ *
+ * This should not be reset by the error handler and is reset-critical.
+ */
+std::atomic<uint32_t> currentSocketEpoch = 0;
+
+// Network stack reset globals. See comments in `tcpip-internal.h`.
+std::atomic<uint8_t>                      restartState    = 0;
+std::atomic<uint8_t>                      userThreadCount = 0;
+ds::linked_list::Sentinel<SocketRingLink> sealedSockets;
+FlagLockPriorityInherited                 sealedSocketsListLock;
 
 using CHERI::Capability;
 using CHERI::check_pointer;
@@ -53,23 +86,6 @@ namespace
 	}
 
 	/**
-	 * The sealed wrapper around a FreeRTOS socket.
-	 */
-	struct SealedSocket
-	{
-		/**
-		 * The lock protecting this socket.
-		 */
-		FlagLockPriorityInherited socketLock;
-		/**
-		 * The FreeRTOS socket.  It would be nice if this didn't require a
-		 * separate allocation but FreeRTOS+TCP isn't designed to support that
-		 * use case.
-		 */
-		FreeRTOS_Socket_t *socket;
-	};
-
-	/**
 	 * Returns the key with which SealedSocket instances are sealed.
 	 */
 	__always_inline SKey socket_key()
@@ -78,19 +94,52 @@ namespace
 	}
 
 	/**
-	 * Unseal `sealedSocket` and, if it is sealed with the correct type, pass
-	 * it to `operation`.  If the unsealing fails, return `-EINVAL`.  This is a
-	 * helper function used for operations on sockets.
+	 * Unseal `sealedSocket` and, if it is sealed with the correct type,
+	 * pass it to `operation`. This is a helper function used for
+	 * operations on sockets.
+	 *
+	 * This function will return a negative code on error:
+	 *
+	 * `-EINVAL` if the unsealing fails;
+	 *
+	 * `-EAGAIN` if the network stack is undergoing a reset;
+	 *
+	 * `-ENOTCONN` if the epoch of the socket does not match the current
+	 * epoch of the network stack, and `operation` is not a close
+	 * operation, as specified by `IsCloseOperation`. This will happen if
+	 * the socket is coming from a previous instantiation of the network
+	 * stack.
 	 */
+	template<bool IsCloseOperation = false>
 	int with_sealed_socket(auto operation, Sealed<SealedSocket> sealedSocket)
 	{
-		auto *socket = token_unseal(socket_key(), sealedSocket);
-		if (socket == nullptr)
-		{
-			Debug::log("Failed to unseal socket");
-			return -EINVAL;
-		}
-		return operation(socket);
+		return with_restarting_checks(
+		  [&]() {
+			  auto *socket = token_unseal(socket_key(), sealedSocket);
+			  if (socket == nullptr)
+			  {
+				  Debug::log("Failed to unseal socket");
+				  return -EINVAL;
+			  }
+			  if (socket->socketEpoch != currentSocketEpoch.load())
+			  {
+				  Debug::log(
+				    "This socket "
+				    "corresponds to a previous instance of the network stack "
+				    "(epochs mismatch: socket = {}; current = {}).",
+				    socket->socketEpoch,
+				    currentSocketEpoch.load());
+				  if constexpr (!IsCloseOperation)
+				  {
+					  // This should push the caller to free the socket.
+					  return -ENOTCONN;
+				  }
+				  Debug::log("Permitting unsealing to destroy the socket.");
+			  }
+
+			  return operation(socket);
+		  },
+		  -EAGAIN /* return -EAGAIN if we are restarting */);
 	}
 
 	/**
@@ -427,7 +476,9 @@ int network_host_resolve(const char     *hostname,
                          bool            useIPv6,
                          NetworkAddress *address)
 {
-	return host_resolve(hostname, useIPv6, address);
+	return with_restarting_checks(
+	  [&]() { return host_resolve(hostname, useIPv6, address); },
+	  -1 /* invalid if we are restarting */);
 }
 
 SObj network_socket_create_and_bind(Timeout       *timeout,
@@ -436,72 +487,104 @@ SObj network_socket_create_and_bind(Timeout       *timeout,
                                     ConnectionType type,
                                     uint16_t       localPort)
 {
-	// TODO: This should have nice RAII wrappers!
-	auto [socketWrapper, sealedSocket] =
-	  token_allocate<SealedSocket>(timeout, mallocCapability, socket_key());
-	if (socketWrapper == nullptr)
-	{
-		Debug::log("Failed to allocate socket wrapper.");
-		return nullptr;
-	}
+	return with_restarting_checks(
+	  [&]() -> SObj {
+		  // TODO: This should have nice RAII wrappers!
+		  // Add the socket lock to the linked list and make sure that the RAII
+		  // wrapper removes it from there.
+		  auto [socketWrapper, sealedSocket] = token_allocate<SealedSocket>(
+		    timeout, mallocCapability, socket_key());
+		  if (socketWrapper == nullptr)
+		  {
+			  Debug::log("Failed to allocate socket wrapper.");
+			  return nullptr;
+		  }
 
-	const auto Family = isIPv6 ? FREERTOS_AF_INET6 : FREERTOS_AF_INET;
-	Socket_t   socket = FreeRTOS_socket(
-	    Family,
-      type == ConnectionTypeTCP ? FREERTOS_SOCK_STREAM : FREERTOS_SOCK_DGRAM,
-      type == ConnectionTypeTCP ? FREERTOS_IPPROTO_TCP : FREERTOS_IPPROTO_UDP);
-	if (socket == nullptr)
-	{
-		Debug::log("Failed to create socket.");
-		// This cannot fail unless buggy - we know that we successfully
-		// allocated the token with this malloc capability. Same for
-		// other calls to `token_obj_destroy` in this function.
-		token_obj_destroy(mallocCapability, socket_key(), sealedSocket);
-		return nullptr;
-	}
-	socketWrapper->socket = socket;
+		  // Set the socket epoch
+		  socketWrapper->socketEpoch = currentSocketEpoch.load();
 
-	// Claim the socket so that it counts towards the caller's quota.  The
-	// network stack also keeps a claim to it.  We will drop this claim on
-	// deallocation.
-	Claim c{mallocCapability, socket};
-	if (!c)
-	{
-		Debug::log("Failed to claim socket.");
-		// Note that `close_socket_retry` can fail, in which case we
-		// will leak the socket allocation. There is nothing we can do
-		// here.  Returning the half-baked sealed socket would be
-		// dangerous because the close() path isn't designed to handle
-		// it (and changing it to do so is non-trivial and likely not
-		// worth the trouble).
-		close_socket_retry(timeout, socket);
-		// Cannot fail, see above.
-		token_obj_destroy(mallocCapability, socket_key(), sealedSocket);
-		return nullptr;
-	}
+		  const auto Family = isIPv6 ? FREERTOS_AF_INET6 : FREERTOS_AF_INET;
+		  Socket_t   socket =
+		    FreeRTOS_socket(Family,
+		                    type == ConnectionTypeTCP ? FREERTOS_SOCK_STREAM
+		                                              : FREERTOS_SOCK_DGRAM,
+		                    type == ConnectionTypeTCP ? FREERTOS_IPPROTO_TCP
+		                                              : FREERTOS_IPPROTO_UDP);
+		  if (socket == nullptr)
+		  {
+			  Debug::log("Failed to create socket.");
+			  // This cannot fail unless buggy - we know that we successfully
+			  // allocated the token with this malloc capability. Same for
+			  // other calls to `token_obj_destroy` in this function.
+			  token_obj_destroy(mallocCapability, socket_key(), sealedSocket);
+			  return nullptr;
+		  }
+		  socketWrapper->socket = socket;
 
-	freertos_sockaddr localAddress;
-	memset(&localAddress, 0, sizeof(localAddress));
-	localAddress.sin_len = sizeof(localAddress);
-	// Note from the FreeRTOS API spec: 'Specifying a port number of 0 or
-	// passing pxAddress as NULL will result in the socket being bound to a
-	// port number from the private range'. Here, `localPort` will be 0 if
-	// the caller wants to bind to any port.
-	localAddress.sin_port   = FreeRTOS_htons(localPort);
-	localAddress.sin_family = Family;
-	auto bindResult =
-	  FreeRTOS_bind(socket, &localAddress, sizeof(localAddress));
-	if (bindResult != 0)
-	{
-		// See above comments.
-		Debug::log("Failed to bind socket.");
-		close_socket_retry(timeout, socket);
-		token_obj_destroy(mallocCapability, socket_key(), sealedSocket);
-		return nullptr;
-	}
+		  // Claim the socket so that it counts towards the caller's quota.  The
+		  // network stack also keeps a claim to it.  We will drop this claim on
+		  // deallocation.
+		  Claim c{mallocCapability, socket};
+		  if (!c)
+		  {
+			  Debug::log("Failed to claim socket.");
+			  // Note that `close_socket_retry` can fail, in which case we
+			  // will leak the socket allocation. There is nothing we can do
+			  // here.  Returning the half-baked sealed socket would be
+			  // dangerous because the close() path isn't designed to handle
+			  // it (and changing it to do so is non-trivial and likely not
+			  // worth the trouble).
+			  close_socket_retry(timeout, socket);
+			  // Cannot fail, see above.
+			  token_obj_destroy(mallocCapability, socket_key(), sealedSocket);
+			  return nullptr;
+		  }
 
-	c.release();
-	return sealedSocket;
+		  // Acquire the lock until we complete the bind to ensure that
+		  // we don't fail to acquire `sealedSocketsListLock` in the
+		  // error handling of `FreeRTOS_bind`.
+		  if (LockGuard g{sealedSocketsListLock, timeout})
+		  {
+			  // Add the socket to the sealed socket reset list.
+			  socketWrapper->ring.cell_reset();
+			  sealedSockets.append(&(socketWrapper->ring));
+
+			  freertos_sockaddr localAddress;
+			  memset(&localAddress, 0, sizeof(localAddress));
+			  localAddress.sin_len = sizeof(localAddress);
+			  // Note from the FreeRTOS API spec: 'Specifying a port number of 0
+			  // or passing pxAddress as NULL will result in the socket being
+			  // bound to a port number from the private range'. Here,
+			  // `localPort` will be 0 if the caller wants to bind to any port.
+			  localAddress.sin_port   = FreeRTOS_htons(localPort);
+			  localAddress.sin_family = Family;
+			  auto bindResult =
+			    FreeRTOS_bind(socket, &localAddress, sizeof(localAddress));
+			  if (bindResult != 0)
+			  {
+				  // See above comments.
+				  Debug::log("Failed to bind socket.");
+				  // No need to acquire the lock here since we still have it.
+				  ds::linked_list::remove(&(socketWrapper->ring));
+				  close_socket_retry(timeout, socket);
+				  token_obj_destroy(
+				    mallocCapability, socket_key(), sealedSocket);
+				  return nullptr;
+			  }
+		  }
+		  else
+		  {
+			  // See above comments.
+			  Debug::log("Failed to add socket to the socket reset list.");
+			  close_socket_retry(timeout, socket);
+			  token_obj_destroy(mallocCapability, socket_key(), sealedSocket);
+			  return nullptr;
+		  }
+
+		  c.release();
+		  return sealedSocket;
+	  },
+	  static_cast<SObj>(nullptr) /* return nullptr if we are restarting */);
 }
 
 int network_socket_connect_tcp_internal(Timeout       *timeout,
@@ -559,10 +642,23 @@ int network_socket_close(Timeout *t, SObj mallocCapability, SObj sealedSocket)
 	{
 		return -EINVAL;
 	}
-	return with_sealed_socket(
+	return with_sealed_socket<true /* this is a close operation */>(
 	  [=](SealedSocket *socket) {
-		  if (LockGuard g{socket->socketLock, t})
+		  // We will fail to lock if the socket is coming from
+		  // a previous instance of the network stack as it set
+		  // for destruction. Ignore the failure: we will not
+		  // call the FreeRTOS API on it anyways.
+		  LockGuard g{socket->socketLock, t};
+		  if (g || (socket->socketEpoch != currentSocketEpoch.load()))
 		  {
+			  if (socket->socketEpoch != currentSocketEpoch.load())
+			  {
+				  Debug::log(
+				    "Destroying a socket from a previous instance of the "
+				    "network stack");
+				  Debug::Assert(!g, "Acquired lock of remnant socket");
+				  g.release();
+			  }
 			  // Since we free the socket and the token at the end after
 			  // terminating the socket, ensure that the frees won't fail
 			  if (heap_can_free(mallocCapability, socket->socket) != 0 ||
@@ -577,11 +673,17 @@ int network_socket_close(Timeout *t, SObj mallocCapability, SObj sealedSocket)
 				  return -EINVAL;
 			  }
 			  bool isTCP = socket->socket->ucProtocol == FREERTOS_IPPROTO_TCP;
-			  // Shut down the socket before closing the firewall.  Don't
-			  // bother with the return value: `FreeRTOS_shutdown` fails
-			  // mainly if the TCP connection is dead, which is likely to
-			  // happen in practice and has no impact for us.
-			  FreeRTOS_shutdown(socket->socket, FREERTOS_SHUT_RDWR);
+			  // Shut down the socket before closing the firewall.
+			  // Don't bother with the return value:
+			  // `FreeRTOS_shutdown` fails mainly if the TCP
+			  // connection is dead, which is likely to happen in
+			  // practice and has no impact for us.  Don't call
+			  // `FreeRTOS_shutdown` if the socket is coming from a
+			  // previous instance of the network stack.
+			  if (socket->socketEpoch == currentSocketEpoch.load())
+			  {
+				  FreeRTOS_shutdown(socket->socket, FREERTOS_SHUT_RDWR);
+			  }
 			  auto localPort = ntohs(socket->socket->usLocalPort);
 			  if (socket->socket->bits.bIsIPv6)
 			  {
@@ -605,28 +707,46 @@ int network_socket_close(Timeout *t, SObj mallocCapability, SObj sealedSocket)
 					  firewall_remove_udpipv4_local_endpoint(localPort);
 				  }
 			  }
-			  // Close the socket.  Another thread will actually clean up the
-			  // memory. This returns 1 on success.
-			  int  ret         = 0;
-			  auto closeStatus = close_socket_retry(t, socket->socket);
-			  if (closeStatus == 0)
+			  int ret = 0;
+			  if (socket->socketEpoch == currentSocketEpoch.load())
 			  {
-				  // The only reason why this would fail is internal
-				  // corruption (did someone already close the
-				  // socket?). Nothing can be done by anyone at this
-				  // stage. Don't return because we would leak
-				  // everything.
-				  ret = -ENOTRECOVERABLE;
+				  Debug::Assert(ds::linked_list::is_singleton(&(socket->ring)),
+				                "The socket should be present in the list.");
+				  if (LockGuard g{sealedSocketsListLock, t})
+				  {
+					  ds::linked_list::remove(&(socket->ring));
+				  }
+				  else
+				  {
+					  return -ETIMEDOUT;
+				  }
+
+				  // Close the socket.  Another thread will actually
+				  // clean up the memory. This returns 1 on success.
+				  // Again, do not do this if the socket is from a
+				  // previous instance of the network stack.
+				  auto closeStatus = close_socket_retry(t, socket->socket);
+				  if (closeStatus == 0)
+				  {
+					  // The only reason why this would fail is internal
+					  // corruption (did someone already close the
+					  // socket?). Nothing can be done by anyone at this
+					  // stage. Don't return because we would leak
+					  // everything.
+					  ret = -ENOTRECOVERABLE;
+				  }
+				  else if (closeStatus != 1)
+				  {
+					  // The close couldn't be delivered to the IP
+					  // task. With some luck, the socket can be
+					  // freed next time we try.
+					  return -ETIMEDOUT;
+				  }
+
+				  g.release();
+				  socket->socketLock.upgrade_for_destruction();
 			  }
-			  else if (closeStatus != 1)
-			  {
-				  // The close couldn't be delivered to the IP
-				  // task. With some luck, the socket can be
-				  // freed next time we try.
-				  return -ETIMEDOUT;
-			  }
-			  g.release();
-			  socket->socketLock.upgrade_for_destruction();
+
 			  // Drop the caller's claim on the socket.
 			  if (heap_free(mallocCapability, socket->socket) != 0)
 			  {
@@ -964,28 +1084,30 @@ ssize_t network_socket_send_to(Timeout              *timeout,
 
 int network_socket_kind(SObj socket, SocketKind *kind)
 {
-	kind->protocol  = SocketKind::Invalid;
-	kind->localPort = 0;
-
-	int ret = with_sealed_socket(
-	  [&](SealedSocket *socket) {
-		  if (socket->socket->ucProtocol == FREERTOS_IPPROTO_TCP)
-		  {
-			  kind->protocol = socket->socket->bits.bIsIPv6
-			                     ? SocketKind::TCPIPv6
-			                     : SocketKind::TCPIPv4;
-		  }
-		  else
-		  {
-			  kind->protocol = socket->socket->bits.bIsIPv6
-			                     ? SocketKind::UDPIPv6
-			                     : SocketKind::UDPIPv4;
-		  }
-		  kind->localPort = listGET_LIST_ITEM_VALUE(
-		    (&((socket->socket)->xBoundSocketListItem)));
-		  return 0;
+	return with_restarting_checks(
+	  [&]() -> int {
+		  kind->protocol  = SocketKind::Invalid;
+		  kind->localPort = 0;
+		  int ret         = with_sealed_socket(
+		            [&](SealedSocket *socket) {
+                if (socket->socket->ucProtocol == FREERTOS_IPPROTO_TCP)
+                {
+                    kind->protocol = socket->socket->bits.bIsIPv6
+				                               ? SocketKind::TCPIPv6
+				                               : SocketKind::TCPIPv4;
+                }
+                else
+                {
+                    kind->protocol = socket->socket->bits.bIsIPv6
+				                               ? SocketKind::UDPIPv6
+				                               : SocketKind::UDPIPv4;
+                }
+                kind->localPort = listGET_LIST_ITEM_VALUE(
+			              (&((socket->socket)->xBoundSocketListItem)));
+                return 0;
+		            },
+		            socket);
+		  return ret;
 	  },
-	  socket);
-
-	return ret;
+	  -1 /* invalid if we are restarting */);
 }

@@ -1,7 +1,7 @@
 // Copyright SCI Semiconductor and CHERIoT Contributors.
 // SPDX-License-Identifier: MIT
 
-#include "../firewall/firewall.h"
+#include "../firewall/firewall.hh"
 #include "../tcpip/network-internal.h"
 #include <NetAPI.h>
 
