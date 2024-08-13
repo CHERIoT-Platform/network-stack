@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 #include "firewall.hh"
+#include "../tcpip/checksum-internal.h"
 #include <atomic>
 #include <compartment-macros.h>
 #include <debug.hh>
@@ -30,6 +31,26 @@ namespace
 		return
 #ifdef __LITTLE_ENDIAN__
 		  __builtin_bswap16(value)
+#else
+		  value
+#endif
+		    ;
+	}
+	uint32_t constexpr ntohs(uint32_t value)
+	{
+		return
+#ifdef __LITTLE_ENDIAN__
+		  __builtin_bswap32(value)
+#else
+		  value
+#endif
+		    ;
+	}
+	uint32_t constexpr htons(uint32_t value)
+	{
+		return
+#ifdef __LITTLE_ENDIAN__
+		  __builtin_bswap32(value)
 #else
 		  value
 #endif
@@ -172,13 +193,57 @@ namespace
 		}
 	} __packed;
 
+	static_assert(sizeof(IPv4Header) == 20);
+
 	struct TCPUDPCommonPrefix
 	{
 		uint16_t sourcePort;
 		uint16_t destinationPort;
 	} __packed;
 
-	static_assert(sizeof(IPv4Header) == 20);
+	struct TCPHeader
+	{
+		/**
+		 * Source port.
+		 */
+		uint16_t sourcePort;
+		/**
+		 * Destination port.
+		 */
+		uint16_t destinationPort;
+		/**
+		 * Sequence number.
+		 */
+		uint32_t sequenceNumber;
+		/**
+		 * Acknowledgement number.
+		 */
+		uint32_t acknowledgementNumber;
+		/**
+		 * Reserved bits, data offset, and flags.
+		 */
+		uint16_t reserved : 4, dataOffset : 4, fin : 1, syn : 1, rst : 1,
+		  psh : 1, ack : 1, urg : 1, ece : 1, cwr : 1;
+		/**
+		 * Window size.
+		 */
+		uint16_t windowSize;
+		/**
+		 * Checksum.
+		 */
+		uint16_t checksum;
+		/**
+		 * Urgent pointer.
+		 */
+		uint16_t urgentPointer;
+	} __packed;
+
+	struct FullPacket
+	{
+		EthernetHeader ethernet;
+		IPv4Header     ipv4;
+		TCPHeader      tcp;
+	} __packed;
 
 	/**
 	 * Simple firewall table for IPv4 endpoints.
@@ -320,6 +385,10 @@ namespace
 			               });
 			if (!found)
 			{
+				// Note that a failure to remove the endpoint
+				// is not always a bug. This is meant to happen
+				// if the DNS resolution failed when binding a
+				// socket.
 				Debug::log("Failed to remove endpoint (local: {})", localPort);
 			}
 		}
@@ -360,6 +429,34 @@ namespace
 
 	uint32_t          dnsServerAddress;
 	_Atomic(uint32_t) dnsIsPermitted;
+
+	/**
+	 * This buffer will be pre-set into a TCP RST packet template during
+	 * the initialization of the firewall.  When the firewall needs to send
+	 * a TCP RST, this template is updated with matching MACs, addresses,
+	 * ports, sequence number, and checksums, and sent.
+	 */
+	static struct FullPacket rstPacketTemplate = {0};
+
+	/**
+	 * Pre-set the RST packet template.
+	 */
+	void init_rst_template()
+	{
+		rstPacketTemplate.ethernet.etherType = EtherType::IPv4;
+		// 5 x 32 bit = 20 bytes
+		rstPacketTemplate.ipv4.versionAndHeaderLength = (4 << 4) | 5;
+		// The RST packet does not have a payload.
+		rstPacketTemplate.ipv4.packetLength =
+		  ntohs(static_cast<uint16_t>(sizeof(IPv4Header) + sizeof(TCPHeader)));
+		// Default TTL as recommended by RFC 1700.
+		rstPacketTemplate.ipv4.timeToLive = 64;
+		rstPacketTemplate.ipv4.protocol   = IPProtocolNumber::TCP;
+		// 5 * 32 bit = 20 bytes (again)
+		rstPacketTemplate.tcp.dataOffset = 5;
+		// Enable TCP RST flag.
+		rstPacketTemplate.tcp.rst = 1;
+	}
 
 	bool packet_filter_ipv4(const uint8_t *data,
 	                        size_t         length,
@@ -502,16 +599,118 @@ namespace
 		return true;
 	}
 
+	/**
+	 * If passed packet is an IPv4 TCP packet, reply with a RST to the
+	 * sender. This takes the whole ethernet frame into `data` (and the
+	 * size of the buffer in `length`).
+	 */
+	void try_reset_ipv4_tcp(const uint8_t *data, size_t length)
+	{
+		if (__predict_false(length <
+		                    sizeof(EthernetHeader) + sizeof(IPv4Header)))
+		{
+			Debug::log("Ignoring inbound packet with length {}", length);
+			return;
+		}
+
+		EthernetHeader *ethernetHeader =
+		  reinterpret_cast<EthernetHeader *>(const_cast<uint8_t *>(data));
+		auto *ipv4Header =
+		  reinterpret_cast<const IPv4Header *>(data + sizeof(EthernetHeader));
+		if (ipv4Header->protocol == IPProtocolNumber::TCP)
+		{
+			if (ipv4Header->body_offset() < sizeof(ipv4Header))
+			{
+				Debug::log("Body offset is {} but IPv4 header is {} bytes",
+				           ipv4Header->body_offset(),
+				           sizeof(ipv4Header));
+				return;
+			}
+			if (ipv4Header->body_offset() + sizeof(TCPHeader) > length)
+			{
+				Debug::log("Ignoring inbound packet with length {}", length);
+				return;
+			}
+			const TCPHeader *tcpHeader = reinterpret_cast<const TCPHeader *>(
+			  data + sizeof(EthernetHeader) + ipv4Header->body_offset());
+
+			// Do not send a RST if the received TCP packet is
+			// itself a RST.
+			if (tcpHeader->rst == 1)
+			{
+				Debug::log("Ignoring inbound TCP RST packet.");
+				return;
+			}
+
+			// Create a read-only capability to pass to the TCP/IP
+			// stack when we calculate checksums.
+			CHERI::Capability<uint8_t> rstPacketTemplateROCap{
+			  reinterpret_cast<uint8_t *>(&rstPacketTemplate)};
+			// Remove all permissions except load.  This also
+			// removes global, so that this cannot be captured.
+			rstPacketTemplateROCap.permissions() &=
+			  CHERI::PermissionSet{CHERI::Permission::Load};
+
+			/// Build the RST packet.
+			// Source and destination MACs.
+			std::copy(std::begin(ethernetHeader->source),
+			          std::end(ethernetHeader->source),
+			          std::begin(rstPacketTemplate.ethernet.destination));
+			std::copy(std::begin(ethernetHeader->destination),
+			          std::end(ethernetHeader->destination),
+			          std::begin(rstPacketTemplate.ethernet.source));
+			// Source and destination IPs.
+			rstPacketTemplate.ipv4.sourceAddress =
+			  ipv4Header->destinationAddress;
+			rstPacketTemplate.ipv4.destinationAddress =
+			  ipv4Header->sourceAddress;
+			// IPv4 checksum. The value returned is in network byte
+			// order. Make sure to reset the checksum field's value
+			// before calculation.
+			rstPacketTemplate.ipv4.headerChecksum = 0;
+			rstPacketTemplate.ipv4.headerChecksum =
+			  network_calculate_ipv4_checksum(rstPacketTemplateROCap +
+			                                    sizeof(EthernetHeader),
+			                                  sizeof(IPv4Header));
+			// Source and destination ports.
+			rstPacketTemplate.tcp.sourcePort      = tcpHeader->destinationPort;
+			rstPacketTemplate.tcp.destinationPort = tcpHeader->sourcePort;
+			// Set the sequence number to the ack.
+			rstPacketTemplate.tcp.sequenceNumber =
+			  tcpHeader->acknowledgementNumber;
+			// TCP checksum. The value returned is in network byte
+			// order. No need to reset the field here as it isn't
+			// included in the calculation.
+			rstPacketTemplate.tcp.checksum = network_calculate_tcp_checksum(
+			  rstPacketTemplateROCap,
+			  sizeof(FullPacket),
+			  sizeof(EthernetHeader) + sizeof(IPv4Header) + 16);
+
+			/// Send the RST packet.
+			Debug::log("Sending a RST packet.");
+			LockGuard g{sendLock};
+			auto     &ethernet = lazy_network_interface();
+			// Do not go through the firewall: the packet would be
+			// rejected since the destination is not present in the
+			// table.
+			ethernet.send_frame(
+			  rstPacketTemplateROCap,
+			  sizeof(FullPacket),
+			  [](const uint8_t *data, size_t length) { return true; });
+		}
+	}
+
 	bool packet_filter_ingress(const uint8_t *data, size_t length)
 	{
-		uint32_t stateSnapshot = tcpipRestartState->load();
+		uint32_t stateSnapshot  = tcpipRestartState->load();
+		bool     isOngoingReset = false;
 		if (stateSnapshot != 0 &&
 		    ((stateSnapshot & RestartStateDriverKickedBit) == 0))
 		{
 			// We are in a reset and the driver has not yet been
 			// restarted.
 			Debug::log("Dropping packet due to network stack restart.");
-			return false;
+			isOngoingReset = true;
 		}
 
 		// Not a valid Ethernet frame (64 bytes including four-byte FCS, which
@@ -523,26 +722,42 @@ namespace
 		}
 		EthernetHeader *ethernetHeader =
 		  reinterpret_cast<EthernetHeader *>(const_cast<uint8_t *>(data));
+		bool accept = false;
 		switch (ethernetHeader->etherType)
 		{
 			// For now, testing with v6 disabled.
 			case EtherType::IPv6:
-				return true;
+				accept = true;
+				break;
 			case EtherType::ARP:
 				Debug::log("Saw ARP frame");
-				return true;
+				accept = true;
+				break;
 			case EtherType::IPv4:
-				return packet_filter_ipv4(data + sizeof(EthernetHeader),
-				                          length - sizeof(EthernetHeader),
-				                          &IPv4Header::sourceAddress,
-				                          &TCPUDPCommonPrefix::destinationPort,
-				                          &TCPUDPCommonPrefix::sourcePort,
-				                          false);
-			default:
-				return false;
+				if (!isOngoingReset)
+				{
+					accept =
+					  packet_filter_ipv4(data + sizeof(EthernetHeader),
+					                     length - sizeof(EthernetHeader),
+					                     &IPv4Header::sourceAddress,
+					                     &TCPUDPCommonPrefix::destinationPort,
+					                     &TCPUDPCommonPrefix::sourcePort,
+					                     false);
+				}
+				if (!accept)
+				{
+					// If this is a TCP packet, send a RST
+					// to the source.
+					//
+					// Only reset for IPv4 for now.  Pass
+					// the whole Ethernet packet (unlike
+					// `packet_filter_ipv4`).
+					try_reset_ipv4_tcp(data, length);
+				}
+				break;
 		}
 
-		return false;
+		return accept && !isOngoingReset;
 	}
 
 	std::atomic<uint32_t> receivedCounter;
@@ -787,6 +1002,7 @@ bool ethernet_driver_start(std::atomic<uint8_t> *state)
 	Debug::log("Initialising network interface");
 	auto &ethernet = lazy_network_interface();
 	ethernet.mac_address_set();
+	init_rst_template();
 	// Poke the barrier and make the driver thread start.
 	barrier = 2;
 	barrier.notify_one();
