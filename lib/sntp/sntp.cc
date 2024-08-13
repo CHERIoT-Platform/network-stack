@@ -410,6 +410,7 @@ namespace
 				SntpStatus_t lastStatus = SntpSuccess;
 				do
 				{
+					// `timeout` is updated through `context`.
 					status = Sntp_ReceiveTimeResponse(&context, 0);
 					if (status != lastStatus)
 					{
@@ -423,8 +424,21 @@ namespace
 						thread_sleep(&t);
 						timeout->elapse(t.elapsed);
 					}
-				} while (status == SntpNoResponseReceived);
-				Debug::log("Received new time fron NTP!");
+				} while (status == SntpNoResponseReceived &&
+				         timeout->may_block());
+
+				if (status != SntpSuccess)
+				{
+					Debug::log("Failed to receive SNTP time response: {}",
+					           status);
+					Timeout t{UnlimitedTimeout};
+					network_socket_close(
+					  &t, MALLOC_CAPABILITY, udpContext.socket);
+					timeout->elapse(t.elapsed);
+					return ntp_error_to_errno(status);
+				}
+
+				Debug::log("Received new time from NTP!");
 			}
 			else
 			{

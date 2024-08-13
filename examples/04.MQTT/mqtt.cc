@@ -96,6 +96,7 @@ void __cheri_compartment("mqtt_example") example()
 	{
 		Debug::log("Failed to update NTP time");
 		Timeout oneSecond{MS_TO_TICKS(1000)};
+		t = Timeout{MS_TO_TICKS(5000)};
 	}
 	Debug::log("Updating NTP took {} ticks", t.elapsed);
 	t = UnlimitedTimeout;
