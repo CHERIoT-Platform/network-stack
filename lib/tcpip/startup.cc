@@ -93,7 +93,7 @@ void __cheri_compartment("TCPIP") network_start()
 	                      NetMask,
 	                      GatewayAddress,
 	                      DNSServerAddress,
-	                      KunyanEthernet::mac_address_default().data());
+	                      EthernetDevice::mac_address_default().data());
 	// Enable DHCP
 	endpointIPv4.bits.bWantDHCP = pdTRUE;
 
@@ -120,7 +120,7 @@ void __cheri_compartment("TCPIP") network_start()
 		  64uL, /* Prefix length. */
 		  &(xGateWay),
 		  NULL, /* pxDNSServerAddress: Not used yet. */
-		  KunyanEthernet::mac_address_default().data());
+		  EthernetDevice::mac_address_default().data());
 		FreeRTOS_inet_pton6(
 		  "2001:4860:4860::8888",
 		  endpointIPv6.ipv6_settings.xDNSServerAddresses[0].ucBytes);
@@ -149,7 +149,7 @@ void __cheri_compartment("TCPIP") network_start()
 		  10U,  /* Prefix length. */
 		  NULL, /* No gateway */
 		  NULL, /* pxDNSServerAddress: Not used yet. */
-		  KunyanEthernet::mac_address_default().data());
+		  EthernetDevice::mac_address_default().data());
 	}
 #endif
 
