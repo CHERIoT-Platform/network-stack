@@ -212,7 +212,8 @@ namespace
 	/**
 	 * Convert an NTP timestamp to a POSIX timeval.
 	 */
-	constexpr struct timeval ntp_date_to_timeval(SntpTimestamp_t currentNTPTime,
+	constexpr struct timeval ntp_date_to_timeval(SynchronisedTime &cache,
+	                                             SntpTimestamp_t currentNTPTime,
 	                                             uint32_t        era)
 	{
 		timeval tv;
@@ -222,38 +223,29 @@ namespace
 		seconds -= SNTP_TIME_AT_UNIX_EPOCH_SECS;
 		// NTP dates roll over every 136 years, so we need to add the era
 		seconds += uint64_t(era) << 32;
-		tv.tv_sec = seconds;
-		tv.tv_usec =
+		cache.seconds = seconds;
+		cache.microseconds =
 		  currentNTPTime.fractions / SNTP_FRACTION_VALUE_PER_MICROSECOND;
 		return tv;
 	}
-
-	/**
-	 * The current time in UNIX format.  Initialised to match the initial NTP
-	 * time.
-	 */
-	SynchronisedTime currentUNIXTime = {
-	  0,
-	  ntp_date_to_timeval({epoch_year_approximate(), 0},
-	                      (epoch_year_approximate() >> 32)),
-	  0};
 
 	/**
 	 * Update the current UNIX time to reflect the last cached NTP time.
 	 */
 	void unix_time_update(uint64_t cycles)
 	{
+		auto &currentUNIXTime = *SHARED_OBJECT_WITH_PERMISSIONS(
+		  SynchronisedTime, sntp_time_at_last_sync, true, true, false, false);
 		Debug::log("Updating UNIX time");
 		Debug::log(
 		  "Current time: {}.{}", currentTime.seconds, currentTime.fractions);
 		currentUNIXTime.updatingEpoch++;
-		currentUNIXTime.time   = ntp_date_to_timeval(currentTime, ntpEra);
-		currentUNIXTime.cycles = cycles;
+		ntp_date_to_timeval(currentUNIXTime, currentTime, ntpEra);
 		currentUNIXTime.updatingEpoch++;
 		Debug::log("Updated UNIX time");
 		Debug::log("Current UNIX time: {}.{}",
-		           static_cast<uint64_t>(currentUNIXTime.time.tv_sec),
-		           currentUNIXTime.time.tv_usec);
+		           static_cast<uint64_t>(currentUNIXTime.seconds),
+		           currentUNIXTime.microseconds);
 	}
 
 	/**
@@ -462,14 +454,4 @@ int sntp_update(Timeout *timeout)
 		return -EINVAL;
 	}
 	return ntp_time_update(timeout);
-}
-
-struct SynchronisedTime *sntp_time_get()
-{
-	Capability<struct SynchronisedTime> result{&currentUNIXTime};
-	// Strip everything except load and global permission.
-	result.permissions() &=
-	  CHERI::PermissionSet{CHERI::Permission::Load, CHERI::Permission::Global};
-	Debug::log("Returning synchronised time {}", result);
-	return result;
 }

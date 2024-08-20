@@ -10,21 +10,10 @@
 
 using Debug = ConditionalDebug<false, "Time helper">;
 
-int timeval_calculate(struct timeval *__restrict tp,
-                      struct SynchronisedTime **sntpTimeCache)
+int timeval_calculate(struct timeval *__restrict tp)
 {
-	struct SynchronisedTime *sntpTime = *sntpTimeCache;
-	if (sntpTime == nullptr)
-	{
-		sntpTime       = sntp_time_get();
-		*sntpTimeCache = sntpTime;
-		Debug::log("Got SNTP time {}", sntpTime);
-	}
-	if (sntpTime == nullptr)
-	{
-		Debug::log("Failed to get SNTP time");
-		return -ENODEV;
-	}
+	struct SynchronisedTime *sntpTime = SHARED_OBJECT_WITH_PERMISSIONS(
+	  SynchronisedTime, sntp_time_at_last_sync, true, false, false, false);
 	struct timeval time;
 	uint64_t       cycles;
 	uint32_t       epoch;
@@ -40,8 +29,9 @@ int timeval_calculate(struct timeval *__restrict tp,
 			sntpTime->updatingEpoch.wait(epoch);
 			continue;
 		}
-		time   = sntpTime->time;
-		cycles = sntpTime->cycles;
+		time.tv_sec  = sntpTime->seconds;
+		time.tv_usec = sntpTime->microseconds;
+		cycles       = sntpTime->cycles;
 	} while ((epoch & 0x1) || epoch != atomic_load(&sntpTime->updatingEpoch));
 	Debug::log("Got raw time {}.{}", uint64_t(time.tv_sec), time.tv_usec);
 	uint64_t now = rdcycle64();

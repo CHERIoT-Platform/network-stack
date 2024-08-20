@@ -26,10 +26,15 @@ struct timeval // NOLINT
  */
 struct SynchronisedTime
 {
-	_Atomic(uint32_t) updatingEpoch;
-	struct timeval    time;
 	uint64_t          cycles;
+	time_t            seconds;
+	suseconds_t       microseconds;
+	_Atomic(uint32_t) updatingEpoch;
 };
+
+_Static_assert(sizeof(struct SynchronisedTime) == 24,
+               "SynchronisedTime size has changed, please update the "
+               "definition in xmake.lua");
 
 /**
  * Update the time using SNTP.  This updates the value stored in the
@@ -46,26 +51,21 @@ struct SynchronisedTime *__cheri_compartment("SNTP") sntp_time_get(void);
 
 /**
  * Library call to compute a timeval from the previous timeval synchronised
- * with NTP.  The first argument is storage for a cached pointer retrieved from
- * the SNTP compartment.  This can be an on-stack ephemeral value if caching is
- * not desired, but must be initialised to either NULL or the return value from
- * `sntp_time_get`.
+ * with NTP.
  */
-int __cheri_libcall timeval_calculate(struct timeval *__restrict tp,
-                                      struct SynchronisedTime **sntpTimeCache);
+int __cheri_libcall timeval_calculate(struct timeval *__restrict tp);
 
 /**
  * POSIX-compatible gettimeofday() implementation that uses the SNTP time.
  *
  * Calculates the time based on the number of cycles that have elapsed since
- * the last update from SNTP.
+ * the last update from SNTP.  Ignores the time zone.
  */
-static inline int gettimeofday(struct timeval *__restrict tp,
-                               void *__restrict tzp)
+__always_inline static inline int gettimeofday(struct timeval *__restrict tp,
+                                               void *__restrict tzp)
 {
 	(void)tzp;
-	static struct SynchronisedTime *sntpTime = NULL;
-	return timeval_calculate(tp, &sntpTime);
+	return timeval_calculate(tp);
 }
 
 /**
