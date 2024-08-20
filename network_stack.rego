@@ -114,6 +114,11 @@ valid(ethernetDevice) {
 	data.compartment.compartment_call_allow_list("Firewall", "firewall_remove_udpipv6_remote_endpoint.*", {"NetAPI"})
 	data.compartment.compartment_call_allow_list("Firewall", "ethernet_run_driver.*", set())
 	data.compartment.mmio_allow_list(ethernetDevice, {"Firewall"})
+	# SNTP cache is the right size and is writeable only by the sntp compartment
+	data.compartment.shared_object_writeable_allow_list("sntp_time_at_last_sync", {"SNTP"})
+	some sntpCache
+	sntpCache = data.compartment.shared_object("sntp_time_at_last_sync")
+	sntpCache.end - sntpCache.start = 24
 }
 
 
