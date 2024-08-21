@@ -77,6 +77,346 @@ namespace
 	std::atomic<uint32_t> barrier;
 
 	/**
+	 * Base class for small table.  Factors out the common code that is generic
+	 * to all small tables in no-inline methods so that the type-safe wrapper
+	 * adds a very small amount of code.
+	 */
+	struct SmallTableBase
+	{
+		protected:
+		/**
+		 * Insert an element into a sorted buffer.
+		 */
+		__noinline void insert(void       *buffer,
+		                       size_t      bufferSize,
+		                       const void *element,
+		                       size_t      elementSize)
+		{
+			// This currently does a linear search.  This is less code than a
+			// binary search and we don't insert on a hot path, so this should
+			// be fine.
+			for (size_t i = 0; i < bufferSize; i += elementSize)
+			{
+				void *current = reinterpret_cast<uint8_t *>(buffer) + i;
+				if (memcmp(current, element, elementSize) > 0)
+				{
+					memmove(reinterpret_cast<uint8_t *>(current) + elementSize,
+					        current,
+					        bufferSize - i);
+					memcpy(current, element, elementSize);
+					return;
+				}
+			}
+			memcpy(reinterpret_cast<uint8_t *>(buffer) + bufferSize,
+			       element,
+			       elementSize);
+		}
+
+		/**
+		 * Find an element in the sorted buffer.  This returns a pointer to the
+		 * element if it's found or nullptr if it's not.
+		 */
+		__noinline void *binary_search(void       *buffer,
+		                               size_t      bufferSize,
+		                               const void *element,
+		                               size_t      elementSize)
+		{
+			size_t low  = 0;
+			size_t high = bufferSize / elementSize;
+			while (low <= high)
+			{
+				size_t mid = low + (high - low) / 2;
+				void  *current =
+				  reinterpret_cast<uint8_t *>(buffer) + (mid * elementSize);
+				int comparison = memcmp(current, element, elementSize);
+				if (comparison == 0)
+				{
+					return current;
+				}
+				if (comparison < 0)
+				{
+					low = mid + 1;
+				}
+				else
+				{
+					high = mid - 1;
+				}
+			}
+			return nullptr;
+		}
+
+		/**
+		 * Remove an element from the sorted buffer.
+		 */
+		__noinline bool remove(void       *buffer,
+		                       size_t      bufferSize,
+		                       const void *element,
+		                       size_t      elementSize)
+		{
+			void *found =
+			  binary_search(buffer, bufferSize, element, elementSize);
+			if (found == nullptr)
+			{
+				return false;
+			}
+			void *next = reinterpret_cast<uint8_t *>(found) + elementSize;
+			memmove(found,
+			        next,
+			        bufferSize - (reinterpret_cast<uint8_t *>(next) -
+			                      reinterpret_cast<uint8_t *>(buffer)));
+			return true;
+		}
+
+		/**
+		 * Resizes the buffer if the capacity equals the size.
+		 *
+		 * Note: Unlike the other APIs, size and capacity here are measured in
+		 * elements, not bytes.  This is inconsistent and would be terrible in
+		 * a public API, but it's called in one place so the code-size
+		 * reduction is worth the inconsistency.
+		 */
+		void *resize_if_needed(void  *buffer,
+		                       size_t size,
+		                       size_t capacity,
+		                       size_t elementSize)
+		{
+			void *newBuffer = buffer;
+			if (size == capacity)
+			{
+				Timeout t{UnlimitedTimeout};
+				newBuffer = heap_allocate_array(
+				  &t, MALLOC_CAPABILITY, capacity * 2, elementSize);
+				memcpy(newBuffer, buffer, size * elementSize);
+				free(buffer);
+				buffer = newBuffer;
+			}
+			return buffer;
+		}
+	};
+
+	/**
+	 * A simple table of `T`s, stored as a sorted array.  This uses `memcmp` and
+	 * `memcpy` to compare and copy elements and so requires that `T` is a
+	 * trivial type.
+	 *
+	 * This never shrinks and does a full copy if it needs to grow.
+	 */
+	template<typename T>
+	class SmallTable : public SmallTableBase
+	{
+		static_assert(std::is_trivial_v<T>, "T must be a trivial type");
+		/**
+		 * The buffer for the table.  We store all of the metadata in a single
+		 * capability:
+		 *
+		 * The base address is the start of the buffer.
+		 * The length defines the size of the buffer (the capacity).
+		 * The address points to the end of the used portion of the buffer.
+		 *
+		 * This lets us store all three words of state of a `std::vector` in a
+		 * single capability.  This works because the buffer is guaranteed to
+		 * be representable.  Note that capacity may be rounded up, but integer
+		 * division truncates towards zero and so the result remains correct.
+		 */
+		CHERI::Capability<T> buffer;
+		__always_inline T   *base()
+		{
+			CHERI::Capability base{buffer};
+			base.address() = buffer.base();
+			return base;
+		}
+
+		/**
+		 * Update the size by setting the address in the capability.
+		 */
+		void set_size(size_t size)
+		{
+			buffer.address() = buffer.base() + (size * sizeof(T));
+		}
+
+		public:
+		/**
+		 * Create a new small table with the given capacity.
+		 */
+		SmallTable(size_t size = 8)
+		{
+			buffer = static_cast<T *>(calloc(size, sizeof(T)));
+		}
+
+		/**
+		 * Destroy the small table, freeing the buffer.
+		 */
+		~SmallTable()
+		{
+			free(buffer);
+		}
+
+		/**
+		 * Returns the size of the table, computed from the address (end of the
+		 * used buffer) and base.
+		 */
+		size_t size()
+		{
+			return (buffer.address() - buffer.base()) / sizeof(T);
+		}
+
+		/**
+		 * Returns the capacity of the buffer (the length of the capability, as
+		 * units of size T).
+		 */
+		size_t capacity()
+		{
+			return buffer.length() / sizeof(T);
+		}
+
+		/**
+		 * Remove all elements from the table.
+		 *
+		 * Note: This does *not* free memory.
+		 */
+		void clear()
+		{
+			set_size(0);
+		}
+
+		/**
+		 * Inserts a new element into the table.  Does nothing if the element is
+		 * already present.
+		 */
+		void insert(const T &element)
+		{
+			// if (contains(element))
+			{
+				// return;
+			}
+			// If the capacity isn't large enough for the new element, resize.
+			size_t currentSize = size();
+			void  *currentBase =
+			  resize_if_needed(base(), currentSize, capacity(), sizeof(T));
+			SmallTableBase::insert(
+			  currentBase, currentSize * sizeof(T), &element, sizeof(T));
+			set_size(currentSize + 1);
+		}
+
+		/**
+		 * Removes an element from the table.  Does nothing if the element is
+		 * not present.
+		 */
+		void remove(const T &element)
+		{
+			if (SmallTableBase::remove(
+			      base(), size() * sizeof(T), &element, sizeof(T)))
+			{
+				set_size(size() - 1);
+			}
+		}
+
+		/**
+		 * Removes an element from the table, identified by a pointer to the
+		 * element.
+		 */
+		void remove(T *element)
+		{
+			memmove(element,
+			        element + 1,
+			        size() - (reinterpret_cast<uint8_t *>(element + 1) -
+			                  reinterpret_cast<uint8_t *>(base())));
+			set_size(size() - 1);
+		}
+
+		/**
+		 * Returns true if the table contains the given element.
+		 */
+		bool contains(const T &element)
+		{
+			return binary_search(
+			         base(), size() * sizeof(T), &element, sizeof(T)) !=
+			       nullptr;
+		}
+
+		/**
+		 * Returns a pointer (which can be used as a begin iterator) to the
+		 * start of the table.
+		 */
+		T *begin()
+		{
+			return base();
+		}
+
+		/**
+		 * Returns a pointer (which can be used as an end iterator) to the end
+		 * of the table.
+		 */
+		T *end()
+		{
+			return buffer;
+		}
+	};
+
+	/**
+	 * Test the small table implementation (disabled unless we're debugging
+	 * the small table explicitly).  If you enable this, make sure that you
+	 * also enable Debug, or these tests won't actually do anything.
+	 */
+	void test_small_table()
+	{
+		if constexpr (false)
+		{
+			Debug::log("Testing small table");
+			SmallTable<int> testSmallTable;
+			Debug::log("Testing small table insert");
+			testSmallTable.insert(1);
+			testSmallTable.insert(2);
+			testSmallTable.insert(5);
+			testSmallTable.insert(3);
+			testSmallTable.insert(4);
+			testSmallTable.insert(7);
+			auto printSmallTable = [&]() {
+				int i = 0;
+				for (auto v : testSmallTable)
+				{
+					Debug::log("Small table[{}] {}", i++, v);
+				}
+			};
+			auto testSmallTableContains =
+			  [&](std::initializer_list<int> array) {
+				  for (int i : array)
+				  {
+					  Debug::Assert(testSmallTable.contains(i),
+					                "Small table does not contain {}",
+					                i);
+				  }
+			  };
+			printSmallTable();
+			Debug::Assert(testSmallTable.size() == 6,
+			              "Small table size is wrong");
+			Debug::Assert(testSmallTable.capacity() == 8,
+			              "Small table capacity is wrong");
+			Debug::log("Testing small table contains");
+			testSmallTableContains({1, 2, 3, 4, 5, 7});
+			Debug::log("Testing small table remove");
+			testSmallTable.remove(5);
+			printSmallTable();
+			testSmallTableContains({1, 2, 3, 4, 7});
+			testSmallTable.remove(1);
+			testSmallTableContains({2, 3, 4, 7});
+			testSmallTable.remove(2);
+			testSmallTableContains({3, 4, 7});
+			testSmallTable.remove(4);
+			testSmallTableContains({3, 7});
+			testSmallTable.remove(7);
+			testSmallTableContains({3});
+			testSmallTable.remove(3);
+			printSmallTable();
+			Debug::Assert(
+			  testSmallTable.size() == 0,
+			  "Small table size is wrong after removal ({}, expected 0}",
+			  testSmallTable.size());
+			Debug::log("Finished small table tests");
+		}
+	}
+
+	/**
 	 * This is used to synchronize with the TCP/IP stack during resets.
 	 */
 	std::atomic<uint8_t> *tcpipRestartState = nullptr;
@@ -251,14 +591,9 @@ namespace
 			// = default.
 			auto operator<=>(const ConnectionTuple &) const = default; // NOLINT
 		};
-		std::vector<ConnectionTuple> permittedTCPEndpoints;
-		std::vector<ConnectionTuple> permittedUDPEndpoints;
-		FlagLockPriorityInherited    permittedEndpointsLock;
-		EndpointsTable()
-		{
-			permittedTCPEndpoints.reserve(8);
-			permittedUDPEndpoints.reserve(8);
-		}
+		SmallTable<ConnectionTuple> permittedTCPEndpoints;
+		SmallTable<ConnectionTuple> permittedUDPEndpoints;
+		FlagLockPriorityInherited   permittedEndpointsLock;
 
 		using GuardedTable =
 		  std::pair<LockGuard<decltype(permittedEndpointsLock)>,
@@ -274,12 +609,6 @@ namespace
 			                    protocol == IPProtocolNumber::TCP
 			                      ? permittedTCPEndpoints
 			                      : permittedUDPEndpoints};
-		}
-
-		auto find_endpoint(decltype(permittedTCPEndpoints) &table,
-		                   const ConnectionTuple           &endpoint)
-		{
-			return std::lower_bound(table.begin(), table.end(), endpoint);
 		}
 
 		public:
@@ -308,15 +637,7 @@ namespace
 			auto guardedTable = permitted_endpoints(protocol);
 			auto &[g, table]  = guardedTable;
 			ConnectionTuple tuple{endpoint, localPort, remotePort};
-			auto            iterator = find_endpoint(table, tuple);
-			if (iterator != table.end() && (*iterator == tuple))
-			{
-				table.erase(iterator);
-				return;
-			}
-			Debug::log("Failed to remove endpoint (local: {}; remote: {})",
-			           localPort,
-			           remotePort);
+			table.remove(tuple);
 		}
 
 		void add_endpoint(IPProtocolNumber protocol,
@@ -331,16 +652,7 @@ namespace
 			auto guardedTable = permitted_endpoints(protocol);
 			auto &[g, table]  = guardedTable;
 			ConnectionTuple tuple{remoteAddress, localPort, remotePort};
-			auto            iterator = find_endpoint(table, tuple);
-			if (iterator != table.end() && (*iterator == tuple))
-			{
-				Debug::log("Failed to add endpoint: already in the table "
-				           "(local: {}; remote: {})",
-				           localPort,
-				           remotePort);
-				return;
-			}
-			table.insert(iterator, tuple);
+			table.insert(tuple);
 		}
 
 		void remove_endpoint(IPProtocolNumber protocol, uint16_t localPort)
@@ -354,17 +666,13 @@ namespace
 			// TODO: If we sorted by local port, we could make this O(log(n))
 			// If we expect n to be < 8 (currently do) then that's too much
 			// work.
-			bool found = false;
-			std::remove_if(table.begin(),
-			               table.end(),
-			               [localPort, &found](const ConnectionTuple &tuple) {
-				               bool ret = (tuple.localPort == localPort);
-				               found    = found || ret;
-				               return ret;
-			               });
-			if (!found)
+			for (auto &tuple : table)
 			{
-				Debug::log("Failed to remove endpoint (local: {})", localPort);
+				if (tuple.localPort == localPort)
+				{
+					table.remove(&tuple);
+					break;
+				}
 			}
 		}
 
@@ -380,8 +688,7 @@ namespace
 			auto guardedTable = permitted_endpoints(protocol);
 			auto &[g, table]  = guardedTable;
 			ConnectionTuple tuple{endpoint, localPort, remotePort};
-			auto            iterator = find_endpoint(table, tuple);
-			return iterator != table.end() && (*iterator == tuple);
+			return table.contains(tuple);
 		}
 	};
 
@@ -626,6 +933,8 @@ bool ethernet_send_frame(uint8_t *frame, size_t length)
 
 void __cheri_compartment("Firewall") ethernet_run_driver()
 {
+	// Test the small table (does nothing in release builds).
+	test_small_table();
 	// Sleep until the driver is initialized.
 	for (int barrierState = barrier; barrier != 2;)
 	{
