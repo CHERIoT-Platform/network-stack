@@ -713,7 +713,7 @@ int network_socket_close(Timeout *t, SObj mallocCapability, SObj sealedSocket)
 			  int ret = 0;
 			  if (socket->socketEpoch == currentSocketEpoch.load())
 			  {
-				  Debug::Assert(ds::linked_list::is_singleton(&(socket->ring)),
+				  Debug::Assert(!ds::linked_list::is_singleton(&(socket->ring)),
 				                "The socket should be present in the list.");
 				  if (LockGuard g{sealedSocketsListLock, t})
 				  {
