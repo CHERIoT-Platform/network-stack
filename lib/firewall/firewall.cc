@@ -121,25 +121,28 @@ namespace
 		                               const void *element,
 		                               size_t      elementSize)
 		{
-			size_t low  = 0;
-			size_t high = bufferSize / elementSize;
-			while (low <= high)
+			if (bufferSize > 0)
 			{
-				size_t mid = low + (high - low) / 2;
-				void  *current =
-				  reinterpret_cast<uint8_t *>(buffer) + (mid * elementSize);
-				int comparison = memcmp(current, element, elementSize);
-				if (comparison == 0)
+				size_t low  = 0;
+				size_t high = bufferSize / elementSize;
+				while (low <= high)
 				{
-					return current;
-				}
-				if (comparison < 0)
-				{
-					low = mid + 1;
-				}
-				else
-				{
-					high = mid - 1;
+					size_t mid = low + (high - low) / 2;
+					void  *current =
+					  reinterpret_cast<uint8_t *>(buffer) + (mid * elementSize);
+					int comparison = memcmp(current, element, elementSize);
+					if (comparison == 0)
+					{
+						return current;
+					}
+					if (comparison < 0)
+					{
+						low = mid + 1;
+					}
+					else
+					{
+						high = mid - 1;
+					}
 				}
 			}
 			return nullptr;
@@ -412,6 +415,9 @@ namespace
 			  testSmallTable.size() == 0,
 			  "Small table size is wrong after removal ({}, expected 0}",
 			  testSmallTable.size());
+			Debug::log("Testing small table contains on a length 0 table");
+			SmallTable<int> testSmallTableZeroLength(0);
+			testSmallTableZeroLength.contains(1);
 			Debug::log("Finished small table tests");
 		}
 	}
