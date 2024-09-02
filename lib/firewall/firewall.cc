@@ -141,6 +141,12 @@ namespace
 					}
 					else
 					{
+						// If we're already at the first element, going further
+						// down will underflow the offset.
+						if (mid == 0)
+						{
+							return nullptr;
+						}
 						high = mid - 1;
 					}
 				}
@@ -375,6 +381,7 @@ namespace
 			testSmallTable.insert(3);
 			testSmallTable.insert(4);
 			testSmallTable.insert(7);
+			testSmallTable.contains(0);
 			auto printSmallTable = [&]() {
 				int i = 0;
 				for (auto v : testSmallTable)
