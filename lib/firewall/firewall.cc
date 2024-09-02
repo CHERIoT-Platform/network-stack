@@ -322,8 +322,9 @@ namespace
 		{
 			memmove(element,
 			        element + 1,
-			        size() - (reinterpret_cast<uint8_t *>(element + 1) -
-			                  reinterpret_cast<uint8_t *>(base())));
+			        size() - ((reinterpret_cast<uint8_t *>(element + 1) -
+			                   reinterpret_cast<uint8_t *>(base())) /
+			                  sizeof(T)));
 			set_size(size() - 1);
 		}
 
@@ -418,6 +419,15 @@ namespace
 			Debug::log("Testing small table contains on a length 0 table");
 			SmallTable<int> testSmallTableZeroLength(0);
 			testSmallTableZeroLength.contains(1);
+
+      Debug::log("Testing small table pointer-based remove");
+			testSmallTable.insert(1);
+			testSmallTable.remove(testSmallTable.begin());
+			Debug::Assert(
+			  testSmallTable.size() == 0,
+			  "Small table size is wrong after removal ({}, expected 0}",
+			  testSmallTable.size());
+
 			Debug::log("Finished small table tests");
 		}
 	}
