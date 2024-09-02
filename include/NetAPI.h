@@ -249,6 +249,13 @@ enum ConnectionType : uint8_t
 const char *__cheri_compartment("NetAPI") network_host_get(SObj hostCapability);
 
 /**
+ * Inject a memory-safety bug into the network stack.
+ *
+ * This is disabled unless compiled with the `network-inject-faults` option.
+ */
+void __cheri_compartment("TCPIP") network_inject_fault(void);
+
+/**
  * Connection capability contents.  Instances of this sealed with the
  * NetworkConnectionKey sealing capability authorise access to a specific host
  * and port.

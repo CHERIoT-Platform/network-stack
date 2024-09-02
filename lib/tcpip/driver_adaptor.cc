@@ -35,6 +35,16 @@ namespace
 	NetworkInterface_t *thisInterface = nullptr;
 
 	/**
+	 * Is the TCP/IP stack compiled with support for fault injection?
+	 */
+	constexpr bool InjectFaults = CHERIOT_RTOS_OPTION_NETWORK_INJECT_FAULTS;
+
+	/**
+	 * Has a fault been requested?
+	 */
+	bool faultInjected = false;
+
+	/**
 	 * Callback to initialise the network interface.  Starts the driver thread.
 	 */
 	BaseType_t initialise(struct xNetworkInterface *pxDescriptor)
@@ -103,6 +113,19 @@ bool __cheri_compartment("TCPIP")
 		  memcpy(descriptor->pucEthernetBuffer, frame, length);
 		  descriptor->xDataLength = length;
 		  descriptor->pxInterface = thisInterface;
+		  if constexpr (InjectFaults)
+		  {
+			  if (faultInjected)
+			  {
+				  ConditionalDebug<true, "Ethernet Adaptor">::log("Triggering crash");
+				  faultInjected = false;
+				  // Inject a fault by giving the frame an incorrect length.
+				  // This will cause the TCP/IP stack to read beyond the end.
+				  CHERI::Capability buffer = descriptor->pucEthernetBuffer;
+				  buffer.bounds().set_inexact(buffer.length() - 16);
+				  descriptor->pucEthernetBuffer = buffer;
+			  }
+		  }
 		  // This is an annoying waste of an allocation, we should be able to
 		  // drop this but FreeRTOS_MatchingEndpoint requires a different
 		  // alignment.  This will matter less when we are doing our own
@@ -155,3 +178,10 @@ NetworkInterface_t *fill_interface_descriptor(BaseType_t          xEMACIndex,
 	FreeRTOS_AddNetworkInterface(pxInterface);
 	return pxInterface;
 }
+
+#if CHERIOT_RTOS_OPTION_NETWORK_INJECT_FAULTS
+void __cheri_compartment("TCPIP") network_inject_fault(void)
+{
+	faultInjected = true;
+}
+#endif
