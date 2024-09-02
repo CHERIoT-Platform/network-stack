@@ -1,3 +1,8 @@
+option("network-inject-faults")
+  set_default(false)
+  set_showmenu(true)
+  set_description("Inject network faults for testing")
+
 compartment("TCPIP")
   set_default(false)
   add_deps("freestanding", "string", "message_queue_library", "event_group", "cxxrt")
