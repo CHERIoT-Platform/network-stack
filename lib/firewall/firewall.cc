@@ -457,7 +457,8 @@ namespace
 	{
 		static MACAddress macAddress = []() {
 			auto &ethernet = lazy_network_interface();
-			if constexpr (EthernetDevice::has_unique_mac_address())
+			if constexpr (EthernetDevice::has_unique_mac_address() ||
+			              CHERIOT_RTOS_OPTION_FORCE_NON_UNIQUE_MAC)
 			{
 				return ethernet.mac_address_default();
 			}

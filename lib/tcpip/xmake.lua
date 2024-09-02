@@ -9,6 +9,9 @@ compartment("TCPIP")
     target:add('options', "IPv6")
     local IPv6 = get_config("IPv6")
     target:add("defines", "CHERIOT_RTOS_OPTION_IPv6=" .. tostring(IPv6))
+    target:add('options', "network-inject-faults")
+    local injectFaults = get_config("network-inject-faults")
+    target:add("defines", "CHERIOT_RTOS_OPTION_NETWORK_INJECT_FAULTS=" .. tostring(injectFaults))
     if (IPv6) then
       -- xmake's behaviour is inconsistent between add_files(...) and
       -- target:add("files", ...).  Fix the paths to behave as if they were added with add_files.
