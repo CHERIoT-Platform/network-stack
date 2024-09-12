@@ -120,11 +120,11 @@ SObj network_socket_connect_tcp(Timeout *timeout,
 		timeout->elapse(t.elapsed);
 		if (isIPv6)
 		{
-			firewall_remove_tcpipv6_endpoint(ntohs(host->port));
+			firewall_remove_tcpipv6_local_endpoint(ntohs(host->port));
 		}
 		else
 		{
-			firewall_remove_tcpipv4_endpoint(ntohs(host->port));
+			firewall_remove_tcpipv4_local_endpoint(ntohs(host->port));
 		}
 		sealedSocket = nullptr;
 	}

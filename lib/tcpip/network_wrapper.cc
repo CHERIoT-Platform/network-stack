@@ -692,7 +692,7 @@ int network_socket_close(Timeout *t, SObj mallocCapability, SObj sealedSocket)
 			  {
 				  if (isTCP)
 				  {
-					  firewall_remove_tcpipv6_endpoint(localPort);
+					  firewall_remove_tcpipv6_local_endpoint(localPort);
 				  }
 				  else
 				  {
@@ -703,7 +703,7 @@ int network_socket_close(Timeout *t, SObj mallocCapability, SObj sealedSocket)
 			  {
 				  if (isTCP)
 				  {
-					  firewall_remove_tcpipv4_endpoint(localPort);
+					  firewall_remove_tcpipv4_local_endpoint(localPort);
 				  }
 				  else
 				  {
