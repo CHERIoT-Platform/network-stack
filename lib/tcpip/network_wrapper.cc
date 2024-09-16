@@ -22,7 +22,14 @@ using Debug = ConditionalDebug<false, "Network stack wrapper">;
 
 #include "../firewall/firewall.hh"
 
+/**
+ * Statically match constants from the firewall which must stay in sync with
+ * the TCP/IP stack.
+ */
+static_assert(FirewallMaximumNumberOfClients ==
+              MAX_SIMULTANEOUS_TCP_CONNECTIONS);
 static_assert(RestartStateDriverKickedBit == DriverKicked);
+
 constexpr bool UseIPv6 = CHERIOT_RTOS_OPTION_IPv6;
 
 // IP thread global lock. See comment in `FreeRTOS_IP_wrapper.c`.
@@ -484,11 +491,75 @@ int network_host_resolve(const char     *hostname,
 	  -1 /* invalid if we are restarting */);
 }
 
+/**
+ * Callback called by FreeRTOS+TCP when a TCP connection is created or
+ * terminated.
+ *
+ * We use this callback to handle the case where a three-way TCP handshake
+ * initiated by a peer on a listening socket fails.
+ *
+ * Rationale:
+ * The firewall automatically opens a hole as soon as it sees a SYN sent by a
+ * new peer to a server port. This hole is supposed to be closed by
+ * `FreeRTOS_closesocket` when the connection is terminated. However, if the
+ * three-way handshake does not succeed (e.g., the peer only sends a SYN), the
+ * TCP connection will not be created and thus no socket will be created. This
+ * means that `FreeRTOS_closesocket` will never be called. In that case we must
+ * close the firewall hole ourselves. Fortunately, this callback is called when
+ * an attempted three-way-handshake failed. We can use it to tell the firewall
+ * to remove the hole.
+ *
+ * It is also worth noting that this will never be called if *we* close the
+ * socket through `FreeRTOS_closesocket`.
+ *
+ * This is because FreeRTOS+TCP does not do a three-way handshake close when
+ * the socket is closed through `FreeRTOS_socketclose()`. Instead, FreeRTOS+TCP
+ * sends a FIN to the peer and destroys the socket immediately. Any further
+ * packet from the peer is answered with a RST (as a spurious packet).  Because
+ * the socket is destroyed in a state when the TCP connection has not been
+ * properly closed (it is just in the "FIN sent" stage, i.e., FIN Wait-1), the
+ * callback is not called.
+ */
+static void on_tcp_connect(Socket_t socket, BaseType_t isConnected)
+{
+	if (!isConnected)
+	{
+		/**
+		 * A TCP connection was closed. Close the corresponding
+		 * firewall hole.
+		 *
+		 * Note that this is called from the TCP/IP thread, i.e., it
+		 * cannot possibly race with a free of the `socket`, even if
+		 * `network_socket_close` is called concurrently.
+		 */
+		struct freertos_sockaddr address = {0};
+		FreeRTOS_GetRemoteAddress(socket, &address);
+		Debug::log("A connection was closed on port {} from remote port {}",
+		           static_cast<int>(socket->usLocalPort),
+		           static_cast<int>(ntohs(address.sin_port)));
+		auto localPort = htons(socket->usLocalPort);
+		if (socket->bits.bIsIPv6)
+		{
+			firewall_remove_tcpipv6_remote_endpoint(
+			  address.sin_address.xIP_IPv6.ucBytes,
+			  localPort,
+			  address.sin_port);
+		}
+		else
+		{
+			firewall_remove_tcpipv4_remote_endpoint(
+			  address.sin_address.ulIP_IPv4, localPort, address.sin_port);
+		}
+	}
+}
+F_TCP_UDP_Handler_t onTCPConnectCallback = {on_tcp_connect};
+
 SObj network_socket_create_and_bind(Timeout       *timeout,
                                     SObj           mallocCapability,
                                     bool           isIPv6,
                                     ConnectionType type,
-                                    uint16_t       localPort)
+                                    uint16_t       localPort,
+                                    bool           isListening)
 {
 	return with_restarting_checks(
 	  [&]() -> SObj {
@@ -574,6 +645,34 @@ SObj network_socket_create_and_bind(Timeout       *timeout,
 				    mallocCapability, socket_key(), sealedSocket);
 				  return nullptr;
 			  }
+
+			  if (isListening)
+			  {
+				  auto listenResult =
+				    FreeRTOS_listen(socket, MAX_SIMULTANEOUS_TCP_CONNECTIONS);
+				  if (listenResult != 0)
+				  {
+					  // See above comments. Note that this
+					  // failure case is not supposed to
+					  // happen since we know that the
+					  // socket is valid and bound.
+					  Debug::log("Failed to set socket into listen mode.");
+					  // No need to acquire the lock here
+					  // since we still have it.
+					  ds::linked_list::remove(&(socketWrapper->ring));
+					  close_socket_retry(timeout, socket);
+					  token_obj_destroy(
+					    mallocCapability, socket_key(), sealedSocket);
+					  return nullptr;
+				  }
+
+				  FreeRTOS_setsockopt(
+				    socket,
+				    0,
+				    FREERTOS_SO_TCP_CONN_HANDLER,
+				    static_cast<void *>(&onTCPConnectCallback),
+				    sizeof(onTCPConnectCallback));
+			  }
 		  }
 		  else
 		  {
@@ -588,6 +687,128 @@ SObj network_socket_create_and_bind(Timeout       *timeout,
 		  return sealedSocket;
 	  },
 	  static_cast<SObj>(nullptr) /* return nullptr if we are restarting */);
+}
+
+SObj network_socket_accept_tcp(Timeout        *timeout,
+                               SObj            mallocCapability,
+                               SObj            sealedListeningSocket,
+                               NetworkAddress *address,
+                               uint16_t       *port)
+{
+	SObj socket = nullptr;
+	with_sealed_socket(
+	  [&](SealedSocket *listeningSocket) {
+		  if (!check_timeout_pointer(timeout))
+		  {
+			  return -EINVAL;
+		  }
+
+		  // Create a sealed socket wrapper for the accepted connection.
+		  auto [socketWrapper, sealedSocket] = token_allocate<SealedSocket>(
+		    timeout, mallocCapability, socket_key());
+		  if (socketWrapper == nullptr)
+		  {
+			  Debug::log("Failed to allocate socket wrapper.");
+			  return -EINVAL;
+		  }
+
+		  socketWrapper->socketEpoch = currentSocketEpoch.load();
+
+		  struct freertos_sockaddr addressTmp;
+		  uint32_t                 addressLength = sizeof(addressTmp);
+		  auto                     rawSocket     = FreeRTOS_accept(
+		                            listeningSocket->socket, &addressTmp, &addressLength);
+		  if (rawSocket == nullptr)
+		  {
+			  Debug::log("Failed to create socket.");
+			  // This cannot fail unless buggy - we know that we
+			  // successfully allocated the token with this malloc
+			  // capability. Same for other calls to `token_obj_destroy`
+			  // in this function.
+			  token_obj_destroy(mallocCapability, socket_key(), sealedSocket);
+			  return -EINVAL;
+		  }
+		  socketWrapper->socket = rawSocket;
+
+		  // Claim the socket so that it counts towards the caller's quota.  The
+		  // network stack also keeps a claim to it.  We will drop this claim on
+		  // deallocation.
+		  Claim c{mallocCapability, rawSocket};
+		  if (!c)
+		  {
+			  Debug::log("Failed to claim socket.");
+			  // Note that `close_socket_retry` can fail, in which case we
+			  // will leak the socket allocation. There is nothing we can do
+			  // here.  Returning the half-baked sealed socket would be
+			  // dangerous because the close() path isn't designed to handle
+			  // it (and changing it to do so is non-trivial and likely not
+			  // worth the trouble).
+			  close_socket_retry(timeout, rawSocket);
+			  // Cannot fail, see above.
+			  token_obj_destroy(mallocCapability, socket_key(), sealedSocket);
+			  return -EINVAL;
+		  }
+
+		  if (LockGuard g{sealedSocketsListLock, timeout})
+		  {
+			  // Add the socket to the sealed socket reset list.
+			  socketWrapper->ring.cell_reset();
+			  sealedSockets.append(&(socketWrapper->ring));
+		  }
+		  else
+		  {
+			  // See above comments.
+			  Debug::log("Failed to add socket to the socket reset list.");
+			  close_socket_retry(timeout, rawSocket);
+			  token_obj_destroy(mallocCapability, socket_key(), sealedSocket);
+			  return -EINVAL;
+		  }
+
+		  // Set `address`.
+		  if ((heap_claim_fast(timeout, address) < 0) ||
+		      (!check_pointer<PermissionSet{Permission::Store}>(address)))
+		  {
+			  // There is not much we can do if this happens. The
+			  // caller passed an invalid `address` or freed it
+			  // concurrently: we can simply ignore, they are
+			  // shooting themselves in the foot by making
+			  // `address` unusable. Returning nullptr at that
+			  // stage would force us to close the socket, destroy
+			  // the token, etc.
+			  Debug::log("Invalid address pointer");
+		  }
+		  else
+		  {
+			  if (addressTmp.sin_family == FREERTOS_AF_INET6)
+			  {
+				  address->kind = NetworkAddress::AddressKindIPv6;
+				  memcpy(
+				    address->ipv6, addressTmp.sin_address.xIP_IPv6.ucBytes, 16);
+			  }
+			  else
+			  {
+				  address->kind = NetworkAddress::AddressKindIPv4;
+				  address->ipv4 = addressTmp.sin_address.ulIP_IPv4;
+			  }
+		  }
+		  // Set `port`.
+		  if ((heap_claim_fast(timeout, port) < 0) ||
+		      (!check_pointer<PermissionSet{Permission::Store}>(port)))
+		  {
+			  // Same comment as earlier for `address`.
+			  Debug::log("Invalid port pointer");
+		  }
+		  else
+		  {
+			  *port = ntohs(addressTmp.sin_port);
+		  }
+
+		  c.release();
+		  socket = sealedSocket;
+		  return 0;
+	  },
+	  sealedListeningSocket);
+	return socket;
 }
 
 int network_socket_connect_tcp_internal(Timeout       *timeout,
@@ -685,18 +906,44 @@ int network_socket_close(Timeout *t, SObj mallocCapability, SObj sealedSocket)
 			  // during the reset.
 			  if (socket->socketEpoch == currentSocketEpoch.load())
 			  {
+				  auto rawSocket = socket->socket;
+
 				  // Do not bother with the return value:
 				  // `FreeRTOS_shutdown` fails if the TCP
 				  // connection is dead, which is likely to
 				  // happen in practice and has no impact here.
-				  FreeRTOS_shutdown(socket->socket, FREERTOS_SHUT_RDWR);
+				  FreeRTOS_shutdown(rawSocket, FREERTOS_SHUT_RDWR);
 
-				  auto localPort = ntohs(socket->socket->usLocalPort);
-				  if (socket->socket->bits.bIsIPv6)
+				  auto localPort = ntohs(rawSocket->usLocalPort);
+				  if (rawSocket->bits.bIsIPv6)
 				  {
 					  if (isTCP)
 					  {
-						  firewall_remove_tcpipv6_local_endpoint(localPort);
+						  // This only fails if the
+						  // socket is not a TCP
+						  // socket, which shouldn't
+						  // happen here.
+						  struct freertos_sockaddr address = {0};
+						  FreeRTOS_GetRemoteAddress(rawSocket, &address);
+
+						  // If the socket is in
+						  // listening mode, remove the
+						  // associated server port
+						  // from the firewall.
+						  // Otherwise close the
+						  // corresponding firewall
+						  // hole.
+						  if (rawSocket->u.xTCP.eTCPState == eTCP_LISTEN)
+						  {
+							  firewall_remove_tcpipv6_server_port(localPort);
+						  }
+						  else
+						  {
+							  firewall_remove_tcpipv6_remote_endpoint(
+							    address.sin_address.xIP_IPv6.ucBytes,
+							    localPort,
+							    address.sin_port);
+						  }
 					  }
 					  else
 					  {
@@ -707,7 +954,24 @@ int network_socket_close(Timeout *t, SObj mallocCapability, SObj sealedSocket)
 				  {
 					  if (isTCP)
 					  {
-						  firewall_remove_tcpipv4_local_endpoint(localPort);
+						  // This only fails if the
+						  // socket is not a TCP
+						  // socket, which shouldn't
+						  // happen here.
+						  struct freertos_sockaddr address = {0};
+						  FreeRTOS_GetRemoteAddress(socket->socket, &address);
+
+						  if (rawSocket->u.xTCP.eTCPState == eTCP_LISTEN)
+						  {
+							  firewall_remove_tcpipv4_server_port(localPort);
+						  }
+						  else
+						  {
+							  firewall_remove_tcpipv4_remote_endpoint(
+							    address.sin_address.ulIP_IPv4,
+							    localPort,
+							    address.sin_port);
+						  }
 					  }
 					  else
 					  {
@@ -851,7 +1115,7 @@ NetworkReceiveResult network_socket_receive_from(Timeout *timeout,
                   {
                       return -EPERM;
                   }
-                  *port = FreeRTOS_ntohs(remoteAddress.sin_port);
+                  *port = ntohs(remoteAddress.sin_port);
               }
 
               buffer = claimedBuffer;

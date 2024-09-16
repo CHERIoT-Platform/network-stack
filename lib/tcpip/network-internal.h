@@ -31,6 +31,13 @@ __cheri_compartment("TCPIP") int network_host_resolve(
  * Create a socket and bind it to the given address.  The socket will be
  * allocated with the malloc capability.
  *
+ * The socket will be bound to any passed non-zero `localPort`. Otherwise, a
+ * random local port will be selected.
+ *
+ * If `isListening` is set, the socket will be marked as a passive socket which
+ * can be used to accept incoming connections (see
+ * `network_socket_accept_tcp`).
+ *
  * This returns a sealed capability to a socket on success, or null on failure.
  *
  * This should be called only from the NetAPI compartment.
@@ -40,7 +47,8 @@ SObj __cheri_compartment("TCPIP")
                                  SObj           mallocCapability,
                                  bool           isIPv6,
                                  ConnectionType type,
-                                 uint16_t       localPort = 0);
+                                 uint16_t       localPort = 0,
+				 bool           isListening = false);
 
 /**
  * Connect a TCP socket to the given address.

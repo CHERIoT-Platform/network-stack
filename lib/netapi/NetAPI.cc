@@ -36,6 +36,14 @@ namespace
 	{
 		return STATIC_SEALING_TYPE(NetworkConnectionKey);
 	}
+
+	/**
+	 * Returns the sealing key used for a server port.
+	 */
+	__always_inline SKey bind_capability_key()
+	{
+		return STATIC_SEALING_TYPE(NetworkBindKey);
+	}
 } // namespace
 
 SObj network_socket_connect_tcp(Timeout *timeout,
@@ -128,6 +136,62 @@ SObj network_socket_connect_tcp(Timeout *timeout,
 		}
 		sealedSocket = nullptr;
 	}
+	return sealedSocket;
+}
+
+SObj network_socket_listen_tcp(Timeout *timeout,
+                               SObj     mallocCapability,
+                               SObj     bindCapability)
+{
+	if (!check_timeout_pointer(timeout))
+	{
+		return nullptr;
+	}
+	Sealed<BindCapability> sealedBindCapability{bindCapability};
+	auto                  *serverPort =
+	  token_unseal(bind_capability_key(), sealedBindCapability);
+	if (serverPort == nullptr)
+	{
+		Debug::log("Failed to unseal bind capability");
+		return nullptr;
+	}
+
+	if constexpr (!UseIPv6)
+	{
+		if (serverPort->isIPv6)
+		{
+			Debug::log("IPv6 is not supported");
+			return nullptr;
+		}
+	}
+
+	// Create a standard TCP socket in listening mode.
+	CHERI::Capability sealedSocket =
+	  network_socket_create_and_bind(timeout,
+	                                 mallocCapability,
+	                                 serverPort->isIPv6,
+	                                 ConnectionTypeTCP,
+	                                 serverPort->port,
+	                                 true /* listening mode */);
+	if (!sealedSocket.is_valid())
+	{
+		Debug::log("Failed to create socket");
+		return nullptr;
+	}
+
+	// Register the server port.
+	if (serverPort->isIPv6)
+	{
+		if constexpr (UseIPv6)
+		{
+			firewall_add_tcpipv6_server_port(ntohs(serverPort->port));
+		}
+	}
+	else
+	{
+		firewall_add_tcpipv4_server_port(ntohs(serverPort->port));
+	}
+
 	return sealedSocket;
 }
 
