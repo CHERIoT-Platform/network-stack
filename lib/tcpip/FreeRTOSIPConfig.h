@@ -18,6 +18,12 @@
 #include <FreeRTOS_errno.h>
 
 /**
+ * Enable socket callbacks. We use FREERTOS_SO_TCP_CONN_HANDLER, which notifies
+ * us when a TCP connection is terminated (see `network_wrapper.cc`).
+ */
+#define ipconfigUSE_CALLBACKS 1
+
+/**
  * `INCLUDE_*` macros have no effect here since we do not use the FreeRTOS
  * core, however FreeRTOS+TCP refuses to compile without defining these.
  */
