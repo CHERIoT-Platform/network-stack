@@ -48,11 +48,12 @@
  * footprint of 9,984 bytes.
  *
  * Note that the pool of descriptors is reallocated at every network stack
- * reset. Setting this number to a large value (e.g., 256, the FreeRTOS+TCP
- * default) is known to cause reset failures due to fragmentation preventing us
- * from reallocating the pool.
+ * reset. Setting the number of segments to a large value (e.g., 256, the
+ * FreeRTOS+TCP default) is known to cause reset failures due to fragmentation
+ * preventing us from reallocating the pool.
  */
-#define ipconfigTCP_WIN_SEG_COUNT 96
+#define MAX_SIMULTANEOUS_TCP_CONNECTIONS 6
+#define ipconfigTCP_WIN_SEG_COUNT (MAX_SIMULTANEOUS_TCP_CONNECTIONS * 16)
 
 /**
  * Enable counting semaphore functionality in the build, as this is necessary
