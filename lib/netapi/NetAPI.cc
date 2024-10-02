@@ -26,7 +26,6 @@ namespace
 
 namespace
 {
-	using Debug            = ConditionalDebug<false, "Network API">;
 	constexpr bool UseIPv6 = CHERIOT_RTOS_OPTION_IPv6;
 
 	/**
