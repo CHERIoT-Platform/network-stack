@@ -12,6 +12,7 @@
 #include <FreeRTOS_IP_Private.h>
 #include <NetAPI.h>
 #include <debug.hh>
+#include <endianness.hh>
 #include <function_wrapper.hh>
 #include <limits>
 #include <locks.hh>
@@ -73,28 +74,6 @@ using CHERI::PermissionSet;
 
 namespace
 {
-	// TODO These should probably be in their own library.
-	uint16_t constexpr ntohs(uint16_t value)
-	{
-		return
-#ifdef __LITTLE_ENDIAN__
-		  __builtin_bswap16(value)
-#else
-		  value
-#endif
-		    ;
-	}
-	uint16_t constexpr htons(uint16_t value)
-	{
-		return
-#ifdef __LITTLE_ENDIAN__
-		  __builtin_bswap16(value)
-#else
-		  value
-#endif
-		    ;
-	}
-
 	/**
 	 * Returns the key with which SealedSocket instances are sealed.
 	 */

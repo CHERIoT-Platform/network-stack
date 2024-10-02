@@ -5,6 +5,7 @@
 #include <compartment-macros.h>
 #include <debug.hh>
 //#include <fail-simulator-on-error.h>
+#include <endianness.hh>
 #include <locks.hh>
 #include <platform-entropy.hh>
 #include <platform-ethernet.hh>
@@ -15,31 +16,6 @@
 using Debug = ConditionalDebug<false, "Firewall">;
 
 #include "firewall.hh"
-
-namespace
-{
-	// TODO These should probably be in their own library.
-	uint16_t constexpr ntohs(uint16_t value)
-	{
-		return
-#ifdef __LITTLE_ENDIAN__
-		  __builtin_bswap16(value)
-#else
-		  value
-#endif
-		    ;
-	}
-	uint16_t constexpr htons(uint16_t value)
-	{
-		return
-#ifdef __LITTLE_ENDIAN__
-		  __builtin_bswap16(value)
-#else
-		  value
-#endif
-		    ;
-	}
-} // namespace
 
 namespace
 {
