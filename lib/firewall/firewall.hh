@@ -6,6 +6,11 @@
 #include <compartment.h>
 
 /**
+ * Unless specified otherwise, all APIs exposed in this header take IP
+ * addresses and ports in network byte order.
+ */
+
+/**
  * Send a frame through the on-device firewall.  This returns true if the
  * packet is successfully sent, false otherwise.
  *
