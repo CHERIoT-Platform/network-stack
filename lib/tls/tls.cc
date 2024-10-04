@@ -217,8 +217,9 @@ namespace
 			static constexpr size_t MantissaBits = 9;
 			// Shrink the length to the largest representable length that we
 			// can fit.
-			length = std::min<size_t>(
-			  length, ((1 << MantissaBits) - 1) << __builtin_ctz(baseAddress));
+			length = std::min<size_t>(length & alignmentMask,
+			                          ((1 << MantissaBits) - 1)
+			                            << __builtin_ctz(baseAddress));
 			Debug::log("Reducing length to {}", length);
 			Debug::Assert(
 			  [=]() {
