@@ -676,38 +676,43 @@ int network_socket_close(Timeout *t, SObj mallocCapability, SObj sealedSocket)
 				  return -EINVAL;
 			  }
 			  bool isTCP = socket->socket->ucProtocol == FREERTOS_IPPROTO_TCP;
-			  // Shut down the socket before closing the firewall.
-			  // Don't bother with the return value:
-			  // `FreeRTOS_shutdown` fails mainly if the TCP
-			  // connection is dead, which is likely to happen in
-			  // practice and has no impact for us.  Don't call
-			  // `FreeRTOS_shutdown` if the socket is coming from a
-			  // previous instance of the network stack.
+			  // Shut down the socket and close the firewall.
+			  //
+			  // Don't call `FreeRTOS_shutdown` if the socket is
+			  // coming from a previous instance of the network
+			  // stack (the socket is invalid anyways). Don't close
+			  // the firewall either as this was already done
+			  // during the reset.
 			  if (socket->socketEpoch == currentSocketEpoch.load())
 			  {
+				  // Do not bother with the return value:
+				  // `FreeRTOS_shutdown` fails if the TCP
+				  // connection is dead, which is likely to
+				  // happen in practice and has no impact here.
 				  FreeRTOS_shutdown(socket->socket, FREERTOS_SHUT_RDWR);
-			  }
-			  auto localPort = ntohs(socket->socket->usLocalPort);
-			  if (socket->socket->bits.bIsIPv6)
-			  {
-				  if (isTCP)
+
+				  auto localPort = ntohs(socket->socket->usLocalPort);
+				  if (socket->socket->bits.bIsIPv6)
 				  {
-					  firewall_remove_tcpipv6_local_endpoint(localPort);
+					  if (isTCP)
+					  {
+						  firewall_remove_tcpipv6_local_endpoint(localPort);
+					  }
+					  else
+					  {
+						  firewall_remove_udpipv6_local_endpoint(localPort);
+					  }
 				  }
 				  else
 				  {
-					  firewall_remove_udpipv6_local_endpoint(localPort);
-				  }
-			  }
-			  else
-			  {
-				  if (isTCP)
-				  {
-					  firewall_remove_tcpipv4_local_endpoint(localPort);
-				  }
-				  else
-				  {
-					  firewall_remove_udpipv4_local_endpoint(localPort);
+					  if (isTCP)
+					  {
+						  firewall_remove_tcpipv4_local_endpoint(localPort);
+					  }
+					  else
+					  {
+						  firewall_remove_udpipv4_local_endpoint(localPort);
+					  }
 				  }
 			  }
 			  int ret = 0;
