@@ -164,7 +164,7 @@ valid(ethernetDevice) {
 	firewall_thread_is_valid
 	network_thread_is_valid
 	data.compartment.compartment_call_allow_list("TCPIP", "network_host_resolve.*", {"NetAPI"})
-	data.compartment.compartment_call_allow_list("TCPIP", "network_socket_create_and_bind.*", {"NetAPI"})
+	data.compartment.compartment_call_allow_list("TCPIP", "network_socket_create_and_bind.*", {"NetAPI", "TCPIP"})
 	data.compartment.compartment_call_allow_list("TCPIP", "network_socket_connect_tcp_internal.*", {"NetAPI"})
 	data.compartment.compartment_call_allow_list("TCPIP", "ethernet_receive_frame.*", {"Firewall"})
 	data.compartment.compartment_call_allow_list("TCPIP", "ip_thread_entry.*", set())
