@@ -46,7 +46,7 @@ __cheri_compartment("TCPIP") int network_host_resolve(
  *
  * This returns a sealed capability to a socket on success, or null on failure.
  *
- * This should be called only from the NetAPI compartment.
+ * This should be called only from the NetAPI or TCP/IP compartments.
  */
 SObj __cheri_compartment("TCPIP")
   network_socket_create_and_bind(Timeout       *timeout,
