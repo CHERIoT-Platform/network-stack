@@ -370,7 +370,7 @@ struct BindCapability
 	DECLARE_AND_DEFINE_STATIC_SEALED_VALUE(                                    \
 	  struct {                                                                 \
 		  ConnectionType type;                                                 \
-		  short          port;                                                 \
+		  uint16_t       port;                                                 \
 		  size_t         nameLength;                                           \
 		  const char     hostname[sizeof(authorisedHost)];                     \
 	  },                                                                       \
