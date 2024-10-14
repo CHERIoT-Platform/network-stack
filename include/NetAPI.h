@@ -61,6 +61,43 @@ SObj __cheri_compartment("NetAPI")
                              SObj     hostCapability);
 
 /**
+ * Create a listening TCP socket bound to a given port.
+ *
+ * The `mallocCapability` argument is used to allocate memory for the socket
+ * and must have sufficient quota remaining for the socket.
+ *
+ * The `bindCapability` argument is a capability authorising the bind to a
+ * specific server port.
+ *
+ * This returns a valid sealed capability to a socket on success, or a null on
+ * failure.
+ */
+SObj __cheri_compartment("NetAPI")
+  network_socket_listen_tcp(Timeout *timeout,
+                            SObj     mallocCapability,
+                            SObj     bindCapability);
+
+/**
+ * Accept a connection on a listening socket.
+ *
+ * This function will block until a connection is established or the timeout is
+ * reached.
+ *
+ * The `address` and `port` arguments are used to return the address and port
+ * of the connected client.  These can be null if the caller is not interested
+ * in the client's address or port.
+ *
+ * This returns a valid sealed capability to a connected socket on success, or
+ * a null on failure.
+ */
+SObj __cheri_compartment("TCPIP")
+  network_socket_accept_tcp(Timeout        *timeout,
+                            SObj            mallocCapability,
+                            SObj            listeningSocket,
+                            NetworkAddress *address,
+                            uint16_t       *port);
+
+/**
  * Create a bound UDP socket, allocated from the quota associated with
  * `mallocCapability`.  This will use IPv4 if `isIPv6` is false, or IPv6 if it
  * is true.
@@ -289,6 +326,23 @@ struct ConnectionCapability
 };
 
 /**
+ * Bind capability contents. Instances of this sealed with the NetworkBindKey
+ * sealing capability authorise binding to a specific server port.
+ */
+struct BindCapability
+{
+	/**
+	 * Allow to bind on an IPv6 or IPv4 interface.
+	 */
+	bool isIPv6;
+	/**
+	 * The server port this bind capability allows to bind to. This is
+	 * provided in host byte order.
+	 */
+	uint16_t port;
+};
+
+/**
  * Define a capability that authorises connecting to a specific host and port
  * with UDP or TCP.
  */
@@ -308,3 +362,19 @@ struct ConnectionCapability
 	  portNumber,                                                              \
 	  sizeof(authorisedHost),                                                  \
 	  authorisedHost)
+
+/**
+ * Define a capability that authorises binding to a specific server port with
+ * TCP. Binding to a server port with UDP is not supported.
+ */
+#define DECLARE_AND_DEFINE_BIND_CAPABILITY(name, isIPv6Binding, portNumber)    \
+	DECLARE_AND_DEFINE_STATIC_SEALED_VALUE(                                    \
+	  struct {                                                                 \
+		  bool     isIPv6;                                                     \
+		  uint16_t port;                                                       \
+	  },                                                                       \
+	  NetAPI,                                                                  \
+	  NetworkBindKey,                                                          \
+	  name,                                                                    \
+	  isIPv6Binding,                                                           \
+	  portNumber)
