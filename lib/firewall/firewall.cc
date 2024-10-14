@@ -427,7 +427,7 @@ namespace
 			SmallTable<int> testSmallTableZeroLength(0);
 			testSmallTableZeroLength.contains(1);
 
-      Debug::log("Testing small table pointer-based remove");
+			Debug::log("Testing small table pointer-based remove");
 			testSmallTable.insert(1);
 			testSmallTable.remove(testSmallTable.begin());
 			Debug::Assert(
