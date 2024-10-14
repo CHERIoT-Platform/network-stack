@@ -117,7 +117,8 @@ bool __cheri_compartment("TCPIP")
 		  {
 			  if (faultInjected)
 			  {
-				  ConditionalDebug<true, "Ethernet Adaptor">::log("Triggering crash");
+				  ConditionalDebug<true, "Ethernet Adaptor">::log(
+				    "Triggering crash");
 				  faultInjected = false;
 				  // Inject a fault by giving the frame an incorrect length.
 				  // This will cause the TCP/IP stack to read beyond the end.
