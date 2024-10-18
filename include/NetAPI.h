@@ -52,8 +52,8 @@ void __cheri_compartment("TCPIP") network_start(void);
  * The `hostCapability` argument is a capability authorising the connection to
  * a specific host.
  *
- * This returns a valid sealed capability to a socket on success, or a null on
- * failure.
+ * This returns a valid sealed capability to a socket on success, or an
+ * untagged value on failure.
  */
 SObj __cheri_compartment("NetAPI")
   network_socket_connect_tcp(Timeout *timeout,
@@ -69,8 +69,8 @@ SObj __cheri_compartment("NetAPI")
  * The `bindCapability` argument is a capability authorising the bind to a
  * specific server port.
  *
- * This returns a valid sealed capability to a socket on success, or a null on
- * failure.
+ * This returns a valid sealed capability to a socket on success, or an
+ * untagged value on failure.
  */
 SObj __cheri_compartment("NetAPI")
   network_socket_listen_tcp(Timeout *timeout,
@@ -88,7 +88,7 @@ SObj __cheri_compartment("NetAPI")
  * in the client's address or port.
  *
  * This returns a valid sealed capability to a connected socket on success, or
- * a null on failure.
+ * an untagged value on failure.
  */
 SObj __cheri_compartment("TCPIP")
   network_socket_accept_tcp(Timeout        *timeout,
@@ -107,8 +107,8 @@ SObj __cheri_compartment("TCPIP")
  * Instead, each remote host must be separately authorised with
  * `network_socket_udp_authorise_host`.
  *
- * Returns a valid sealed capability to a socket on success, or a null on
- * failure.
+ * This returns a valid sealed capability to a socket on success, or an
+ * untagged value on failure.
  */
 SObj __cheri_compartment("TCPIP")
   network_socket_udp(Timeout *timeout, SObj mallocCapability, bool isIPv6);
@@ -175,7 +175,8 @@ struct NetworkReceiveResult
  * freeing this buffer.
  *
  * The `bytesReceived` field of the result will be negative if an error
- * occurred.  The `buffer` field will be null if no data were received.
+ * occurred.  The `buffer` field will be an untagged value if no data were
+ * received.
  *
  * The negative values will be errno values:
  *
@@ -222,7 +223,8 @@ int __cheri_compartment("TCPIP")
  * sender's address or port.
  *
  * The `bytesReceived` field of the result will be negative if an error
- * occurred.  The `buffer` field will be null if no data were received.
+ * occurred.  The `buffer` field will be an untagged value if no data were
+ * received.
  *
  * Note that errors occuring in this function (particularly timeout and invalid
  * `address` or `port` pointers) may cause UDP packets to be dropped.
@@ -280,8 +282,8 @@ enum ConnectionType : uint8_t
 };
 
 /**
- * Returns the host name embedded in a host capability or null if this is not a
- * valid host capability.
+ * Returns the host name embedded in a host capability or an untagged value if
+ * this is not a valid host capability.
  */
 const char *__cheri_compartment("NetAPI") network_host_get(SObj hostCapability);
 
