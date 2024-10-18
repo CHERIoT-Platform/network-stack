@@ -17,7 +17,6 @@ option("board")
   set_default("ibex-arty-a7-100")
 
 compartment("http_example")
-  set_default(false)
   add_includedirs("../../include")
   add_deps("freestanding", "TCPIP", "NetAPI")
   add_files("http.cc")

@@ -17,7 +17,6 @@ option("board")
   set_default("ibex-arty-a7-100")
 
 compartment("mqtt_example")
-  set_default(false)
   add_includedirs("../../include")
   add_deps("freestanding", "TCPIP", "NetAPI", "TLS", "Firewall", "SNTP", "MQTT", "time_helpers", "debug")
   -- stdio only needed for debug prints in MQTT, can be removed with --debug-mqtt=n
