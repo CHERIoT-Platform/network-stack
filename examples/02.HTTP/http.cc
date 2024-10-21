@@ -39,7 +39,7 @@ void __cheri_compartment("http_example") example()
 	{
 		size_t remaining = toSend - sent;
 
-		size_t sentThisCall =
+		ssize_t sentThisCall =
 		  network_socket_send(&unlimited, socket, &(message[sent]), remaining);
 		Debug::log("Sent {} bytes", sentThisCall);
 

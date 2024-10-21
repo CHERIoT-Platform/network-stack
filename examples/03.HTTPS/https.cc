@@ -76,7 +76,7 @@ void __cheri_compartment("https_example") example()
 	{
 		size_t remaining = toSend - sent;
 
-		size_t sentThisCall =
+		ssize_t sentThisCall =
 		  tls_connection_send(&t, tlsSocket, &(message[sent]), remaining, 0);
 		Debug::log("Sent {} bytes", sentThisCall);
 
