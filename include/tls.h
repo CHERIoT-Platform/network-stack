@@ -6,12 +6,13 @@
 #include <token.h>
 
 /**
- * Creates a new TLS connection.  Returns null on failure or a sealed TLS
- * connection object on success.
+ * Creates a new TLS connection. This will block until the connection is
+ * established, an error happens, or the timeout expires. Returns an untagged
+ * value on failure or a sealed TLS connection object on success.
  *
  * The state for the TLS connection will be allocated with `allocator`.  The
- * connection will be made to the host identified by the connection capability.
- * This must authorise a TCP connection.  Once the connection is made, the
+ * connection will be made to the host identified by the connection capability,
+ * which must authorise a TCP connection.  Once the connection is made, the
  * certificates will be validated against the trust anchors provided via the
  * `trustAnchors` parameter, which contains a pointer to an array of
  * `trustAnchorsCount` trust anchors.
@@ -57,13 +58,16 @@ enum TLSSendFlags
 };
 
 /**
- * Sends `length` bytes from `buffer` to the remote host.  Returns the number
- * of bytes sent, or a negative error code.  The `sealedConnection` parameter
- * is a pointer to a TLS connection, returned by `tls_connection_create`.
+ * Sends `length` bytes from `buffer` to the remote host. Returns the
+ * number of bytes sent, or a negative error code.
+ *
+ * The `sealedConnection` parameter is a pointer to a TLS connection, returned
+ * by `tls_connection_create`.
  *
  * If `flags` is set to `TLSSendNoFlush`, the TLS engine may buffer the data
  * and not send until a later send call.  If this is not provided then the
- * timeout may be exceeded.
+ * timeout may be exceeded. In the general case, this will block until the data
+ * is sent, an error happens, or the timeout expires.
  */
 ssize_t __cheri_compartment("TLS") tls_connection_send(Timeout *t,
                                                        SObj   sealedConnection,
@@ -72,10 +76,12 @@ ssize_t __cheri_compartment("TLS") tls_connection_send(Timeout *t,
                                                        int    flags);
 
 /**
- * Receive data from the TLS connection.  This returns a newly allocated buffer
- * (allocated with the allocator provided to `tls_connection_create`)
- * containing the received data along with its length, or null and a negative
- * error code.  The caller is responsible for freeing this buffer.
+ * Receive data from the TLS connection.  This will block until data are
+ * received, an error happens, or the timeout expires. If data are received,
+ * they will be stored in a newly allocated buffer (allocated with the
+ * allocator provided to `tls_connection_create`) and returned along with their
+ * length.  The caller is responsible for freeing this buffer. On error, the
+ * return value is an untagged value and a negative error code.
  *
  * The negative values will be errno values:
  *
@@ -88,8 +94,8 @@ NetworkReceiveResult __cheri_compartment("TLS")
 
 /**
  * Receive data from the TLS connection into a preallocated buffer. This will
- * block until data are received or the timeout expires. If data are received,
- * they will be stored in the provided buffer.
+ * block until data are received, an error happens, or the timeout expires. If
+ * data are received, they will be stored in the provided buffer.
  *
  * The return value is either the number of bytes received, zero if the
  * connection is closed, or a negative error code.
