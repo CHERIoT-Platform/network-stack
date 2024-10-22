@@ -11,7 +11,9 @@
  * will be called on all PUBLISH notifications from the broker.
  *
  * `topicName` and `payload` (and their respective size arguments) indicate the
- * topic of the PUBLISH, and the corresponding payload.
+ * topic of the PUBLISH, and the corresponding payload. Both are only valid
+ * within the context of the callback and thus passed as a read-only,
+ * non-capturable capabilities.
  */
 typedef void __cheri_callback (*MQTTPublishCallback)(const char *topicName,
                                                      size_t topicNameLength,
