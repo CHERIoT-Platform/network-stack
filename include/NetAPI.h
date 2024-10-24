@@ -52,13 +52,50 @@ void __cheri_compartment("TCPIP") network_start(void);
  * The `hostCapability` argument is a capability authorising the connection to
  * a specific host.
  *
- * This returns a valid sealed capability to a socket on success, or a null on
- * failure.
+ * This returns a valid sealed capability to a socket on success, or an
+ * untagged value on failure.
  */
 SObj __cheri_compartment("NetAPI")
   network_socket_connect_tcp(Timeout *timeout,
                              SObj     mallocCapability,
                              SObj     hostCapability);
+
+/**
+ * Create a listening TCP socket bound to a given port.
+ *
+ * The `mallocCapability` argument is used to allocate memory for the socket
+ * and must have sufficient quota remaining for the socket.
+ *
+ * The `bindCapability` argument is a capability authorising the bind to a
+ * specific server port.
+ *
+ * This returns a valid sealed capability to a socket on success, or an
+ * untagged value on failure.
+ */
+SObj __cheri_compartment("NetAPI")
+  network_socket_listen_tcp(Timeout *timeout,
+                            SObj     mallocCapability,
+                            SObj     bindCapability);
+
+/**
+ * Accept a connection on a listening socket.
+ *
+ * This function will block until a connection is established or the timeout is
+ * reached.
+ *
+ * The `address` and `port` arguments are used to return the address and port
+ * of the connected client.  These can be null if the caller is not interested
+ * in the client's address or port.
+ *
+ * This returns a valid sealed capability to a connected socket on success, or
+ * an untagged value on failure.
+ */
+SObj __cheri_compartment("TCPIP")
+  network_socket_accept_tcp(Timeout        *timeout,
+                            SObj            mallocCapability,
+                            SObj            listeningSocket,
+                            NetworkAddress *address,
+                            uint16_t       *port);
 
 /**
  * Create a bound UDP socket, allocated from the quota associated with
@@ -70,8 +107,8 @@ SObj __cheri_compartment("NetAPI")
  * Instead, each remote host must be separately authorised with
  * `network_socket_udp_authorise_host`.
  *
- * Returns a valid sealed capability to a socket on success, or a null on
- * failure.
+ * This returns a valid sealed capability to a socket on success, or an
+ * untagged value on failure.
  */
 SObj __cheri_compartment("TCPIP")
   network_socket_udp(Timeout *timeout, SObj mallocCapability, bool isIPv6);
@@ -138,7 +175,8 @@ struct NetworkReceiveResult
  * freeing this buffer.
  *
  * The `bytesReceived` field of the result will be negative if an error
- * occurred.  The `buffer` field will be null if no data were received.
+ * occurred.  The `buffer` field will be an untagged value if no data were
+ * received.
  *
  * The negative values will be errno values:
  *
@@ -185,7 +223,8 @@ int __cheri_compartment("TCPIP")
  * sender's address or port.
  *
  * The `bytesReceived` field of the result will be negative if an error
- * occurred.  The `buffer` field will be null if no data were received.
+ * occurred.  The `buffer` field will be an untagged value if no data were
+ * received.
  *
  * Note that errors occuring in this function (particularly timeout and invalid
  * `address` or `port` pointers) may cause UDP packets to be dropped.
@@ -243,8 +282,8 @@ enum ConnectionType : uint8_t
 };
 
 /**
- * Returns the host name embedded in a host capability or null if this is not a
- * valid host capability.
+ * Returns the host name embedded in a host capability or an untagged value if
+ * this is not a valid host capability.
  */
 const char *__cheri_compartment("NetAPI") network_host_get(SObj hostCapability);
 
@@ -289,6 +328,40 @@ struct ConnectionCapability
 };
 
 /**
+ * Bind capability contents. Instances of this sealed with the NetworkBindKey
+ * sealing capability authorise binding to a specific server port.
+ *
+ * Similarly to `ConnectionCapability`, this is probably to inflexible for the
+ * general case. For example: with IPv6 there are always multiple interfaces
+ * (link-local and routable), and it might be necessary to expose this to allow
+ * API users to specify which interface they want to bind on.
+ */
+struct BindCapability
+{
+	/**
+	 * Allow to bind on an IPv6 or IPv4 interface.
+	 *
+	 * Note that the "or" is exclusive here: setting `isIPv6` to `true`
+	 * will only allow binding onto an IPv6 interface. To allow both IPv4
+	 * and IPv6, two bind capabilities must be created.
+	 */
+	bool isIPv6;
+	/**
+	 * The server port this bind capability allows to bind to. This is
+	 * provided in host byte order.
+	 */
+	uint16_t port;
+	/**
+	 * Maximum number of concurrent TCP connections allowed on this server
+	 * port. Once this number is reached, further connections to the server
+	 * port will be denied. If this number is larger than supported by the
+	 * network stack, the network stack will default to its own maximum.
+	 * A value of 0 indicates unlimited.
+	 */
+	uint16_t maximumNumberOfConcurrentTCPConnections;
+};
+
+/**
  * Define a capability that authorises connecting to a specific host and port
  * with UDP or TCP.
  */
@@ -308,3 +381,22 @@ struct ConnectionCapability
 	  portNumber,                                                              \
 	  sizeof(authorisedHost),                                                  \
 	  authorisedHost)
+
+/**
+ * Define a capability that authorises binding to a specific server port with
+ * TCP. Binding to a server port with UDP is not supported.
+ */
+#define DECLARE_AND_DEFINE_BIND_CAPABILITY(                                    \
+  name, isIPv6Binding, portNumber, maxConnections)                             \
+	DECLARE_AND_DEFINE_STATIC_SEALED_VALUE(                                    \
+	  struct {                                                                 \
+		  bool     isIPv6;                                                     \
+		  uint16_t port;                                                       \
+		  uint16_t maximumNumberOfConcurrentTCPConnections;                    \
+	  },                                                                       \
+	  NetAPI,                                                                  \
+	  NetworkBindKey,                                                          \
+	  name,                                                                    \
+	  isIPv6Binding,                                                           \
+	  portNumber,                                                              \
+	  maxConnections)

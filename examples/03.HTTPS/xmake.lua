@@ -17,7 +17,6 @@ option("board")
   set_default("ibex-arty-a7-100")
 
 compartment("https_example")
-  set_default(false)
   add_includedirs("../../include")
   add_deps("freestanding", "TCPIP", "NetAPI", "TLS", "Firewall", "SNTP", "time_helpers", "debug")
   add_files("https.cc")

@@ -4,7 +4,7 @@
 -- Update this to point to the location of the CHERIoT SDK
 sdkdir = path.absolute("../../../cheriot-rtos/sdk")
 
-set_project("CHERIoT HTTP Example")
+set_project("CHERIoT HTTP Server Example")
 
 includes(sdkdir)
 
@@ -16,27 +16,26 @@ includes("../../lib")
 option("board")
   set_default("ibex-arty-a7-100")
 
-compartment("http_example")
+compartment("http_server_example")
   add_includedirs("../../include")
   add_deps("freestanding", "TCPIP", "NetAPI")
-  add_files("http.cc")
+  add_files("http_server.cc")
   on_load(function(target)
     target:add('options', "IPv6")
     local IPv6 = get_config("IPv6")
     target:add("defines", "CHERIOT_RTOS_OPTION_IPv6=" .. tostring(IPv6))
   end)
 
-firmware("02.http_example")
+firmware("05.http_server_example")
   set_policy("build.warning", true)
-  add_deps("TCPIP", "Firewall", "NetAPI", "http_example", "atomic8", "debug")
+  add_deps("TCPIP", "Firewall", "NetAPI", "http_server_example", "atomic8", "debug")
   on_load(function(target)
     target:values_set("board", "$(board)")
     target:values_set("threads", {
       {
-        compartment = "http_example",
+        compartment = "http_server_example",
         priority = 1,
         entry_point = "example",
-        -- TLS requires *huge* stacks!
         stack_size = 0xe00,
         trusted_stack_frames = 6
       },
