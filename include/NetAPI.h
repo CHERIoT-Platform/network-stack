@@ -219,8 +219,8 @@ int __cheri_compartment("TCPIP")
  * freeing this buffer.
  *
  * The `address` and `port` arguments are used to return the address and port
- * of the sender.  These can be null if the caller is not interested in the
- * sender's address or port.
+ * of the sender, in host byte order.  These can be null if the caller is not
+ * interested in the sender's address or port.
  *
  * The `bytesReceived` field of the result will be negative if an error
  * occurred.  The `buffer` field will be an untagged value if no data were
@@ -255,9 +255,9 @@ ssize_t __cheri_compartment("TCPIP") network_socket_send(Timeout *timeout,
 
 /**
  * Send data over a UDP socket to a specified host / port.  The address and
- * port must have been previously authorised with
- * `network_socket_udp_authorise_host` (the packets will be silently dropped if
- * not, there will be no error reported).
+ * port must be provided in host byte order, and must have been previously
+ * authorised with `network_socket_udp_authorise_host` (the packets will be
+ * silently dropped if not, there will be no error reported).
  *
  * This will block until the data have been sent or the timeout expires.  The
  * return value is the number of bytes sent or a negative error code.
@@ -370,7 +370,7 @@ struct BindCapability
 	DECLARE_AND_DEFINE_STATIC_SEALED_VALUE(                                    \
 	  struct {                                                                 \
 		  ConnectionType type;                                                 \
-		  short          port;                                                 \
+		  uint16_t       port;                                                 \
 		  size_t         nameLength;                                           \
 		  const char     hostname[sizeof(authorisedHost)];                     \
 	  },                                                                       \
