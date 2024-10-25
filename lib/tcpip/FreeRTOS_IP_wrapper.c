@@ -17,6 +17,7 @@ void ip_thread_start(void);
 #include <futex.h>
 #include <locks.h>
 #include <stdatomic.h>
+#include <unwind.h>
 
 /**
  * Flag used to synchronize the network stack thread and user threads at
@@ -106,6 +107,8 @@ void ip_cleanup(void)
 	// modifiable by a potentially compromised compartment.
 }
 
+extern void reset_network_stack_state(bool isIpThread);
+
 void __cheri_compartment("TCPIP") ip_thread_entry(void)
 {
 	FreeRTOS_printf(("ip_thread_entry\n"));
@@ -114,36 +117,47 @@ void __cheri_compartment("TCPIP") ip_thread_entry(void)
 
 	while (1)
 	{
-		while (threadEntryGuard == 0)
+		CHERIOT_DURING
 		{
+			while (threadEntryGuard == 0)
+			{
+				FreeRTOS_printf(
+				  ("Sleeping until the IP task is supposed to start\n"));
+				futex_wait(&threadEntryGuard, 0);
+			}
+
+			// Reset the guard now: we will only ever re-iterate
+			// the loop in the case of a network stack reset, in
+			// which case we want to wait again for a call to
+			// `ip_thread_start`.
+			//
+			// Note that we cannot reset this in `ip_cleanup`,
+			// because that would overwrite the 1 written by
+			// `ip_thread_start` if the latter was called before we
+			// call `ip_cleanup`. This will happen if the IP thread
+			// crashes, in which case we would first call
+			// `ip_thread_start` in the error handler, and then
+			// reset the context to `ip_thread_entry` (itself then
+			// calling `ip_cleanup`).
+			threadEntryGuard = 0;
+
+			xIPTaskHandle = networkThreadID;
 			FreeRTOS_printf(
-			  ("Sleeping until the IP task is supposed to start\n"));
-			futex_wait(&threadEntryGuard, 0);
+			  ("ip_thread_entry starting, thread ID is %p\n", xIPTaskHandle));
+
+			flaglock_priority_inheriting_lock(&ipThreadLockState);
+
+			// FreeRTOS event loop. This will only return if a user
+			// thread crashed.
+			prvIPTask(NULL);
+
+			flaglock_unlock(&ipThreadLockState);
 		}
-
-		// Reset the guard now: we will only ever re-enter this
-		// function in the case of a network stack reset, in which case
-		// we want to wait again for a call to `ip_thread_start`.
-		//
-		// Note that we cannot reset this in `ip_cleanup`, because that
-		// would overwrite the 1 written by `ip_thread_start` if the
-		// latter was called before we call `ip_cleanup`. This will
-		// happen if the IP thread crashes, in which case we would
-		// first call `ip_thread_start` in the error handler, and then
-		// reset the context to `ip_thread_entry` (itself then calling
-		// `ip_cleanup`).
-		threadEntryGuard = 0;
-
-		xIPTaskHandle = networkThreadID;
-		FreeRTOS_printf(
-		  ("ip_thread_entry starting, thread ID is %p\n", xIPTaskHandle));
-
-		flaglock_priority_inheriting_lock(&ipThreadLockState);
-
-		// FreeRTOS event loop. This will only return if a user thread
-		// crashed.
-		prvIPTask(NULL);
-
-		flaglock_unlock(&ipThreadLockState);
+		CHERIOT_HANDLER
+		{
+			// Call the network stack error handler for the network thread.
+			reset_network_stack_state(true /* this is the IP thread */);
+		}
+		CHERIOT_END_HANDLER
 	}
 }

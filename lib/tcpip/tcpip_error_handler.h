@@ -31,23 +31,19 @@ extern struct FlagLockState ipThreadLockState;
 /**
  * Other locks and futexes to release as part of the reset. These are
  * documented in `sdk/include/FreeRTOS-Compat/task.h` in the main tree
- * (`__CriticalSectionFlagLock` and `__SuspendFlagLock`) and
- * `source/FreeRTOS_IP.c` in the FreeRTOS+TCP tree (`xNetworkEventQueue`).
+ * (`__CriticalSectionFlagLock` and `__SuspendFlagLock`),
+ * `source/FreeRTOS_IP.c` in the FreeRTOS+TCP tree (`xNetworkEventQueue`), and
+ * `network_wrapper.cc` in the TCP/IP wrapper.
  */
 extern struct RecursiveMutexState __CriticalSectionFlagLock;
 extern struct RecursiveMutexState __SuspendFlagLock;
 extern QueueHandle_t              xNetworkEventQueue;
+extern FlagLockPriorityInherited  sealedSocketsListLock;
 
 /**
  * Restart the network stack. See documentation in `startup.cc`
  */
 extern void network_restart();
-
-/**
- * Thread ID of the network thread. See documentation in
- * `FreeRTOS_IP_wrapper.c`.
- */
-extern uint16_t networkThreadID;
 
 /**
  * Free the compartment's heap memory.
@@ -68,9 +64,8 @@ __always_inline static inline void free_compartment_memory()
 /**
  * Reset the network stack state.
  *
- * This is meant to be called by the error handler below. Some of it may be
- * moved to a normal (non-error-handler context) at a later point - mainly
- * Phase 3, see comments in the body.
+ * This is meant to be called by error handlers. `isIpThread` specifies
+ * whether the thread running this function is the IP thread.
  *
  * We go through all locks used in the TCP/IP compartment and set them for
  * destruction. The list of synchronization primitives resetted here was
@@ -78,19 +73,24 @@ __always_inline static inline void free_compartment_memory()
  * therefore break if new releases of FreeRTOS+TCP introduce new locks. In the
  * future, we may want to come up with a more systematic approach.
  *
+ * Some of it may be moved to a normal (non-error-handler context) at a later
+ * point - mainly Phase 3, see comments in the body.
+ *
  * This function is designed to be robust against most types of compartment
  * corruption, however we do assume that:
  * - 'reset-critical' data has not been corrupted
  * - the control-flow of threads in the compartment has not been altered
  * - spatial and temporal memory safety are not violated
  */
-extern "C" void reset_network_stack_state()
+extern "C" void reset_network_stack_state(bool isIpThread)
 {
 	/// Phase 1: Do bookkeeping and determine if we are already in a reset:
 	/// should we do anything at all?
-	const bool IsUserThread = thread_id_get() != networkThreadID;
-	const bool IsIpThread   = !IsUserThread;
+	const bool IsUserThread = !isIpThread;
 
+	// We could print this in the caller, but it is not certain that
+	// debugging is enabled there and it is nice to print this with the
+	// same output code as other reset operations.
 	if (IsUserThread)
 	{
 		DebugErrorHandler::log(
@@ -128,7 +128,7 @@ extern "C" void reset_network_stack_state()
 	if (!restartState.compare_exchange_strong(expected, Restarting))
 	{
 		// `expected` now contains a snapshot of `restartState`.
-		if (IsIpThread && ((expected & IpThreadKicked) != 0))
+		if (isIpThread && ((expected & IpThreadKicked) != 0))
 		{
 			// Currently recovering from a crash that happens
 			// during the reset process is not possible. It is not
@@ -159,10 +159,6 @@ extern "C" void reset_network_stack_state()
 	// which holds the it will eventually release it, either 1) exiting the
 	// critical section, or 2) crashing into it, in which case we (the
 	// error handler) will manually unlock it (see manual unlock above).
-	//
-	// FIXME: This is not true if the thread runs out of call stack. This
-	// will be fixed when we allow the error handler to run on stack
-	// overflow.
 	//
 	// Note that the internal state of the lock should not be corrupted
 	// unless spatial or temporal memory safety was somehow violated.
@@ -312,108 +308,4 @@ extern "C" void reset_network_stack_state()
 
 	// We do not reset `restartState` here, the network thread will take
 	// care of it when the TCP/IP stack is done reseting.
-}
-
-extern void ip_thread_entry(void);
-
-extern "C" ErrorRecoveryBehaviour
-compartment_error_handler(ErrorState *frame, size_t mcause, size_t mtval)
-{
-	auto threadID = thread_id_get();
-	if (mcause == priv::MCAUSE_CHERI)
-	{
-		auto [exceptionCode, registerNumber] =
-		  CHERI::extract_cheri_mtval(mtval);
-		// The thread entry point is called with a NULL return address so the
-		// cret at the end of the entry point function will trap if it is
-		// reached. We don't want to treat this as an error but thankfully we
-		// detect it quite specifically by checking for all of:
-		// 1) CHERI cause is tag violation
-		// 2) faulting register is CRA
-		// 3) value of CRA is NULL
-		// 4) we've reached the top of the thread's stack
-		Capability stackCapability{
-		  frame->get_register_value<CHERI::RegisterNumber::CSP>()};
-		Capability returnCapability{
-		  frame->get_register_value<CHERI::RegisterNumber::CRA>()};
-		if (registerNumber == CHERI::RegisterNumber::CRA &&
-		    returnCapability.address() == 0 &&
-		    exceptionCode == CHERI::CauseCode::TagViolation &&
-		    stackCapability.top() == stackCapability.address())
-		{
-			// looks like thread exit -- just log it then ForceUnwind
-			DebugErrorHandler::log(
-			  "Thread exit CSP={}, PCC={}", stackCapability, frame->pcc);
-		}
-		else if (exceptionCode == CHERI::CauseCode::None)
-		{
-			// An unwind occurred from a called compartment, just resume.
-			return ErrorRecoveryBehaviour::InstallContext;
-		}
-		else
-		{
-			// An unexpected error -- log it and restart the stack.
-			// Note: handle CZR differently as `get_register_value`
-			// will return a nullptr which we cannot dereference.
-			DebugErrorHandler::log(
-			  "{} error at {} (return address: {}), with capability register "
-			  "{}: {} by thread {}",
-			  exceptionCode,
-			  frame->pcc,
-			  frame->get_register_value<CHERI::RegisterNumber::CRA>(),
-			  registerNumber,
-			  registerNumber == CHERI::RegisterNumber::CZR
-			    ? nullptr
-			    : *frame->get_register_value(registerNumber),
-			  threadID);
-
-			// TODO before running the reset function we should go
-			// to the top of the stack to ensure that we do not run
-			// out of stack space while executing the error
-			// handler.
-
-			// Reset the network stack state.
-			reset_network_stack_state();
-
-			// Now we should either rewind if this is a user
-			// thread, or reinstall the context if this is the
-			// network thread.
-			if (threadID == networkThreadID)
-			{
-				// Reset the stack pointer to the top of the stack.
-				Capability<void *> stack{
-				  frame->get_register_value(CHERI::RegisterNumber::CSP)};
-				DebugErrorHandler::log("Resetting the stack from {} -> {}.",
-				                       stack.address(),
-				                       stack.base());
-				stack.address() = stack.base();
-				DebugErrorHandler::log("Stack length is {}.", stack.length());
-
-				// Reset the program counter.
-				DebugErrorHandler::log(
-				  "Reinstalling context to ip_thread_entry.");
-				frame->pcc = (void *)&ip_thread_entry;
-
-				// We will now run `ip_thread_entry`.
-				return ErrorRecoveryBehaviour::InstallContext;
-			}
-
-			DebugErrorHandler::log("Rewinding crashed user thread {}.",
-			                       threadID);
-			return ErrorRecoveryBehaviour::ForceUnwind;
-		}
-	}
-	else
-	{
-		// other error (e.g. __builtin_trap causes ReservedInstruciton)
-		// log and end simulation with error.
-		DebugErrorHandler::log("Unhandled error {} at {} by thread {}",
-		                       mcause,
-		                       frame->pcc,
-		                       threadID);
-		Capability<void *> stack{
-		  frame->get_register_value(CHERI::RegisterNumber::CSP)};
-		DebugErrorHandler::log("Stack length is {}.", stack.length());
-	}
-	return ErrorRecoveryBehaviour::ForceUnwind;
 }
