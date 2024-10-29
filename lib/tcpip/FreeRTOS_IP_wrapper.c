@@ -38,11 +38,16 @@ static uint32_t threadEntryGuard;
 uint16_t networkThreadID;
 
 /**
- * Global lock acquired by the IP thread at startup time. This lock is never
- * released and acquiring it after startup will always fail. This lock can be
- * used to force the IP thread to run for a short amount of time, e.g., when
- * the internal FreeRTOS message queue is full and we want to let the IP thread
- * empty it to close a socket.
+ * Global lock acquired by the IP thread at startup time. In normal running
+ * conditions, this lock is never released and acquiring it after startup will
+ * always fail. This lock can be used to force the IP thread to run for a short
+ * amount of time, e.g., when the internal FreeRTOS message queue is full and
+ * we want to let the IP thread empty it to close a socket. See such an example
+ * in `close_socket_retry`.
+ *
+ * Corner case: during a network stack reset, the lock is shortly released to
+ * notify other threads that the IP thread is restarting. See comment in
+ * `ip_thread_entry` for more details.
  */
 struct FlagLockState ipThreadLockState;
 
@@ -150,8 +155,6 @@ void __cheri_compartment("TCPIP") ip_thread_entry(void)
 			// FreeRTOS event loop. This will only return if a user
 			// thread crashed.
 			prvIPTask(NULL);
-
-			flaglock_unlock(&ipThreadLockState);
 		}
 		CHERIOT_HANDLER
 		{
@@ -159,5 +162,13 @@ void __cheri_compartment("TCPIP") ip_thread_entry(void)
 			reset_network_stack_state(true /* this is the IP thread */);
 		}
 		CHERIOT_END_HANDLER
+
+		// Release the IP thread lock. We will re-acquire it in the
+		// next loop iteration. This is necessary if a user thread
+		// triggered a reset. In such a case, the user thread error
+		// handler will wait for the IP thread to restart by acquiring
+		// the `ipThreadLockState` with an infinite timeout (and
+		// immediately releasing it thereafter).
+		flaglock_unlock(&ipThreadLockState);
 	}
 }
