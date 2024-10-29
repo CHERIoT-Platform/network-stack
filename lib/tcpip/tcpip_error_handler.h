@@ -232,8 +232,8 @@ extern "C" void reset_network_stack_state()
 
 	// Upgrade the message queue lock for destruction
 	DebugErrorHandler::log("Upgrading the message queue for destruction.");
-	auto *queueHandle = &xNetworkEventQueue->handle;
-	if (int err = queue_destroy(MALLOC_CAPABILITY, queueHandle); err != 0)
+	if (int err = queue_destroy(MALLOC_CAPABILITY, xNetworkEventQueue);
+	    err != 0)
 	{
 		DebugErrorHandler::log(
 		  "Failed to upgrade the message queue for destruction (error {}).",

@@ -6,6 +6,7 @@
 
 #include <atomic>
 #include <debug.hh>
+#include <endianness.hh>
 #include <token.h>
 
 using Debug = ConditionalDebug<false, "Network API">;
@@ -14,19 +15,6 @@ using Debug = ConditionalDebug<false, "Network API">;
 
 namespace
 {
-	uint16_t ntohs(uint16_t value)
-	{
-		return __builtin_bswap16(value);
-	}
-	uint16_t htons(uint16_t value)
-	{
-		return __builtin_bswap16(value);
-	}
-} // namespace
-
-namespace
-{
-	using Debug            = ConditionalDebug<false, "Network API">;
 	constexpr bool UseIPv6 = CHERIOT_RTOS_OPTION_IPv6;
 
 	/**

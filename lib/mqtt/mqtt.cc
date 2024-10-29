@@ -468,9 +468,17 @@ namespace
 			              "The packet is of type PUBLISH, but topic or payload "
 			              "are not set.");
 
-			publishCallback(publishInfo->pTopicName,
+			// The payload and topic are only valid within the
+			// context of the callback: make them read-only and
+			// non-capturable.
+			Capability topic{publishInfo->pTopicName};
+			Capability payload{publishInfo->pPayload};
+			topic.permissions() &= CHERI::Permission::Load;
+			payload.permissions() &= CHERI::Permission::Load;
+
+			publishCallback(topic,
 			                publishInfo->topicNameLength,
-			                publishInfo->pPayload,
+			                payload,
 			                publishInfo->payloadLength);
 		}
 		else if (ackCallback)

@@ -12,6 +12,7 @@
 #include <FreeRTOS_IP_Private.h>
 #include <NetAPI.h>
 #include <debug.hh>
+#include <endianness.hh>
 #include <function_wrapper.hh>
 #include <limits>
 #include <locks.hh>
@@ -73,28 +74,6 @@ using CHERI::PermissionSet;
 
 namespace
 {
-	// TODO These should probably be in their own library.
-	uint16_t constexpr ntohs(uint16_t value)
-	{
-		return
-#ifdef __LITTLE_ENDIAN__
-		  __builtin_bswap16(value)
-#else
-		  value
-#endif
-		    ;
-	}
-	uint16_t constexpr htons(uint16_t value)
-	{
-		return
-#ifdef __LITTLE_ENDIAN__
-		  __builtin_bswap16(value)
-#else
-		  value
-#endif
-		    ;
-	}
-
 	/**
 	 * Returns the key with which SealedSocket instances are sealed.
 	 */
@@ -631,7 +610,7 @@ SObj network_socket_create_and_bind(Timeout       *timeout,
 			  // or passing pxAddress as NULL will result in the socket being
 			  // bound to a port number from the private range'. Here,
 			  // `localPort` will be 0 if the caller wants to bind to any port.
-			  localAddress.sin_port   = FreeRTOS_htons(localPort);
+			  localAddress.sin_port   = htons(localPort);
 			  localAddress.sin_family = Family;
 			  auto bindResult =
 			    FreeRTOS_bind(socket, &localAddress, sizeof(localAddress));
@@ -831,7 +810,7 @@ int network_socket_connect_tcp_internal(Timeout       *timeout,
 		  struct freertos_sockaddr server;
 		  memset(&server, 0, sizeof(server));
 		  server.sin_len  = sizeof(server);
-		  server.sin_port = FreeRTOS_htons(port);
+		  server.sin_port = htons(port);
 		  if (isIPv6)
 		  {
 			  server.sin_family = FREERTOS_AF_INET6;
@@ -923,7 +902,7 @@ int network_socket_close(Timeout *t, SObj mallocCapability, SObj sealedSocket)
 				  // happen in practice and has no impact here.
 				  FreeRTOS_shutdown(rawSocket, FREERTOS_SHUT_RDWR);
 
-				  auto localPort = ntohs(rawSocket->usLocalPort);
+				  auto localPort = htons(rawSocket->usLocalPort);
 				  if (rawSocket->bits.bIsIPv6)
 				  {
 					  if (isTCP)
@@ -1303,7 +1282,7 @@ ssize_t network_socket_send_to(Timeout              *timeout,
 		  struct freertos_sockaddr server;
 		  memset(&server, 0, sizeof(server));
 		  server.sin_len  = sizeof(server);
-		  server.sin_port = FreeRTOS_htons(port);
+		  server.sin_port = htons(port);
 		  if (heap_claim_fast(timeout, address) < 0)
 		  {
 			  Debug::log("Failed to claim address");
