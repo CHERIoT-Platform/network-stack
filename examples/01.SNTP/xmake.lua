@@ -28,7 +28,7 @@ compartment("sntp_example")
 
 firmware("01.sntp_example")
   set_policy("build.warning", true)
-  add_deps("TCPIP", "Firewall", "NetAPI", "SNTP", "sntp_example", "atomic8", "time_helpers", "debug")
+  add_deps("DNS", "TCPIP", "Firewall", "NetAPI", "SNTP", "sntp_example", "atomic8", "time_helpers", "debug")
   -- stdio only needed for debug prints in SNTP, can be removed with --debug-sntp=n
   add_deps("stdio")
   on_load(function(target)

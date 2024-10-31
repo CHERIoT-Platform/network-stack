@@ -11,6 +11,7 @@
 
 using Debug = ConditionalDebug<false, "Network API">;
 
+#include "../dns/dns.hh"
 #include "../firewall/firewall.hh"
 
 namespace
