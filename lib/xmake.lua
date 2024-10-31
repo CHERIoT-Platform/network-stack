@@ -7,5 +7,6 @@ includes("tcpip",
          "sntp",
          "mqtt",
          "tls",
+         "dns",
          "firewall")
 
