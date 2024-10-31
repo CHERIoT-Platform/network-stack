@@ -88,6 +88,8 @@
 #define ipconfigUSE_RA 1
 #define ipconfigUSE_DHCPv6 0
 
+// TODO Disable DNS here once we have our own resolver.
+
 #define ipconfigREPLY_TO_INCOMING_PINGS 1
 
 #define ipconfigNUM_NETWORK_BUFFER_DESCRIPTORS 8
