@@ -11,6 +11,7 @@
 
 using Debug = ConditionalDebug<false, "Network API">;
 
+#include "../dns/dns.hh"
 #include "../firewall/firewall.hh"
 
 namespace
@@ -59,7 +60,8 @@ SObj network_socket_connect_tcp(Timeout *timeout,
 	CHERI::Capability addressPtr = &address;
 	addressPtr.permissions() &= {CHERI::Permission::Store};
 	firewall_permit_dns();
-	int ret = network_host_resolve(host->hostname, UseIPv6, addressPtr);
+	int ret =
+	  network_host_resolve(timeout, host->hostname, UseIPv6, addressPtr);
 	firewall_permit_dns(false);
 	if ((ret < 0) || (address.kind == NetworkAddress::AddressKindInvalid))
 	{
@@ -231,7 +233,8 @@ NetworkAddress network_socket_udp_authorise_host(Timeout *timeout,
 	CHERI::Capability addressPtr = &address;
 	addressPtr.permissions() &= {CHERI::Permission::Store};
 	firewall_permit_dns();
-	int ret = network_host_resolve(host->hostname, UseIPv6, addressPtr);
+	int ret =
+	  network_host_resolve(timeout, host->hostname, UseIPv6, addressPtr);
 	firewall_permit_dns(false);
 	if ((ret < 0) || (address.kind == NetworkAddress::AddressKindInvalid))
 	{

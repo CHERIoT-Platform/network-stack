@@ -65,7 +65,23 @@ bool __cheri_compartment("Firewall") ethernet_link_is_up();
  * Receive a frame from the Firewall device via the on-device firewall.
  */
 bool __cheri_compartment("TCPIP")
-  ethernet_receive_frame(uint8_t *packet, size_t length);
+  network_stack_receive_frame(uint8_t *packet, size_t length);
+
+/**
+ * Process an incoming packet relevant to the DNS resolver. This must be passed
+ * the `packet` and its total `length` including the Ethernet header.
+ *
+ * The DNS resolver expects to be passed all ARP, DHCP, and DNS packets.  This
+ * does not support IPv6 for now.
+ */
+void __cheri_compartment("DNS")
+  dns_resolver_receive_frame(uint8_t *packet, size_t length);
+
+/**
+ * Initialize the DNS resolver. This must be passed the `macAddress` of the
+ * device.
+ */
+void __cheri_compartment("DNS") initialize_dns_resolver(uint8_t *macAddress);
 
 /**
  * Set the IP address of the DNS server to use.  Packets to and from this

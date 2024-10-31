@@ -13,43 +13,14 @@
 #include <timeout.hh>
 #include <vector>
 
+#include "protocol-headers.hh"
+
 using Debug = ConditionalDebug<false, "Firewall">;
 
 #include "firewall.hh"
 
 namespace
 {
-
-	/**
-	 * EtherType values, for Ethernet headers.  These are defined in network
-	 * byte order to avoid byte swapping.
-	 */
-	enum class EtherType : uint16_t
-	{
-		IPv4 = 0x0008,
-#if CHERIOT_RTOS_OPTION_IPv6
-		IPv6 = 0xDD86,
-#endif
-		ARP = 0x0608,
-	};
-
-	const char *ethertype_as_string(EtherType etherType)
-	{
-		switch (etherType)
-		{
-			case EtherType::IPv4:
-				return "IPv4";
-#if CHERIOT_RTOS_OPTION_IPv6
-			case EtherType::IPv6:
-				return "IPv6";
-#endif
-			case EtherType::ARP:
-				return "ARP";
-			default:
-				return "Unknown";
-		}
-	}
-
 	std::atomic<uint32_t> barrier;
 
 	/**
@@ -429,11 +400,6 @@ namespace
 	FlagLockPriorityInherited sendLock;
 
 	/**
-	 * Ethernet MAC address.
-	 */
-	using MACAddress = std::array<uint8_t, 6>;
-
-	/**
 	 * Returns the MAC address for the network interface.
 	 */
 	MACAddress &mac_address()
@@ -471,148 +437,8 @@ namespace
 		return macAddress;
 	}
 
-	/**
-	 * Ethernet header.
-	 */
-	struct EthernetHeader
-	{
-		/**
-		 * Destination MAC address.
-		 */
-		MACAddress destination;
-		/**
-		 * Source MAC address.
-		 */
-		MACAddress source;
-		/**
-		 * EtherType (the type of this Ethernet frame).
-		 */
-		EtherType etherType;
-	} __packed;
-
 	static_assert(sizeof(EthernetHeader) == 14);
-
-	enum IPProtocolNumber : uint8_t
-	{
-		ICMP = 1,
-		TCP  = 6,
-		UDP  = 17,
-	};
-
-	static constexpr const uint16_t DhcpServerPort = 67;
-	static constexpr const uint16_t DhcpClientPort = 68;
-
-	struct IPv4Header
-	{
-		/**
-		 * Version is in the low 4 bits, header length is in the high 4 bits.
-		 */
-		uint8_t versionAndHeaderLength;
-		/**
-		 * Differentiated Services Code Point is in the low six bits, Explicit
-		 * Congestion Notification in the next two.
-		 */
-		uint8_t
-		  differentiatedServicesCodePointAndExplicitCongestionNotification;
-		/**
-		 * Length of this packet.
-		 */
-		uint16_t packetLength;
-		/**
-		 * Identification, used when datagrams are fragmented.
-		 */
-		uint16_t identification;
-		/**
-		 * Fragment offset.
-		 */
-		uint16_t fragmentOffset;
-		/**
-		 * Time to live.
-		 */
-		uint8_t timeToLive;
-		/**
-		 * Protocol.
-		 */
-		IPProtocolNumber protocol;
-		/**
-		 * Header checksum.
-		 */
-		uint16_t headerChecksum;
-		/**
-		 * Source IP address.
-		 */
-		uint32_t sourceAddress;
-		/**
-		 * Destination IP address.
-		 */
-		uint32_t destinationAddress;
-
-		/**
-		 * Returns the offset of the start of the body of this packet.
-		 */
-		[[nodiscard]] size_t body_offset() const
-		{
-			return (versionAndHeaderLength & 0xf) * 4;
-		}
-	} __packed;
-
 	static_assert(sizeof(IPv4Header) == 20);
-
-	struct TCPUDPCommonPrefix
-	{
-		uint16_t sourcePort;
-		uint16_t destinationPort;
-	} __packed;
-
-	struct TCPHeader
-	{
-		/**
-		 * Source port.
-		 */
-		uint16_t sourcePort;
-		/**
-		 * Destination port.
-		 */
-		uint16_t destinationPort;
-		/**
-		 * Sequence number.
-		 */
-		uint32_t sequenceNumber;
-		/**
-		 * Acknowledgement number.
-		 */
-		uint32_t acknowledgementNumber;
-		/**
-		 * Reserved bits, data offset, and flags.
-		 */
-		uint16_t bitfield;
-		/**
-		 * Window size.
-		 */
-		uint16_t windowSize;
-		/**
-		 * Checksum.
-		 */
-		uint16_t checksum;
-		/**
-		 * Urgent pointer.
-		 */
-		uint16_t urgentPointer;
-	} __packed;
-
-	/**
-	 * Masks to extract the value of the SYN and ACK flags in the bitfield
-	 * of a TCP header (`TCPHeader.bitfield`).
-	 *
-	 * Sequence of bits in the bitfield (in network endianness):
-	 *   dataOffset : 4
-	 *   reserved   : 4
-	 *   cwr : 1, ece : 1, urg : 1, ack : 1
-	 *   psh : 1, rst : 1, syn : 1, fin : 1
-	 */
-	static constexpr const uint16_t TCPBitfieldACKMask = 0x0010;
-	static constexpr const uint16_t TCPBitfieldSYNMask = 0x0002;
-
 	static_assert(sizeof(TCPHeader) == 20);
 
 	/**
@@ -791,17 +617,31 @@ namespace
 	 */
 	_Atomic(uint8_t) currentClientCount = 0;
 
-	bool packet_filter_ipv4(const uint8_t *data,
-	                        size_t         length,
-	                        uint32_t(IPv4Header::*remoteAddress),
-	                        uint16_t(TCPUDPCommonPrefix::*localPort),
-	                        uint16_t(TCPUDPCommonPrefix::*remotePort),
-	                        bool permitBroadcast)
+	/**
+	 * Return value flags of `packet_filter_ipv4` and
+	 * `packet_filter_ingress`.  Indicates if and to which compartment a
+	 * packet should be forwarded.
+	 */
+	enum [[clang::flag_enum]] ForwardFlags{
+	  // Do not forward.
+	  Discard = 0,
+	  // Forward to the DNS resolver.
+	  ForwardDNS = 1,
+	  // Forward to the TCP/IP stack.
+	  ForwardNetworkStack = 2,
+	};
+
+	ForwardFlags packet_filter_ipv4(const uint8_t *data,
+	                                size_t         length,
+	                                uint32_t(IPv4Header::*remoteAddress),
+	                                uint16_t(TCPUDPCommonPrefix::*localPort),
+	                                uint16_t(TCPUDPCommonPrefix::*remotePort),
+	                                bool permitBroadcast)
 	{
 		if (__predict_false(length < sizeof(IPv4Header)))
 		{
 			Debug::log("Dropping outbound IPv4 packet with length {}", length);
-			return false;
+			return ForwardFlags::Discard;
 		}
 		auto *ipv4Header = reinterpret_cast<const IPv4Header *>(data);
 		switch (ipv4Header->protocol)
@@ -810,16 +650,15 @@ namespace
 			default:
 				Debug::log("Dropping IPv4 packet with unknown protocol {}",
 				           ipv4Header->protocol);
-				return false;
+				return ForwardFlags::Discard;
 			case IPProtocolNumber::UDP:
-
 				// Permit DNS requests during a DNS query.
 				if (dnsIsPermitted > 0)
 				{
 					if (ipv4Header->*remoteAddress == dnsServerAddress)
 					{
 						Debug::log("Permitting DNS request");
-						return true;
+						return ForwardFlags::ForwardDNS;
 					}
 				}
 				if (permitBroadcast)
@@ -827,7 +666,7 @@ namespace
 					if (ipv4Header->*remoteAddress == 0xffffffff)
 					{
 						Debug::log("Permitting broadcast UDP packet");
-						return true;
+						return ForwardFlags::ForwardNetworkStack;
 					}
 				}
 				[[fallthrough]];
@@ -838,13 +677,13 @@ namespace
 					Debug::log("Body offset is {} but IPv4 header is {} bytes",
 					           ipv4Header->body_offset(),
 					           sizeof(ipv4Header));
-					return false;
+					return ForwardFlags::Discard;
 				}
 				if (ipv4Header->body_offset() + sizeof(TCPUDPCommonPrefix) >
 				    length)
 				{
 					Debug::log("Dropping IPv4 packet with length {}", length);
-					return false;
+					return ForwardFlags::Discard;
 				}
 				auto *tcpudpHeader =
 				  reinterpret_cast<const TCPUDPCommonPrefix *>(
@@ -866,7 +705,7 @@ namespace
 					           static_cast<int>(endpoint >> 8) & 0xff,
 					           static_cast<int>(endpoint >> 16) & 0xff,
 					           static_cast<int>(endpoint >> 24) & 0xff);
-					return true;
+					return ForwardFlags::ForwardNetworkStack;
 				}
 				// First SYN to a local server port should
 				// trigger creation of a firewall entry. We
@@ -883,7 +722,7 @@ namespace
 					{
 						Debug::log("Dropping truncated TCP packet of length {}",
 						           length);
-						return false;
+						return ForwardFlags::Discard;
 					}
 					auto *tcpHeader =
 					  reinterpret_cast<const TCPHeader *>(tcpudpHeader);
@@ -899,7 +738,7 @@ namespace
 							// reached.
 							Debug::log("Maximum number of clients reached, "
 							           "dropping TCP SYN");
-							return false;
+							return ForwardFlags::Discard;
 						}
 						currentClientCount++;
 						Debug::log("Permitting new client TCP connection from "
@@ -914,7 +753,7 @@ namespace
 						  endpoint,
 						  localPortNumber,
 						  remotePortNumber);
-						return true;
+						return ForwardFlags::ForwardNetworkStack;
 					}
 				}
 				// Permit DHCP replies
@@ -923,14 +762,16 @@ namespace
 				                  remotePortNumber,
 				                  localPortNumber))
 				{
-					return true;
+					return static_cast<ForwardFlags>(
+					  ForwardFlags::ForwardDNS |
+					  ForwardFlags::ForwardNetworkStack);
 				}
-				return false;
+				return ForwardFlags::Discard;
 			}
 			break;
 			case IPProtocolNumber::ICMP:
 				// FIXME: Allow disabling ICMP.
-				return true;
+				return ForwardFlags::ForwardNetworkStack;
 		}
 	}
 
@@ -954,12 +795,12 @@ namespace
 				static_assert(offsetof(TCPUDPCommonPrefix, destinationPort) ==
 				              2);
 				bool ret =
-				  packet_filter_ipv4(data + sizeof(EthernetHeader),
-				                     length - sizeof(EthernetHeader),
-				                     &IPv4Header::destinationAddress,
-				                     &TCPUDPCommonPrefix::sourcePort,
-				                     &TCPUDPCommonPrefix::destinationPort,
-				                     true);
+				  (packet_filter_ipv4(data + sizeof(EthernetHeader),
+				                      length - sizeof(EthernetHeader),
+				                      &IPv4Header::destinationAddress,
+				                      &TCPUDPCommonPrefix::sourcePort,
+				                      &TCPUDPCommonPrefix::destinationPort,
+				                      true) != 0);
 				if (!ret)
 				{
 					Debug::log("Dropping outbound IPv4 packet");
@@ -984,7 +825,7 @@ namespace
 		return false;
 	}
 
-	bool packet_filter_ingress(const uint8_t *data, size_t length)
+	ForwardFlags packet_filter_ingress(const uint8_t *data, size_t length)
 	{
 		uint32_t stateSnapshot = tcpipRestartState->load();
 		if (stateSnapshot != 0 &&
@@ -993,7 +834,7 @@ namespace
 			// We are in a reset and the driver has not yet been
 			// restarted.
 			Debug::log("Dropping packet due to network stack restart.");
-			return false;
+			return ForwardFlags::Discard;
 		}
 
 		static constinit MACAddress broadcastMAC = {
@@ -1003,7 +844,7 @@ namespace
 		if (length < 60)
 		{
 			Debug::log("Dropping frame with length {}", length);
-			return false;
+			return ForwardFlags::Discard;
 		}
 		EthernetHeader *ethernetHeader =
 		  reinterpret_cast<EthernetHeader *>(const_cast<uint8_t *>(data));
@@ -1018,19 +859,24 @@ namespace
 			  ethernetHeader->destination[3],
 			  ethernetHeader->destination[4],
 			  ethernetHeader->destination[5]);
-			return false;
+			return ForwardFlags::Discard;
 		}
 		switch (ethernetHeader->etherType)
 		{
 #if CHERIOT_RTOS_OPTION_IPv6
-			// For now, testing with v6 disabled.
-			// FIXME: Check the firewall for IPv6!
+			// For now, testing with v6 disabled. This means that
+			// we also never forward IPv6 packets to the DNS
+			// compartment.
+			//
+			// FIXME: Check the firewall for IPv6! This needs to be
+			// fixed to support DNS over IPv6.
 			case EtherType::IPv6:
-				return true;
+				return ForwardFlags::ForwardNetworkStack;
 #endif
 			case EtherType::ARP:
 				Debug::log("Saw ARP frame");
-				return true;
+				return static_cast<ForwardFlags>(
+				  ForwardFlags::ForwardDNS | ForwardFlags::ForwardNetworkStack);
 			case EtherType::IPv4:
 				return packet_filter_ipv4(data + sizeof(EthernetHeader),
 				                          length - sizeof(EthernetHeader),
@@ -1039,10 +885,10 @@ namespace
 				                          &TCPUDPCommonPrefix::sourcePort,
 				                          false);
 			default:
-				return false;
+				return ForwardFlags::Discard;
 		}
 
-		return false;
+		return ForwardFlags::Discard;
 	}
 
 	std::atomic<uint32_t> receivedCounter;
@@ -1079,14 +925,20 @@ void __cheri_compartment("Firewall") ethernet_run_driver()
 		while (auto maybeFrame = interface.receive_frame())
 		{
 			packets++;
-			auto &frame = *maybeFrame;
-			if (packet_filter_ingress(frame.buffer, frame.length))
+			auto        &frame = *maybeFrame;
+			ForwardFlags flags =
+			  packet_filter_ingress(frame.buffer, frame.length);
+			// Send the frame buffer to the TCP/IP stack as
+			// a read-only, non-capturable capability.
+			CHERI::Capability frameBuffer{frame.buffer};
+			frameBuffer.permissions() &= CHERI::Permission::Load;
+			if (flags & ForwardFlags::ForwardDNS)
 			{
-				// Send the frame buffer to the TCP/IP stack as
-				// a read-only, non-capturable capability.
-				CHERI::Capability frameBuffer{frame.buffer};
-				frameBuffer.permissions() &= CHERI::Permission::Load;
-				ethernet_receive_frame(frameBuffer, frame.length);
+				dns_resolver_receive_frame(frameBuffer, frame.length);
+			}
+			if (flags & ForwardFlags::ForwardNetworkStack)
+			{
+				network_stack_receive_frame(frameBuffer, frame.length);
 			}
 		}
 		receivedCounter += packets;
@@ -1188,39 +1040,6 @@ void firewall_remove_udpipv4_remote_endpoint(uint32_t remoteAddress,
 
 namespace
 {
-
-	/**
-	 * IPv6 address.
-	 *
-	 * This should be `std::array<uint8_t, 16>` but our version of `std::array`
-	 * does not yet have a three-way comparison operator.
-	 */
-	struct IPv6Address
-	{
-		/**
-		 * The bytes of the address.
-		 */
-		uint8_t bytes[16];
-		/**
-		 * Returns a pointer to the bytes of this address.
-		 */
-		auto data()
-		{
-			return bytes;
-		}
-		/**
-		 * Returns the size of an address.
-		 */
-		[[nodiscard]] size_t size() const
-		{
-			return sizeof(bytes);
-		}
-		/// Comparison operator.
-		// A clang-tidy bug thinks that this should be = nullptr instead of =
-		// default.
-		auto operator<=>(const IPv6Address &) const = default; // NOLINT
-	};
-
 	/**
 	 * Defensively copy the address, returns nullopt if the address is invalid.
 	 */
@@ -1350,6 +1169,7 @@ bool ethernet_driver_start(std::atomic<uint8_t> *state)
 	Debug::log("Initialising network interface");
 	auto &ethernet = lazy_network_interface();
 	ethernet.mac_address_set(mac_address());
+	initialize_dns_resolver(firewall_mac_address_get());
 	// Poke the barrier and make the driver thread start.
 	barrier = 2;
 	barrier.notify_one();

@@ -28,7 +28,7 @@ compartment("http_server_example")
 
 firmware("05.http_server_example")
   set_policy("build.warning", true)
-  add_deps("TCPIP", "Firewall", "NetAPI", "http_server_example", "atomic8", "debug")
+  add_deps("DNS", "TCPIP", "Firewall", "NetAPI", "http_server_example", "atomic8", "debug")
   on_load(function(target)
     target:values_set("board", "$(board)")
     target:values_set("threads", {

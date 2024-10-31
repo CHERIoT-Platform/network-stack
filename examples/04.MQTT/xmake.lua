@@ -18,7 +18,7 @@ option("board")
 
 compartment("mqtt_example")
   add_includedirs("../../include")
-  add_deps("freestanding", "TCPIP", "NetAPI", "TLS", "Firewall", "SNTP", "MQTT", "time_helpers", "debug")
+  add_deps("freestanding", "DNS", "TCPIP", "NetAPI", "TLS", "Firewall", "SNTP", "MQTT", "time_helpers", "debug")
   -- stdio only needed for debug prints in MQTT, can be removed with --debug-mqtt=n
   add_deps("stdio")
   add_files("mqtt.cc")
