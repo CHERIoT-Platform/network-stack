@@ -234,80 +234,6 @@ namespace
 	};
 
 	/**
-	 * The freertos_addrinfo structure is huge (>300 bytes) and so we
-	 * definitely don't want to stack-allocate it.  Fortunately, when used for
-	 * hints, only the second field is referenced.  This means that we can use
-	 * the prefix.
-	 */
-	struct AddrinfoHints
-	{
-		BaseType_t flags;
-		BaseType_t family;
-	};
-	static_assert(offsetof(AddrinfoHints, family) ==
-	              offsetof(freertos_addrinfo, ai_family));
-
-	/**
-	 * Resolve a hostname to an IP address.  If `useIPv6` is true, then this
-	 * will favour IPv6 addresses, but can still return IPv4 addresses if no
-	 * IPv6 address is available.
-	 */
-	int
-	host_resolve(const char *hostname, bool useIPv6, NetworkAddress *address)
-	{
-		struct AddrinfoHints hints;
-		hints.family = useIPv6 ? FREERTOS_AF_INET6 : FREERTOS_AF_INET;
-		struct freertos_addrinfo *results = nullptr;
-		auto                      ret =
-		  FreeRTOS_getaddrinfo(hostname,
-		                       nullptr,
-		                       reinterpret_cast<freertos_addrinfo *>(&hints),
-		                       &results);
-		if (ret != 0)
-		{
-			// Try with IPv4 if the lookup failed with IPv6
-			if (useIPv6)
-			{
-				return host_resolve(hostname, false, address);
-			}
-			Debug::log("DNS request returned: {}", ret);
-			address->kind = NetworkAddress::AddressKindInvalid;
-			address->ipv4 = 0;
-			return ret;
-		}
-
-		bool isIPv6 = false;
-		for (freertos_addrinfo *r = results; r != nullptr; r = r->ai_next)
-		{
-			Debug::log("Canonical name: {}", r->ai_canonname);
-			if (r->ai_family == FREERTOS_AF_INET6)
-			{
-				memcpy(
-				  address->ipv6, r->ai_addr->sin_address.xIP_IPv6.ucBytes, 16);
-				address->kind = NetworkAddress::AddressKindIPv6;
-				Debug::log("Got IPv6 address");
-			}
-			else
-			{
-				address->ipv4 = r->ai_addr->sin_address.ulIP_IPv4;
-				address->kind = NetworkAddress::AddressKindIPv4;
-				Debug::log(
-				  "Got IPv4 address: {}.{}.{}.{}",
-				  static_cast<int>(r->ai_addr->sin_address.ulIP_IPv4) & 0xff,
-				  static_cast<int>(r->ai_addr->sin_address.ulIP_IPv4) >> 8 &
-				    0xff,
-				  static_cast<int>(r->ai_addr->sin_address.ulIP_IPv4) >> 16 &
-				    0xff,
-				  static_cast<int>(r->ai_addr->sin_address.ulIP_IPv4) >> 24 &
-				    0xff);
-			}
-		}
-
-		FreeRTOS_freeaddrinfo(results);
-		return 0;
-	}
-
-	/**
 	 * Helper to run a FreeRTOS blocking socket call with a CHERIoT RTOS
 	 * timeout.  It's annoying that this needs to query the system tick
 	 * multiple times, but the FreeRTOS APIs are not composable.  This sets the
@@ -460,15 +386,6 @@ namespace
 		return ret;
 	}
 } // namespace
-
-int network_host_resolve(const char     *hostname,
-                         bool            useIPv6,
-                         NetworkAddress *address)
-{
-	return with_restarting_checks(
-	  [&]() { return host_resolve(hostname, useIPv6, address); },
-	  -1 /* invalid if we are restarting */);
-}
 
 /**
  * Callback called by FreeRTOS+TCP when a TCP connection is created or

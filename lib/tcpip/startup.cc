@@ -207,11 +207,6 @@ void vApplicationIPNetworkEventHook_Multi(eIPCallbackEvent_t eNetworkEvent,
 		{
 			Debug::log("IPv4 network up");
 			setBit(StartupState::DoneIPv4);
-			uint32_t dnsIP;
-			FreeRTOS_GetEndPointConfiguration(
-			  nullptr, nullptr, nullptr, &dnsIP, &endpointIPv4);
-			Debug::log("DNS server address: {}", dnsIP);
-			firewall_dns_server_ip_set(dnsIP);
 		}
 		else if constexpr (UseIPv6)
 		{
