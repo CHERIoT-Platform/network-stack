@@ -1082,7 +1082,11 @@ void __cheri_compartment("Firewall") ethernet_run_driver()
 			auto &frame = *maybeFrame;
 			if (packet_filter_ingress(frame.buffer, frame.length))
 			{
-				ethernet_receive_frame(frame.buffer, frame.length);
+				// Send the frame buffer to the TCP/IP stack as
+				// a read-only, non-capturable capability.
+				CHERI::Capability frameBuffer{frame.buffer};
+				frameBuffer.permissions() &= CHERI::Permission::Load;
+				ethernet_receive_frame(frameBuffer, frame.length);
 			}
 		}
 		receivedCounter += packets;
