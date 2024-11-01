@@ -5,12 +5,15 @@
 #include <FreeRTOS_IP.h>
 #include <ds/linked_list.h>
 #include <locks.hh>
+#include <unwind.h>
 
 /**
  * Internal helpers and data structures for use inside of the TCP/IP
  * compartment. These should be called or used only from/in the TCP/IP
  * compartment.
  */
+
+extern "C" void reset_network_stack_state(bool isIpThread);
 
 /**
  * Flags for the state of restart.
@@ -97,30 +100,38 @@ extern std::atomic<uint8_t> userThreadCount;
 
 /**
  * Helper to run a function ensuring that the thread counters are updated
- * appropriately. Every entry point of the TCP/IP stack API (with the exception
- * of the driver thread, see below) should go through this unless it
- * manipulates `userThreadCount` manually.
+ * appropriately and that the thread is running under the error handler.  Every
+ * entry point of the TCP/IP stack API (with the exception of the driver
+ * thread, see below) should go through this unless it manipulates
+ * `userThreadCount` and sets up the error handler manually.
  */
 auto with_restarting_checks(auto operation, auto errorValue)
 {
-	if (restartState.load() != 0)
-	{
-		// yield to give a chance to the restart code to make some
-		// progress, in case applications are aggressively trying to
-		// re-open the socket.
-		yield();
-		return errorValue;
-	}
-	userThreadCount++;
-	auto ret = operation();
-	// The decrement will happen in the error handler if the thread
-	// crashes.
-	//
-	// FIXME The decrement will *not* happen when a thread runs out of call
-	// stack in the TCP/IP compartment (because the error handler does not
-	// execute in that case). This will be fixed when we enable the error
-	// handler to run on stack overflow.
-	userThreadCount--;
+	auto ret = errorValue;
+
+	on_error(
+	  [&]() {
+		  // Is a reset ongoing?
+		  if (restartState.load() == 0)
+		  {
+			  // We are not resetting.
+			  userThreadCount++;
+			  ret = operation();
+			  // The decrement will happen in the error handler if
+			  // the thread crashes.
+			  userThreadCount--;
+			  return;
+		  }
+		  // A reset is ongoing. yield to give a chance to the restart
+		  // code to make some progress, in case applications are
+		  // aggressively trying to re-open the socket.
+		  yield();
+	  },
+	  [&]() {
+		  // Call the network stack error handler.
+		  reset_network_stack_state(false /* this is not the IP thread */);
+	  });
+
 	return ret;
 }
 
@@ -135,8 +146,20 @@ auto with_restarting_checks(auto operation, auto errorValue)
  */
 auto with_restarting_checks_driver(auto operation, auto errorValue)
 {
-	userThreadCount++;
-	auto ret = operation();
-	userThreadCount--;
+	auto ret = errorValue;
+
+	on_error(
+	  [&]() {
+		  userThreadCount++;
+		  ret = operation();
+		  // The decrement will happen in the error handler if the thread
+		  // crashes.
+		  userThreadCount--;
+	  },
+	  [&]() {
+		  // Call the network stack error handler.
+		  reset_network_stack_state(false /* this is not the IP thread */);
+	  });
+
 	return ret;
 }

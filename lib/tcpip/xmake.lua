@@ -5,7 +5,7 @@ option("network-inject-faults")
 
 compartment("TCPIP")
   set_default(false)
-  add_deps("freestanding", "string", "message_queue_library", "event_group", "cxxrt")
+  add_deps("freestanding", "string", "message_queue_library", "event_group", "cxxrt", "unwind_error_handler")
   add_cflags("-Wno-error=int-conversion", "-Wno-error=cheri-provenance", "-Wno-error=pointer-integer-compare", { force = true})
   add_defines("CHERIOT_CUSTOM_DEFAULT_MALLOC_CAPABILITY")
   add_defines("CHERIOT_EXPOSE_FREERTOS_SEMAPHORE")
