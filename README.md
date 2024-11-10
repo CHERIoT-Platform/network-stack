@@ -30,7 +30,7 @@ The new code in this repository is around 3% of the size of the large components
 Compartmentalisation
 --------------------
 
-The initial implementation has six compartments.
+The initial implementation has seven compartments.
 Four are mostly existing third-party code with thin wrappers:
 
  - The TCP/IP stack is in a compartment.
@@ -39,11 +39,12 @@ Four are mostly existing third-party code with thin wrappers:
  - The TLS stack is, again, mostly unmodified BearSSL code, with just some thin wrappers added around the edges.
  - The MQTT compartment, like the SNTP compartment, is just another consumer of the network stack (the TLS layer, specifically) and provides a simple interface for connecting to MQTT servers, publishing messages and receiving notifications of publish events.
 
-These are joined by two new compartments:
+These are joined by three new compartments:
 
  - The firewall compartment is the only thing that talks directly to the network device.
    It filters inbound and outbound frames.
  - The NetAPI compartment provides the control plane.
+ - The DNS resolver compartment provides DNS lookup services, interfacing directly with the firewall.
 
 The communication is (roughly) summarised below:
 
@@ -56,11 +57,14 @@ graph TD
   TCPIP["TCP/IP"]:::ThirdParty
   User["User Code "]
   NetAPI["Network API"]
+  DNS["DNS Resolver"]
   SNTP:::ThirdParty
   TLS:::ThirdParty
   MQTT:::ThirdParty
   DeviceDriver <-- "Network traffic" --> Network
   TCPIP <-- "Send and receive Ethernet frames" --> Firewall
+  DNS <-- "Send and receive Ethernet frames" --> Firewall
+  NetAPI -- "Perform DNS lookups" --> DNS
   NetAPI -- "Add and remove rules" --> Firewall
   TLS -- "Request network connections" --> NetAPI
   TLS -- "Send and receive" --> TCPIP
@@ -82,27 +86,17 @@ We expand on this capability [below](#automatic-restart-of-the-tcpip-stack).
 Unlike the TCP/IP stack, the TLS compartment is almost completely stateless.
 This makes resetting the compartment trivial, and gives strong flow isolation properties: Even if an attacker compromises the TLS compartment by sending malicious data over one connection that triggers a bug in BearSSL (unlikely), it is extraordinarily difficult for them to interfere with any other TLS connection.
 
-Similarly, the firewall is controlled by the Network API compartment.
-The TCP/IP stack has no access to the control-plane interface for the compartment.
-A compromise that gets arbitrary-code execution in the network stack cannot open new firewall holes (to join a DDoS botnet such as [Mirai](https://en.wikipedia.org/wiki/Mirai_(malware)), for example).
-Note that there are currently some technical limitations to this, see the discussion below.
-The worst it can do to rest of the system is provide malicious data, but a system using TLS will have HMACs on received messages and so this is no worse than a malicious packet being injected from the network.
+All inbound and outbound data go through the on-device firewall, which is controlled by the Network API compartment.
+The TCP/IP stack has no access to the NetAPI control-plane interface.
+Thus, a compromise that gets arbitrary-code execution in the network stack cannot open new firewall holes (to join a DDoS botnet such as [Mirai](https://en.wikipedia.org/wiki/Mirai_(malware)), for example).
+The worst it can do to the rest of the system is provide malicious data, but a system using TLS will have HMACs on received messages and so this is no worse than a malicious packet being injected from the network.
 
-All of this is on top of the spatial and temporal safety properties that the CHERIoT platform provides at a base level.
-
-**Note on the isolation of the firewall control plane.**
-
-In the current implementation, the TCP/IP stack still indirectly controls which endpoints the firewall allows/disables because the Network API compartment operates with domain names, and the firewall with IPs, and the TCP/IP stack controls the translation between the two.
-
+The DNS resolver comes as a separate compartment to support this design: since the Network API compartment operates with domain names, and the firewall with IPs, the translation between the two must be done by a trusted entity.
 For instance, if the application tells the Network API that the only endpoint it will ever communicate with is `example.com`, the Network API will need to translate that domain name into an IP to create a firewall entry.
-The TCP/IP compartment is responsible for doing the translation through DNS.
-Thus, a compromised TCP/IP stack can spoof the DNS translation and return whichever IP address it wants to connect to, to create a corresponding firewall entry.
+If this translation was done by a potentially compromised TCP/IP stack, it could spoof the DNS translation and return whichever IP address it wants to connect to, to create a corresponding malicious firewall entry.
+The isolated DNS resolver is trusted to perform this task independently of the TCP/IP stack.
 
-This attack scenario comes with the limitation that DNS resolution and firewall updates only happen when establishing a new connection.
-However, in many cases the TCP/IP stack can trigger this arbitrarily by closing the sockets opened by the application to force the application to trigger another socket open (and thus to re-establish the connection and re-translate the domain name).
-
-Looking forward, we are planning to address this limitation by moving the DNS lookup to a separate compartment.
-Unfortunately, without DNSSEC, the network stack can still tamper with responses, so this will also require a firewall-layer bypass to send DNS responses to the DNS compartment instead of the network stack.
+This compartmentalised design comes on top of the spatial and temporal safety properties that the CHERIoT platform provides at a base level.
 
 Capabilities authorise communication
 ------------------------------------
