@@ -8,7 +8,6 @@ void ip_thread_start(void);
 // This is evil.
 #include "../../third_party/freertos-plus-tcp/source/FreeRTOS_ARP.c"
 #include "../../third_party/freertos-plus-tcp/source/FreeRTOS_DHCP.c"
-#include "../../third_party/freertos-plus-tcp/source/FreeRTOS_DNS_Cache.c"
 #include "../../third_party/freertos-plus-tcp/source/FreeRTOS_IP.c"
 #include "../../third_party/freertos-plus-tcp/source/FreeRTOS_IP_Timers.c"
 #include "../../third_party/freertos-plus-tcp/source/FreeRTOS_TCP_IP.c"
@@ -98,13 +97,8 @@ void ip_cleanup(void)
 	pxNetworkInterfaces       = NULL;
 	pxARPWaitingNetworkBuffer = NULL;
 	memset(&xARPCache, 0, sizeof(xARPCache));
-	memset(&xDNSCache, 0, sizeof(xDNSCache));
 	xNetworkDownEventPending = 0;
 	xDHCPSocketUserCount     = 0;
-
-	/// Reset data from `.data`
-
-	xDNS_IP_Preference = xPreferenceIPv4;
 
 	// Note: do not reset `ucDefaultPartUDPPacketHeader` and
 	// `xDefaultPartARPPacketHeader` because these globals are `const`,

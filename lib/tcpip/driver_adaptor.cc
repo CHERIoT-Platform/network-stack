@@ -88,7 +88,7 @@ namespace
 } // namespace
 
 bool __cheri_compartment("TCPIP")
-  ethernet_receive_frame(uint8_t *frame, size_t length)
+  network_stack_receive_frame(uint8_t *frame, size_t length)
 {
 	return with_restarting_checks_driver(
 	  [&]() {

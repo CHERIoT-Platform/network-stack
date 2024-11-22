@@ -18,7 +18,7 @@ option("board")
 
 compartment("https_example")
   add_includedirs("../../include")
-  add_deps("freestanding", "TCPIP", "NetAPI", "TLS", "Firewall", "SNTP", "time_helpers", "debug")
+  add_deps("freestanding", "DNS", "TCPIP", "NetAPI", "TLS", "Firewall", "SNTP", "time_helpers", "debug")
   add_files("https.cc")
   on_load(function(target)
     target:add('options', "IPv6")
