@@ -170,7 +170,8 @@ int __cheri_compartment("MQTT") mqtt_publish(Timeout    *t,
                                              const char *topic,
                                              size_t      topicLength,
                                              const void *payload,
-                                             size_t      payloadLength);
+                                             size_t      payloadLength,
+                                             bool        retain = false);
 
 /**
  * Subscribe on a given MQTT connection.

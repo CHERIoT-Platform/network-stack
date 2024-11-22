@@ -469,12 +469,15 @@ namespace
 			              "are not set.");
 
 			// The payload and topic are only valid within the
-			// context of the callback: make them read-only and
-			// non-capturable.
+			// context of the callback: make them read-only,
+			// non-capturable, and limits to the length of the
+			// topic and payload.
 			Capability topic{publishInfo->pTopicName};
 			Capability payload{publishInfo->pPayload};
 			topic.permissions() &= CHERI::Permission::Load;
+			topic.bounds() = publishInfo->topicNameLength;
 			payload.permissions() &= CHERI::Permission::Load;
+			payload.bounds() = publishInfo->payloadLength;
 
 			publishCallback(topic,
 			                publishInfo->topicNameLength,
@@ -815,7 +818,8 @@ int mqtt_publish(Timeout    *t,
                  const char *topic,
                  size_t      topicLength,
                  const void *payload,
-                 size_t      payloadLength)
+                 size_t      payloadLength,
+                 bool        retain)
 {
 	if (!CHERI::check_pointer(topic, topicLength))
 	{
@@ -872,6 +876,7 @@ int mqtt_publish(Timeout    *t,
 		  publishInfo.topicNameLength = topicLength;
 		  publishInfo.pPayload        = payload;
 		  publishInfo.payloadLength   = payloadLength;
+		  publishInfo.retain          = retain;
 
 		  // Packet ID is needed for QoS > 0.
 		  int packetId = MQTT_GetPacketId(coreMQTTContext);
