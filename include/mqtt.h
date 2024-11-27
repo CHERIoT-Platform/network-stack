@@ -181,6 +181,14 @@ int __cheri_compartment("MQTT") mqtt_publish(Timeout    *t,
  * include the zero terminator and must be at least one-character long).
  *
  * `qos` indicates the level of QoS (0, 1, or 2).
+ * 
+ * `retain` indicates whether the message should be published as retained or
+ * not. The broker stores the last retained message and the corresponding QoS
+ * for that topic. Each client that subscribes to a topic pattern that matches
+ * the topic of the retained message receives the retained message immediately
+ * after they subscribe. The broker stores only one retained message per topic.
+ * Retained messages are cleared by publishing a zero length message with the
+ * retain flag set.
  *
  * The filter buffer must remain valid during the execution of this function.
  * If the caller frees it during the execution of this function, the subscribe
