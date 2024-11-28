@@ -181,7 +181,7 @@ int __cheri_compartment("MQTT") mqtt_publish(Timeout    *t,
  * include the zero terminator and must be at least one-character long).
  *
  * `qos` indicates the level of QoS (0, 1, or 2).
- * 
+ *
  * `retain` indicates whether the message should be published as retained or
  * not. The broker stores the last retained message and the corresponding QoS
  * for that topic. Each client that subscribes to a topic pattern that matches
