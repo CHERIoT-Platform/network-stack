@@ -58,6 +58,10 @@ extern "C" int ipFOREVER(void)
  * previous instance of the network stack.
  *
  * This should not be reset by the error handler and is reset-critical.
+ *
+ * Note, however, that only one line in the code ever writes to this variable:
+ * the error handler. Assuming that the control-flow is not compromised (threat
+ * model of the reset), this should be impossible to corrupt.
  */
 std::atomic<uint32_t> currentSocketEpoch = 0;
 

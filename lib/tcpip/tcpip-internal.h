@@ -93,6 +93,13 @@ extern std::atomic<uint8_t> restartState;
  * performing a network stack reset.
  *
  * This should not be reset by the error handler and is reset-critical.
+ *
+ * Note however that the only code that ever writes to this variable is 1)
+ * `with_restarting_checks` and `with_restarting_checks_driver` below, and 2)
+ * the error handler. `with_restarting_checks` and
+ * `with_restarting_checks_driver` can only be executed when entering the
+ * compartment. Assuming the control-flow is not compromised (threat model of
+ * the reset), this should be impossible to corrupt.
  */
 extern std::atomic<uint8_t> userThreadCount;
 
