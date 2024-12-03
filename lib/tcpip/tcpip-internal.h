@@ -70,8 +70,6 @@ struct SealedSocket
  *
  * This is used as part of the network stack reset to clean up sockets and
  * unblock threads waiting on message queues.
- *
- * This will be reset by the error handler, however it *is* reset-critical.
  */
 extern ds::linked_list::Sentinel<SocketRingLink> sealedSockets;
 
