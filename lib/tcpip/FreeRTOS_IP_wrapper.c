@@ -25,11 +25,6 @@ void ip_thread_start(void);
 uint32_t threadEntryGuard;
 
 /**
- * Store the thread ID of the TCP/IP thread for use in the error handler.
- */
-uint16_t networkThreadID;
-
-/**
  * Global lock acquired by the IP thread at startup time. In normal running
  * conditions, this lock is never released and acquiring it after startup will
  * always fail. This lock can be used to force the IP thread to run for a short
@@ -105,8 +100,6 @@ void __cheri_compartment("TCPIP") ip_thread_entry(void)
 {
 	FreeRTOS_printf(("ip_thread_entry\n"));
 
-	networkThreadID = thread_id_get();
-
 	while (1)
 	{
 		CHERIOT_DURING
@@ -118,7 +111,7 @@ void __cheri_compartment("TCPIP") ip_thread_entry(void)
 				futex_wait(&threadEntryGuard, 0);
 			}
 
-			xIPTaskHandle = networkThreadID;
+			xIPTaskHandle = thread_id_get();
 			FreeRTOS_printf(
 			  ("ip_thread_entry starting, thread ID is %p\n", xIPTaskHandle));
 
