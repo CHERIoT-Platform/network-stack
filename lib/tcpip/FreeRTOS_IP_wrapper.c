@@ -21,15 +21,8 @@ void ip_thread_start(void);
 /**
  * Flag used to synchronize the network stack thread and user threads at
  * startup.
- *
- * This should not be reset by the error handler and is reset-critical.
- *
- * Note (which also applies to other reset-critical data): ultimately we should
- * move this to a separate "network stack TCB" compartment to be able to reset
- * all the state of this compartment unconditionally by re-zeroing the BSS and
- * resetting .data from snapshots.
  */
-static uint32_t threadEntryGuard;
+uint32_t threadEntryGuard;
 
 /**
  * Store the thread ID of the TCP/IP thread for use in the error handler.
@@ -125,21 +118,6 @@ void __cheri_compartment("TCPIP") ip_thread_entry(void)
 				futex_wait(&threadEntryGuard, 0);
 			}
 
-			// Reset the guard now: we will only ever re-iterate
-			// the loop in the case of a network stack reset, in
-			// which case we want to wait again for a call to
-			// `ip_thread_start`.
-			//
-			// Note that we cannot reset this in `ip_cleanup`,
-			// because that would overwrite the 1 written by
-			// `ip_thread_start` if the latter was called before we
-			// call `ip_cleanup`. This will happen if the IP thread
-			// crashes, in which case we would first call
-			// `ip_thread_start` in the error handler, and then
-			// reset the context to `ip_thread_entry` (itself then
-			// calling `ip_cleanup`).
-			threadEntryGuard = 0;
-
 			xIPTaskHandle = networkThreadID;
 			FreeRTOS_printf(
 			  ("ip_thread_entry starting, thread ID is %p\n", xIPTaskHandle));
@@ -149,6 +127,25 @@ void __cheri_compartment("TCPIP") ip_thread_entry(void)
 			// FreeRTOS event loop. This will only return if a user
 			// thread crashed.
 			prvIPTask(NULL);
+
+			// Reset the guard. We only want to do this in the case
+			// of a user thread crash, and we will only ever reach
+			// this line if a user thread crashes (otherwise we'd
+			// end up in the error handler).
+			//
+			// This is guaranteed not to race with
+			// `ip_thread_start` since that function will only get
+			// called after we release the IP thread lock at the
+			// bottom of this function.
+			//
+			// The reason why we only reset this in the case of a
+			// user thread crash is that the synchronization is
+			// trivial in the case of a network thread crash: we
+			// know that we will only enter the next loop iteration
+			// after the guard has been set to 1 by
+			// `ip_thread_start`, since the error handler only
+			// returns once `network_restart` has returned.
+			threadEntryGuard = 0;
 		}
 		CHERIOT_HANDLER
 		{

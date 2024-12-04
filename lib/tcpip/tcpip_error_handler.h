@@ -39,6 +39,7 @@ extern struct RecursiveMutexState __CriticalSectionFlagLock;
 extern struct RecursiveMutexState __SuspendFlagLock;
 extern QueueHandle_t              xNetworkEventQueue;
 extern FlagLockPriorityInherited  sealedSocketsListLock;
+extern uint32_t                   threadEntryGuard;
 
 /**
  * Restart the network stack. See documentation in `startup.cc`
@@ -140,6 +141,22 @@ extern "C" void reset_network_stack_state(bool isIpThread)
 			// better.
 			DebugErrorHandler::log("The network thread crashed while "
 			                       "restarting. This may be unrecoverable.");
+		}
+		else if (isIpThread)
+		{
+			// Reset the IP thread entry guard. We only want to do
+			// this in the case of a user thread crash, and we will
+			// only ever reach this line if a user thread crashed
+			// first (causing the network thread to crash).
+			//
+			// This is guaranteed not to race with
+			// `ip_thread_start` since that function will only get
+			// called after we return.
+			//
+			// For more information, look at the other place where
+			// we reset `threadEntryGuard` in
+			// `FreeRTOS_IP_wrapper.c`.
+			threadEntryGuard = 0;
 		}
 
 		// Another instance of the error handler is running, do not do
