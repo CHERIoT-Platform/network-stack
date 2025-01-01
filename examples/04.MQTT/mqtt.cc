@@ -68,7 +68,8 @@ void __cheri_callback publishCallback(const char *topicName,
 		return;
 	}
 
-	Debug::log("Got a PUBLISH for topic {}", topicName);
+	Debug::log("Got a PUBLISH for topic {}",
+	           std::string_view{topicName, topicNameLength});
 	publishReceived++;
 }
 
