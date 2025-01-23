@@ -622,7 +622,7 @@ SObj network_socket_accept_tcp(Timeout        *timeout,
 		  struct freertos_sockaddr addressTmp;
 		  uint32_t                 addressLength = sizeof(addressTmp);
 		  auto                     rawSocket     = FreeRTOS_accept(
-		                            listeningSocket->socket, &addressTmp, &addressLength);
+            listeningSocket->socket, &addressTmp, &addressLength);
 		  if (rawSocket == nullptr)
 		  {
 			  Debug::log("Failed to create socket.");
@@ -670,7 +670,7 @@ SObj network_socket_accept_tcp(Timeout        *timeout,
 		  }
 
 		  // Set `address`.
-		  if ((heap_claim_fast(timeout, address) < 0) ||
+		  if ((heap_claim_ephemeral(timeout, address) < 0) ||
 		      (!check_pointer<PermissionSet{Permission::Store}>(address)))
 		  {
 			  // There is not much we can do if this happens. The
@@ -697,7 +697,7 @@ SObj network_socket_accept_tcp(Timeout        *timeout,
 			  }
 		  }
 		  // Set `port`.
-		  if ((heap_claim_fast(timeout, port) < 0) ||
+		  if ((heap_claim_ephemeral(timeout, port) < 0) ||
 		      (!check_pointer<PermissionSet{Permission::Store}>(port)))
 		  {
 			  // Same comment as earlier for `address`.
@@ -959,22 +959,22 @@ NetworkReceiveResult network_socket_receive_from(Timeout *timeout,
 {
 	uint8_t *buffer = nullptr;
 	ssize_t  result = with_sealed_socket(
-	   timeout,
-	   [&](SealedSocket *socket) {
+      timeout,
+      [&](SealedSocket *socket) {
           freertos_sockaddr remoteAddress;
           socklen_t         remoteAddressLength = sizeof(remoteAddress);
           uint8_t          *unclaimedBuffer     = nullptr;
           int               received            = with_freertos_timeout(
-		                              timeout, socket->socket, FREERTOS_SO_RCVTIMEO, [&] {
+            timeout, socket->socket, FREERTOS_SO_RCVTIMEO, [&] {
                 // Receive a packet with zero copy.  The zero-copy interface for
                 // UDP returns a pointer to the packet buffer, so we don't end
                 // up claiming a huge stream buffer.
                 return FreeRTOS_recvfrom(socket->socket,
-			                                                       &unclaimedBuffer,
-			                                                       0,
-			                                                       FREERTOS_ZERO_COPY,
-			                                                       &remoteAddress,
-			                                                       &remoteAddressLength);
+                                         &unclaimedBuffer,
+                                         0,
+                                         FREERTOS_ZERO_COPY,
+                                         &remoteAddress,
+                                         &remoteAddressLength);
             } /* with_freertos_timeout */);
           if (received > 0)
           {
@@ -990,7 +990,7 @@ NetworkReceiveResult network_socket_receive_from(Timeout *timeout,
               Capability claimedBuffer{unclaimedBuffer};
               claimedBuffer.bounds() = received;
 
-              if (heap_claim_fast(timeout, address, port) < 0)
+              if (heap_claim_ephemeral(timeout, address, port) < 0)
               {
                   return -ETIMEDOUT;
               }
@@ -1005,8 +1005,8 @@ NetworkReceiveResult network_socket_receive_from(Timeout *timeout,
                   {
                       address->kind = NetworkAddress::AddressKindIPv6;
                       memcpy(address->ipv6,
-					          remoteAddress.sin_address.xIP_IPv6.ucBytes,
-					          16);
+                             remoteAddress.sin_address.xIP_IPv6.ucBytes,
+                             16);
                   }
                   else
                   {
@@ -1044,8 +1044,8 @@ NetworkReceiveResult network_socket_receive_from(Timeout *timeout,
               return -EINVAL;
           }
           return received; // We had `received` == 0.
-	   } /* with_sealed_socket */,
-	   socket);
+      } /* with_sealed_socket */,
+      socket);
 	return {result, buffer};
 }
 
@@ -1058,7 +1058,7 @@ int network_socket_receive_preallocated(Timeout *timeout,
 	  timeout,
 	  sealedSocket,
 	  [&](int &available) -> void * {
-		  int ret = heap_claim_fast(timeout, buffer);
+		  int ret = heap_claim_ephemeral(timeout, buffer);
 		  if (ret != 0)
 		  {
 			  available = ret;
@@ -1081,9 +1081,9 @@ NetworkReceiveResult network_socket_receive(Timeout *timeout,
 {
 	uint8_t *buffer = nullptr;
 	ssize_t  result = network_socket_receive_internal(
-	   timeout,
-	   sealedSocket,
-	   [&](int &available) -> void  *{
+      timeout,
+      sealedSocket,
+      [&](int &available) -> void  *{
           do
           {
               // Do the initial allocation without timeout: if the quota or the
@@ -1124,8 +1124,8 @@ NetworkReceiveResult network_socket_receive(Timeout *timeout,
               }
           } while (!Capability{buffer}.is_valid());
           return buffer;
-	   },
-	   [&](void *buffer) -> void { heap_free(mallocCapability, buffer); });
+      },
+      [&](void *buffer) -> void { heap_free(mallocCapability, buffer); });
 	return {result, buffer};
 }
 
@@ -1200,7 +1200,7 @@ ssize_t network_socket_send_to(Timeout              *timeout,
 		  memset(&server, 0, sizeof(server));
 		  server.sin_len  = sizeof(server);
 		  server.sin_port = htons(port);
-		  if (heap_claim_fast(timeout, address) < 0)
+		  if (heap_claim_ephemeral(timeout, address) < 0)
 		  {
 			  Debug::log("Failed to claim address");
 			  return -ETIMEDOUT;
@@ -1266,7 +1266,7 @@ int network_socket_kind(SObj socket, SocketKind *kind)
 		  kind->protocol  = SocketKind::Invalid;
 		  kind->localPort = 0;
 		  int ret         = with_sealed_socket(
-		            [&](SealedSocket *socket) {
+            [&](SealedSocket *socket) {
                 if (socket->socket->ucProtocol == FREERTOS_IPPROTO_TCP)
                 {
                     kind->protocol = socket->socket->bits.bIsIPv6
@@ -1280,10 +1280,10 @@ int network_socket_kind(SObj socket, SocketKind *kind)
 				                               : SocketKind::UDPIPv4;
                 }
                 kind->localPort = listGET_LIST_ITEM_VALUE(
-			              (&((socket->socket)->xBoundSocketListItem)));
+                  (&((socket->socket)->xBoundSocketListItem)));
                 return 0;
-		            },
-		            socket);
+            },
+            socket);
 		  return ret;
 	  },
 	  -1 /* invalid if we are restarting */);

@@ -420,7 +420,7 @@ SObj tls_connection_create(Timeout                    *t,
 
 	void *unsealed;
 	SObj  sealed = token_sealed_unsealed_alloc(
-	   t, allocator, tls_key(), sizeof(TLSContext), &unsealed);
+      t, allocator, tls_key(), sizeof(TLSContext), &unsealed);
 	Debug::log("Created tls context sealed with {}", tls_key());
 	if (sealed == nullptr)
 	{
@@ -536,7 +536,7 @@ ssize_t tls_connection_send(Timeout *t,
 				  Debug::log("TLS engine can accept {} bytes, sending {} bytes",
 				             readyLength,
 				             toSend);
-				  int ret = heap_claim_fast(t, buffer);
+				  int ret = heap_claim_ephemeral(t, buffer);
 				  if (ret != 0)
 				  {
 					  return ret;
@@ -584,9 +584,9 @@ NetworkReceiveResult tls_connection_receive(Timeout *t, SObj sealedConnection)
 {
 	uint8_t *buffer = nullptr;
 	ssize_t  result = tls_connection_receive_internal(
-	   t,
-	   sealedConnection,
-	   [&](int &available, SObj &mallocCapability) -> void  *{
+      t,
+      sealedConnection,
+      [&](int &available, SObj &mallocCapability) -> void  *{
           do
           {
               // Do the initial allocation without timeout: if the quota or the
@@ -628,7 +628,7 @@ NetworkReceiveResult tls_connection_receive(Timeout *t, SObj sealedConnection)
               }
           } while (!Capability{buffer}.is_valid());
           return buffer;
-	   });
+      });
 	return {result, buffer};
 }
 
@@ -641,7 +641,7 @@ int tls_connection_receive_preallocated(Timeout *t,
 	  t,
 	  sealedConnection,
 	  [&](int &available, SObj &mallocCapability) -> void * {
-		  int ret = heap_claim_fast(t, outputBuffer);
+		  int ret = heap_claim_ephemeral(t, outputBuffer);
 		  if (ret != 0)
 		  {
 			  available = ret;

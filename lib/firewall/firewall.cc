@@ -4,7 +4,7 @@
 #include <atomic>
 #include <compartment-macros.h>
 #include <debug.hh>
-//#include <fail-simulator-on-error.h>
+// #include <fail-simulator-on-error.h>
 #include <endianness.hh>
 #include <locks.hh>
 #include <platform-entropy.hh>
@@ -622,13 +622,14 @@ namespace
 	 * `packet_filter_ingress`.  Indicates if and to which compartment a
 	 * packet should be forwarded.
 	 */
-	enum [[clang::flag_enum]] ForwardFlags{
-	  // Do not forward.
-	  Discard = 0,
-	  // Forward to the DNS resolver.
-	  ForwardDNS = 1,
-	  // Forward to the TCP/IP stack.
-	  ForwardNetworkStack = 2,
+	enum [[clang::flag_enum]] ForwardFlags
+	{
+		// Do not forward.
+		Discard = 0,
+		// Forward to the DNS resolver.
+		ForwardDNS = 1,
+		// Forward to the TCP/IP stack.
+		ForwardNetworkStack = 2,
 	};
 
 	ForwardFlags packet_filter_ipv4(const uint8_t *data,
@@ -1059,7 +1060,7 @@ namespace
 	std::optional<IPv6Address> copy_address(const uint8_t *address)
 	{
 		IPv6Address copy;
-		if (!blocking_forever<heap_claim_fast>(address, nullptr) ||
+		if (!blocking_forever<heap_claim_ephemeral>(address, nullptr) ||
 		    !CHERI::check_pointer<CHERI::PermissionSet{
 		      CHERI::Permission::Load}>(address, copy.size()))
 		{
