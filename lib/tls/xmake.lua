@@ -4,9 +4,15 @@ option("tls-rsa")
     set_showmenu(true)
     add_defines("CHERIOT_TLS_ENABLE_RSA")
 
+option("tls-sha384")
+    set_default(true)
+    set_description("Enable SHA384 for signature verification (in addition to SHA256) for TLS")
+    set_showmenu(true)
+    add_defines("CHERIOT_TLS_ENABLE_SHA384")
+
 
 compartment("TLS")
-  add_options("tls-rsa")
+  add_options("tls-rsa", "tls-sha384")
   set_default(false)
   -- TLS API
   add_files("tls.cc")

@@ -121,6 +121,8 @@ namespace
 		static const uint16_t Suites[] = {
 		  BR_TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,
 		  BR_TLS_ECDH_ECDSA_WITH_AES_128_GCM_SHA256,
+		  BR_TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,
+		  BR_TLS_ECDH_ECDSA_WITH_AES_128_GCM_SHA256,
 #ifdef CHERIOT_TLS_ENABLE_RSA
 		  BR_TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
 		  BR_TLS_ECDH_RSA_WITH_AES_128_GCM_SHA256,
@@ -164,13 +166,17 @@ namespace
 		 * X.509 engine.
 		 */
 		br_ssl_engine_set_hash(&cc->eng, br_sha256_ID, &br_sha256_vtable);
-		Debug::log("Setting vtable for br_sha256_ID: {}", &br_sha256_vtable);
 		for (int i = 0; i < 6; i++)
 		{
 			Debug::log("hash engines[{}] = {}", i, cc->eng.mhash.impl[i]);
 		}
 
 		br_x509_minimal_set_hash(xc, br_sha256_ID, &br_sha256_vtable);
+
+#ifdef CHERIOT_TLS_ENABLE_SHA384
+		br_ssl_engine_set_hash(&cc->eng, br_sha384_ID, &br_sha384_vtable);
+		br_x509_minimal_set_hash(xc, br_sha384_ID, &br_sha384_vtable);
+#endif
 
 		/*
 		 * Link the X.509 engine in the SSL engine.
