@@ -123,7 +123,7 @@ bool __cheri_compartment("TCPIP")
 				  // Inject a fault by giving the frame an incorrect length.
 				  // This will cause the TCP/IP stack to read beyond the end.
 				  CHERI::Capability buffer = descriptor->pucEthernetBuffer;
-				  buffer.bounds().set_inexact(buffer.length() - 16);
+				  buffer.bounds().set_inexact(16);
 				  descriptor->pucEthernetBuffer = buffer;
 			  }
 		  }
