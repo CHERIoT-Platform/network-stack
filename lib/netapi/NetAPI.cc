@@ -35,15 +35,15 @@ namespace
 	}
 } // namespace
 
-SObj network_socket_connect_tcp(Timeout *timeout,
-                                SObj     mallocCapability,
-                                SObj     hostCapability)
+Socket network_socket_connect_tcp(Timeout             *timeout,
+                                  AllocatorCapability  mallocCapability,
+                                  ConnectionCapability hostCapability)
 {
 	if (!check_timeout_pointer(timeout))
 	{
 		return nullptr;
 	}
-	Sealed<ConnectionCapability> sealedHost{hostCapability};
+	Sealed<ConnectionCapabilityState> sealedHost{hostCapability};
 	auto *host = token_unseal(host_capability_key(), sealedHost);
 	if (host == nullptr)
 	{
@@ -129,16 +129,16 @@ SObj network_socket_connect_tcp(Timeout *timeout,
 	return sealedSocket;
 }
 
-SObj network_socket_listen_tcp(Timeout *timeout,
-                               SObj     mallocCapability,
-                               SObj     bindCapability)
+Socket network_socket_listen_tcp(Timeout            *timeout,
+                                 AllocatorCapability mallocCapability,
+                                 BindCapability      bindCapability)
 {
 	if (!check_timeout_pointer(timeout))
 	{
 		return nullptr;
 	}
-	Sealed<BindCapability> sealedBindCapability{bindCapability};
-	auto                  *serverPort =
+	Sealed<BindCapabilityState> sealedBindCapability{bindCapability};
+	auto                       *serverPort =
 	  token_unseal(bind_capability_key(), sealedBindCapability);
 	if (serverPort == nullptr)
 	{
@@ -186,16 +186,17 @@ SObj network_socket_listen_tcp(Timeout *timeout,
 	return sealedSocket;
 }
 
-NetworkAddress network_socket_udp_authorise_host(Timeout *timeout,
-                                                 SObj     socket,
-                                                 SObj     hostCapability)
+NetworkAddress
+network_socket_udp_authorise_host(Timeout             *timeout,
+                                  Socket               socket,
+                                  ConnectionCapability hostCapability)
 {
 	if (!check_timeout_pointer(timeout))
 	{
 		return {NetworkAddress::AddressKindInvalid};
 	}
-	NetworkAddress               address{NetworkAddress::AddressKindInvalid};
-	Sealed<ConnectionCapability> sealedHost{hostCapability};
+	NetworkAddress address{NetworkAddress::AddressKindInvalid};
+	Sealed<ConnectionCapabilityState> sealedHost{hostCapability};
 	auto *host = token_unseal(host_capability_key(), sealedHost);
 	if (host == nullptr)
 	{
@@ -274,9 +275,9 @@ NetworkAddress network_socket_udp_authorise_host(Timeout *timeout,
 	return address;
 }
 
-const char *network_host_get(SObj hostCapability)
+const char *network_host_get(ConnectionCapability hostCapability)
 {
-	Sealed<ConnectionCapability> sealedHost{hostCapability};
+	Sealed<ConnectionCapabilityState> sealedHost{hostCapability};
 	auto *host = token_unseal(host_capability_key(), sealedHost);
 	if (host == nullptr)
 	{

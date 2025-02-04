@@ -57,7 +57,7 @@ void __cheri_compartment("https_example") example()
 	Timeout unlimited{UnlimitedTimeout};
 	auto    tlsSocket = tls_connection_create(&unlimited,
 	                                          TEST_MALLOC,
-	                                          STATIC_SEALED_VALUE(ExampleComTLS),
+	                                          CONNECTION_CAPABILITY(ExampleComTLS),
 	                                          TAs,
 	                                          TAs_NUM);
 	Debug::log("TLS socket: {}", tlsSocket);

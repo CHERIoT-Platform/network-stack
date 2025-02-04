@@ -35,6 +35,139 @@ struct NetworkAddress
 };
 
 /**
+ * Enumeration defining the connection type.
+ */
+enum ConnectionType : uint8_t
+{
+	/// TCP connection.
+	ConnectionTypeTCP,
+	/// UDP connection.
+	ConnectionTypeUDP
+};
+
+/**
+ * Connection capability contents.  Instances of this sealed with the
+ * NetworkConnectionKey sealing capability authorise access to a specific host
+ * and port.
+ *
+ * This is probably too inflexible for the general case, but it's fine for the
+ * prototype and can be extended once we have more feedback.  In particular,
+ * UDP is not connection-oriented and so connecting to a single address with
+ * UDP doesn't make sense in the general case (though it does in the specific
+ * case of NTP and similar protocols).
+ */
+struct ConnectionCapabilityState
+{
+	/**
+	 * The type of connection (UDP or TCP) that this capability authorises.
+	 */
+	ConnectionType type;
+	/**
+	 * The remote port number that this capability authorises.  This is
+	 * provided in host byte order.
+	 */
+	uint16_t port;
+	/**
+	 * The length of the hostname string (including the null terminator).
+	 */
+	size_t nameLength;
+	/**
+	 * The hostname that this capability authorises.  This is a null-terminated
+	 * string.
+	 */
+	char hostname[];
+};
+
+/**
+ * Bind capability contents. Instances of this sealed with the NetworkBindKey
+ * sealing capability authorise binding to a specific server port.
+ *
+ * Similarly to `ConnectionCapability`, this is probably to inflexible for the
+ * general case. For example: with IPv6 there are always multiple interfaces
+ * (link-local and routable), and it might be necessary to expose this to allow
+ * API users to specify which interface they want to bind on.
+ */
+struct BindCapabilityState
+{
+	/**
+	 * Allow to bind on an IPv6 or IPv4 interface.
+	 *
+	 * Note that the "or" is exclusive here: setting `isIPv6` to `true`
+	 * will only allow binding onto an IPv6 interface. To allow both IPv4
+	 * and IPv6, two bind capabilities must be created.
+	 */
+	bool isIPv6;
+	/**
+	 * The server port this bind capability allows to bind to. This is
+	 * provided in host byte order.
+	 */
+	uint16_t port;
+	/**
+	 * Maximum number of concurrent TCP connections allowed on this server
+	 * port. Once this number is reached, further connections to the server
+	 * port will be denied. If this number is larger than supported by the
+	 * network stack, the network stack will default to its own maximum.
+	 * A value of 0 indicates unlimited.
+	 */
+	uint16_t maximumNumberOfConcurrentTCPConnections;
+};
+
+/// Type for a bind capability
+typedef CHERI_SEALED(struct BindCapabilityState *) BindCapability;
+
+/// Type for a connection capability
+typedef CHERI_SEALED(struct ConnectionCapabilityState *) ConnectionCapability;
+
+/// Forward declaration of the structure type for a socket.
+struct SealedSocket;
+
+/// Type for sockets
+typedef CHERI_SEALED(struct SealedSocket *) Socket;
+
+/**
+ * Define a capability that authorises connecting to a specific host and port
+ * with UDP or TCP.
+ */
+#define DECLARE_AND_DEFINE_CONNECTION_CAPABILITY(                              \
+  name, authorisedHost, portNumber, connectionType)                            \
+	DECLARE_AND_DEFINE_STATIC_SEALED_VALUE(                                    \
+	  struct {                                                                 \
+		  ConnectionType type;                                                 \
+		  uint16_t       port;                                                 \
+		  size_t         nameLength;                                           \
+		  const char     hostname[sizeof(authorisedHost)];                     \
+	  },                                                                       \
+	  NetAPI,                                                                  \
+	  NetworkConnectionKey,                                                    \
+	  name,                                                                    \
+	  connectionType,                                                          \
+	  portNumber,                                                              \
+	  sizeof(authorisedHost),                                                  \
+	  authorisedHost)
+
+#define CONNECTION_CAPABILITY(name)                                            \
+	(ConnectionCapability) STATIC_SEALED_VALUE(name)
+
+/**
+ * Define a capability that authorises binding to a specific server port with
+ * TCP. Binding to a server port with UDP is not supported.
+ */
+#define DECLARE_AND_DEFINE_BIND_CAPABILITY(                                    \
+  name, isIPv6Binding, portNumber, maxConnections)                             \
+	DECLARE_AND_DEFINE_STATIC_SEALED_VALUE(                                    \
+	  struct {                                                                 \
+		  bool     isIPv6;                                                     \
+		  uint16_t port;                                                       \
+		  uint16_t maximumNumberOfConcurrentTCPConnections;                    \
+	  },                                                                       \
+	  NetAPI,                                                                  \
+	  NetworkBindKey,                                                          \
+	  name,                                                                    \
+	  isIPv6Binding,                                                           \
+	  portNumber,                                                              \
+	  maxConnections)
+
+/**
  * Start the network.  This is a temporary API.  It will eventually be replaced
  * by a non-blocking version.
  */
@@ -55,10 +188,10 @@ void __cheri_compartment("TCPIP") network_start(void);
  * This returns a valid sealed capability to a socket on success, or an
  * untagged value on failure.
  */
-SObj __cheri_compartment("NetAPI")
-  network_socket_connect_tcp(Timeout *timeout,
-                             SObj     mallocCapability,
-                             SObj     hostCapability);
+Socket __cheri_compartment("NetAPI")
+  network_socket_connect_tcp(Timeout             *timeout,
+                             AllocatorCapability  mallocCapability,
+                             ConnectionCapability hostCapability);
 
 /**
  * Create a listening TCP socket bound to a given port.
@@ -72,10 +205,10 @@ SObj __cheri_compartment("NetAPI")
  * This returns a valid sealed capability to a socket on success, or an
  * untagged value on failure.
  */
-SObj __cheri_compartment("NetAPI")
-  network_socket_listen_tcp(Timeout *timeout,
-                            SObj     mallocCapability,
-                            SObj     bindCapability);
+Socket __cheri_compartment("NetAPI")
+  network_socket_listen_tcp(Timeout            *timeout,
+                            AllocatorCapability mallocCapability,
+                            BindCapability      bindCapability);
 
 /**
  * Accept a connection on a listening socket.
@@ -90,12 +223,12 @@ SObj __cheri_compartment("NetAPI")
  * This returns a valid sealed capability to a connected socket on success, or
  * an untagged value on failure.
  */
-SObj __cheri_compartment("TCPIP")
-  network_socket_accept_tcp(Timeout        *timeout,
-                            SObj            mallocCapability,
-                            SObj            listeningSocket,
-                            NetworkAddress *address,
-                            uint16_t       *port);
+Socket __cheri_compartment("TCPIP")
+  network_socket_accept_tcp(Timeout            *timeout,
+                            AllocatorCapability mallocCapability,
+                            Socket              listeningSocket,
+                            NetworkAddress     *address,
+                            uint16_t           *port);
 
 /**
  * Create a bound UDP socket, allocated from the quota associated with
@@ -110,8 +243,10 @@ SObj __cheri_compartment("TCPIP")
  * This returns a valid sealed capability to a socket on success, or an
  * untagged value on failure.
  */
-SObj __cheri_compartment("TCPIP")
-  network_socket_udp(Timeout *timeout, SObj mallocCapability, bool isIPv6);
+Socket __cheri_compartment("TCPIP")
+  network_socket_udp(Timeout            *timeout,
+                     AllocatorCapability mallocCapability,
+                     bool                isIPv6);
 
 /**
  * Authorise a UDP socket to send packets to a specific host.  This opens a
@@ -129,9 +264,9 @@ SObj __cheri_compartment("TCPIP")
  * an operation that adds a permission to the capability.
  */
 NetworkAddress __cheri_compartment("NetAPI")
-  network_socket_udp_authorise_host(Timeout *timeout,
-                                    SObj     socket,
-                                    SObj     hostCapability);
+  network_socket_udp_authorise_host(Timeout             *timeout,
+                                    Socket               socket,
+                                    ConnectionCapability hostCapability);
 
 /**
  * Close a socket.  This must be called with the same malloc capability that
@@ -150,7 +285,9 @@ NetworkAddress __cheri_compartment("NetAPI")
  *             closed. The operation cannot be retried.
  */
 int __cheri_compartment("TCPIP")
-  network_socket_close(Timeout *t, SObj mallocCapability, SObj sealedSocket);
+  network_socket_close(Timeout            *t,
+                       AllocatorCapability mallocCapability,
+                       Socket              sealedSocket);
 
 /**
  * The result of a receive call.
@@ -185,7 +322,9 @@ struct NetworkReceiveResult
  *  - `-ENOTCONN`: The socket is not connected.
  */
 NetworkReceiveResult __cheri_compartment("TCPIP")
-  network_socket_receive(Timeout *timeout, SObj mallocCapability, SObj socket);
+  network_socket_receive(Timeout            *timeout,
+                         AllocatorCapability mallocCapability,
+                         Socket              socket);
 
 /**
  * Receive data from a socket into a preallocated buffer.  This will block until
@@ -208,7 +347,7 @@ NetworkReceiveResult __cheri_compartment("TCPIP")
  */
 int __cheri_compartment("TCPIP")
   network_socket_receive_preallocated(Timeout *timeout,
-                                      SObj     socket,
+                                      Socket   socket,
                                       void    *buffer,
                                       size_t   length);
 
@@ -238,18 +377,18 @@ int __cheri_compartment("TCPIP")
  *  - `-ENOTCONN`: The socket is not connected.
  */
 NetworkReceiveResult __cheri_compartment("TCPIP")
-  network_socket_receive_from(Timeout        *timeout,
-                              SObj            mallocCapability,
-                              SObj            socket,
-                              NetworkAddress *address,
-                              uint16_t       *port);
+  network_socket_receive_from(Timeout            *timeout,
+                              AllocatorCapability mallocCapability,
+                              Socket              socket,
+                              NetworkAddress     *address,
+                              uint16_t           *port);
 
 /**
  * Send data over a TCP socket.  This will block until the data have been sent
  * or the timeout expires.
  */
 ssize_t __cheri_compartment("TCPIP") network_socket_send(Timeout *timeout,
-                                                         SObj     socket,
+                                                         Socket   socket,
                                                          void    *buffer,
                                                          size_t   length);
 
@@ -264,28 +403,18 @@ ssize_t __cheri_compartment("TCPIP") network_socket_send(Timeout *timeout,
  */
 ssize_t __cheri_compartment("TCPIP")
   network_socket_send_to(Timeout              *timeout,
-                         SObj                  socket,
+                         Socket                socket,
                          const NetworkAddress *address,
                          uint16_t              port,
                          const void           *buffer,
                          size_t                length);
 
 /**
- * Enumeration defining the connection type.
- */
-enum ConnectionType : uint8_t
-{
-	/// TCP connection.
-	ConnectionTypeTCP,
-	/// UDP connection.
-	ConnectionTypeUDP
-};
-
-/**
  * Returns the host name embedded in a host capability or an untagged value if
  * this is not a valid host capability.
  */
-const char *__cheri_compartment("NetAPI") network_host_get(SObj hostCapability);
+const char *__cheri_compartment("NetAPI")
+  network_host_get(ConnectionCapability hostCapability);
 
 /**
  * Inject a memory-safety bug into the network stack.
@@ -293,110 +422,3 @@ const char *__cheri_compartment("NetAPI") network_host_get(SObj hostCapability);
  * This is disabled unless compiled with the `network-inject-faults` option.
  */
 void __cheri_compartment("TCPIP") network_inject_fault(void);
-
-/**
- * Connection capability contents.  Instances of this sealed with the
- * NetworkConnectionKey sealing capability authorise access to a specific host
- * and port.
- *
- * This is probably too inflexible for the general case, but it's fine for the
- * prototype and can be extended once we have more feedback.  In particular,
- * UDP is not connection-oriented and so connecting to a single address with
- * UDP doesn't make sense in the general case (though it does in the specific
- * case of NTP and similar protocols).
- */
-struct ConnectionCapability
-{
-	/**
-	 * The type of connection (UDP or TCP) that this capability authorises.
-	 */
-	ConnectionType type;
-	/**
-	 * The remote port number that this capability authorises.  This is
-	 * provided in host byte order.
-	 */
-	uint16_t port;
-	/**
-	 * The length of the hostname string (including the null terminator).
-	 */
-	size_t nameLength;
-	/**
-	 * The hostname that this capability authorises.  This is a null-terminated
-	 * string.
-	 */
-	char hostname[];
-};
-
-/**
- * Bind capability contents. Instances of this sealed with the NetworkBindKey
- * sealing capability authorise binding to a specific server port.
- *
- * Similarly to `ConnectionCapability`, this is probably to inflexible for the
- * general case. For example: with IPv6 there are always multiple interfaces
- * (link-local and routable), and it might be necessary to expose this to allow
- * API users to specify which interface they want to bind on.
- */
-struct BindCapability
-{
-	/**
-	 * Allow to bind on an IPv6 or IPv4 interface.
-	 *
-	 * Note that the "or" is exclusive here: setting `isIPv6` to `true`
-	 * will only allow binding onto an IPv6 interface. To allow both IPv4
-	 * and IPv6, two bind capabilities must be created.
-	 */
-	bool isIPv6;
-	/**
-	 * The server port this bind capability allows to bind to. This is
-	 * provided in host byte order.
-	 */
-	uint16_t port;
-	/**
-	 * Maximum number of concurrent TCP connections allowed on this server
-	 * port. Once this number is reached, further connections to the server
-	 * port will be denied. If this number is larger than supported by the
-	 * network stack, the network stack will default to its own maximum.
-	 * A value of 0 indicates unlimited.
-	 */
-	uint16_t maximumNumberOfConcurrentTCPConnections;
-};
-
-/**
- * Define a capability that authorises connecting to a specific host and port
- * with UDP or TCP.
- */
-#define DECLARE_AND_DEFINE_CONNECTION_CAPABILITY(                              \
-  name, authorisedHost, portNumber, connectionType)                            \
-	DECLARE_AND_DEFINE_STATIC_SEALED_VALUE(                                    \
-	  struct {                                                                 \
-		  ConnectionType type;                                                 \
-		  uint16_t       port;                                                 \
-		  size_t         nameLength;                                           \
-		  const char     hostname[sizeof(authorisedHost)];                     \
-	  },                                                                       \
-	  NetAPI,                                                                  \
-	  NetworkConnectionKey,                                                    \
-	  name,                                                                    \
-	  connectionType,                                                          \
-	  portNumber,                                                              \
-	  sizeof(authorisedHost),                                                  \
-	  authorisedHost)
-
-/**
- * Define a capability that authorises binding to a specific server port with
- * TCP. Binding to a server port with UDP is not supported.
- */
-#define DECLARE_AND_DEFINE_BIND_CAPABILITY(                                    \
-  name, isIPv6Binding, portNumber, maxConnections)                             \
-	DECLARE_AND_DEFINE_STATIC_SEALED_VALUE(                                    \
-	  struct {                                                                 \
-		  bool     isIPv6;                                                     \
-		  uint16_t port;                                                       \
-		  uint16_t maximumNumberOfConcurrentTCPConnections;                    \
-	  },                                                                       \
-	  NetAPI,                                                                  \
-	  NetworkBindKey,                                                          \
-	  name,                                                                    \
-	  isIPv6Binding,                                                           \
-	  portNumber,                                                              \
-	  maxConnections)

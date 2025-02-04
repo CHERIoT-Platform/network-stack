@@ -18,11 +18,12 @@ extern "C" void reset_network_stack_state(bool isIpThread);
 /**
  * Flags for the state of restart.
  */
-enum [[clang::flag_enum]] RestartState{
-  NotRestarting  = 0,
-  Restarting     = 1,
-  IpThreadKicked = 2,
-  DriverKicked   = 4,
+enum [[clang::flag_enum]] RestartState
+{
+	NotRestarting  = 0,
+	Restarting     = 1,
+	IpThreadKicked = 2,
+	DriverKicked   = 4,
 };
 
 using SocketRingLink = ds::linked_list::cell::Pointer;
