@@ -5,6 +5,11 @@
 #include "NetAPI.h"
 #include <token.h>
 
+/// Opaque type for sealed TLS contexts.
+struct TLSContext;
+
+typedef CHERI_SEALED(struct TLSContext *) TLSConnection;
+
 /**
  * Creates a new TLS connection. This will block until the connection is
  * established, an error happens, or the timeout expires. Returns an untagged
@@ -36,10 +41,10 @@
  *  - The BearSSL types are leaked into the API.
  *  - The reason for the failure is not reported.
  */
-SObj __cheri_compartment("TLS")
+TLSConnection __cheri_compartment("TLS")
   tls_connection_create(Timeout                    *t,
-                        SObj                        allocator,
-                        SObj                        connectionCapability,
+                        AllocatorCapability         allocator,
+                        ConnectionCapability        connectionCapability,
                         const br_x509_trust_anchor *trustAnchors,
                         size_t                      trustAnchorsCount);
 
@@ -69,11 +74,12 @@ enum TLSSendFlags
  * timeout may be exceeded. In the general case, this will block until the data
  * is sent, an error happens, or the timeout expires.
  */
-ssize_t __cheri_compartment("TLS") tls_connection_send(Timeout *t,
-                                                       SObj   sealedConnection,
-                                                       void  *buffer,
-                                                       size_t length,
-                                                       int    flags);
+ssize_t __cheri_compartment("TLS")
+  tls_connection_send(Timeout      *t,
+                      TLSConnection sealedConnection,
+                      void         *buffer,
+                      size_t        length,
+                      int           flags);
 
 /**
  * Receive data from the TLS connection.  This will block until data are
@@ -90,7 +96,7 @@ ssize_t __cheri_compartment("TLS") tls_connection_send(Timeout *t,
  *  - `-ENOMEM`: Memory was insufficient to allocate the receive buffer.
  */
 NetworkReceiveResult __cheri_compartment("TLS")
-  tls_connection_receive(Timeout *t, SObj sealedConnection);
+  tls_connection_receive(Timeout *t, TLSConnection sealedConnection);
 
 /**
  * Receive data from the TLS connection into a preallocated buffer. This will
@@ -107,11 +113,12 @@ NetworkReceiveResult __cheri_compartment("TLS")
  *  - `-EPERM`: The receive buffer provided does not feature write permissions.
  */
 int __cheri_compartment("TLS")
-  tls_connection_receive_preallocated(Timeout *t,
-                                      SObj     sealedConnection,
-                                      void    *buffer,
-                                      size_t   length);
+  tls_connection_receive_preallocated(Timeout      *t,
+                                      TLSConnection sealedConnection,
+                                      void         *buffer,
+                                      size_t        length);
 /**
  * Close a TLS connection.
  */
-int __cheri_compartment("TLS") tls_connection_close(Timeout *t, SObj sealed);
+int __cheri_compartment("TLS")
+  tls_connection_close(Timeout *t, TLSConnection sealed);

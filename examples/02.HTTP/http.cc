@@ -26,7 +26,7 @@ void __cheri_compartment("http_example") example()
 	Debug::log("Creating connection");
 	Timeout unlimited{UnlimitedTimeout};
 	auto    socket = network_socket_connect_tcp(
-	     &unlimited, TEST_MALLOC, STATIC_SEALED_VALUE(ExampleCom));
+	     &unlimited, TEST_MALLOC, CONNECTION_CAPABILITY(ExampleCom));
 
 	static char      message[] = "GET / HTTP/1.1\r\n"
 	                             "Host: example.com\r\n"

@@ -6,6 +6,10 @@
 #include <tls.h>
 #include <token.h>
 
+struct CHERIoTMqttContext;
+
+typedef CHERI_SEALED(struct CHERIoTMqttContext *) MQTTConnection;
+
 /**
  * Type of the PUBLISH callback. This user callback, passed to `mqtt_connect`,
  * will be called on all PUBLISH notifications from the broker.
@@ -85,10 +89,10 @@ typedef void __cheri_callback (*MQTTAckCallback)(uint16_t packetID,
  *  - The BearSSL types are leaked into the API.
  *  - The reason for the failure is not reported.
  */
-SObj __cheri_compartment("MQTT")
+MQTTConnection __cheri_compartment("MQTT")
   mqtt_connect(Timeout                    *t,
-               SObj                        allocator,
-               SObj                        hostCapability,
+               AllocatorCapability         allocator,
+               ConnectionCapability        hostCapability,
                MQTTPublishCallback         publishCallback,
                MQTTAckCallback             ackCallback,
                const br_x509_trust_anchor *trustAnchors,
@@ -124,8 +128,9 @@ SObj __cheri_compartment("MQTT")
  * Note that, in the case of a negative error return value, the connection has
  * *not* been terminated, and the resources *not* freed.
  */
-int __cheri_compartment("MQTT")
-  mqtt_disconnect(Timeout *t, SObj allocator, SObj mqttHandle);
+int __cheri_compartment("MQTT") mqtt_disconnect(Timeout            *t,
+                                                AllocatorCapability allocator,
+                                                MQTTConnection      mqttHandle);
 
 /**
  * Publish on a given MQTT connection.
@@ -172,14 +177,14 @@ int __cheri_compartment("MQTT")
  * If a publish is successful and QoS > 0, an ACK must be fetched through
  * `mqtt_run`.
  */
-int __cheri_compartment("MQTT") mqtt_publish(Timeout    *t,
-                                             SObj        mqttHandle,
-                                             uint8_t     qos,
-                                             const char *topic,
-                                             size_t      topicLength,
-                                             const void *payload,
-                                             size_t      payloadLength,
-                                             bool        retain = false);
+int __cheri_compartment("MQTT") mqtt_publish(Timeout       *t,
+                                             MQTTConnection mqttHandle,
+                                             uint8_t        qos,
+                                             const char    *topic,
+                                             size_t         topicLength,
+                                             const void    *payload,
+                                             size_t         payloadLength,
+                                             bool           retain = false);
 
 /**
  * Subscribe on a given MQTT connection.
@@ -216,11 +221,11 @@ int __cheri_compartment("MQTT") mqtt_publish(Timeout    *t,
  * If the broker accepts the subscription, we will now receive publishes on the
  * requested topics.
  */
-int __cheri_compartment("MQTT") mqtt_subscribe(Timeout    *t,
-                                               SObj        mqttHandle,
-                                               uint8_t     qos,
-                                               const char *filter,
-                                               size_t      filterLength);
+int __cheri_compartment("MQTT") mqtt_subscribe(Timeout       *t,
+                                               MQTTConnection mqttHandle,
+                                               uint8_t        qos,
+                                               const char    *filter,
+                                               size_t         filterLength);
 
 /**
  * Unsubscribe on a given MQTT connection.
@@ -258,11 +263,11 @@ int __cheri_compartment("MQTT") mqtt_subscribe(Timeout    *t,
  * UNSUBACK. After this the broker will no longer send publishes for this
  * topic.
  */
-int __cheri_compartment("MQTT") mqtt_unsubscribe(Timeout    *t,
-                                                 SObj        mqttHandle,
-                                                 uint8_t     qos,
-                                                 const char *filter,
-                                                 size_t      filterLength);
+int __cheri_compartment("MQTT") mqtt_unsubscribe(Timeout       *t,
+                                                 MQTTConnection mqttHandle,
+                                                 uint8_t        qos,
+                                                 const char    *filter,
+                                                 size_t         filterLength);
 
 /**
  * Fetch ACK and PUBLISH notifications on a given MQTT connection, and keep
@@ -288,7 +293,7 @@ int __cheri_compartment("MQTT") mqtt_unsubscribe(Timeout    *t,
  *  - `-EAGAIN`: An unspecified error happened in the underlying coreMQTT
  *               library. Try again.
  */
-int __cheri_compartment("MQTT") mqtt_run(Timeout *t, SObj mqttHandle);
+int __cheri_compartment("MQTT") mqtt_run(Timeout *t, MQTTConnection mqttHandle);
 
 /**
  * Generate a valid, random MQTT 3.1.1 client ID of length `length` into

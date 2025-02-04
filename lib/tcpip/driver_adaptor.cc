@@ -6,7 +6,7 @@
 #include <cheri-builtins.h>
 #include <compartment-macros.h>
 #include <debug.hh>
-//#include <fail-simulator-on-error.h>
+// #include <fail-simulator-on-error.h>
 #include <futex.h>
 #include <locks.hh>
 #include <platform-ethernet.hh>

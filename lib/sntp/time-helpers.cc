@@ -33,7 +33,8 @@ int timeval_calculate(struct timeval *__restrict tp)
 		time.tv_usec = sntpTime->microseconds;
 		cycles       = sntpTime->cycles;
 	} while ((epoch & 0x1) || epoch != atomic_load(&sntpTime->updatingEpoch));
-	Debug::log("Got raw time {}.{}", uint64_t(time.tv_sec), time.tv_usec);
+	Debug::log(
+	  "Got raw time {}.{}", static_cast<uint64_t>(time.tv_sec), time.tv_usec);
 	uint64_t now = rdcycle64();
 	Debug::log(
 	  "Elapsed cycles {} (now: {}, timestamp: {}", now - cycles, now, cycles);

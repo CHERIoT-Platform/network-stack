@@ -178,13 +178,13 @@ namespace
 		 * The capability that we are using to claim the object (and to
 		 * subsequently drop the claim).
 		 */
-		SObj mallocCapability;
+		AllocatorCapability mallocCapability;
 
 		public:
 		/**
 		 * Create a claim on `value` using `mallocCapability`.
 		 */
-		__always_inline Claim(SObj mallocCapability, T *value)
+		__always_inline Claim(AllocatorCapability mallocCapability, T *value)
 		  : value{value}, mallocCapability{mallocCapability}
 		{
 			if (!heap_address_is_valid(value))
@@ -252,14 +252,15 @@ namespace
 		auto ret = fn();
 		Debug::log("Blocking call returned {}", ret);
 		auto endTick = thread_systemtick_get();
-		timeout->elapse(((uint64_t(endTick.hi) << 32) | endTick.lo) -
-		                ((uint64_t(startTick.hi) << 32) | startTick.lo));
+		timeout->elapse(
+		  ((static_cast<uint64_t>(endTick.hi) << 32) | endTick.lo) -
+		  ((static_cast<uint64_t>(startTick.hi) << 32) | startTick.lo));
 		return ret;
 	}
 
 	__noinline int network_socket_receive_internal(
 	  Timeout                                *timeout,
-	  SObj                                    sealedSocket,
+	  Socket                                  sealedSocket,
 	  FunctionWrapper<void *(int &available)> prepareBuffer,
 	  FunctionWrapper<void(void *buffer)>     freeBuffer)
 	{
@@ -370,8 +371,9 @@ namespace
 			ret                     = FreeRTOS_closesocket(socket);
 			SystickReturn endTick   = thread_systemtick_get();
 
-			t->elapse(((uint64_t(endTick.hi) << 32) | endTick.lo) -
-			          ((uint64_t(startTick.hi) << 32) | startTick.lo));
+			t->elapse(
+			  ((static_cast<uint64_t>(endTick.hi) << 32) | endTick.lo) -
+			  ((static_cast<uint64_t>(startTick.hi) << 32) | startTick.lo));
 		} while (t->may_block() && ret == -1);
 
 		if (ret == -1)
@@ -450,16 +452,16 @@ static void on_tcp_connect(Socket_t socket, BaseType_t isConnected)
 }
 F_TCP_UDP_Handler_t onTCPConnectCallback = {on_tcp_connect};
 
-SObj network_socket_create_and_bind(Timeout       *timeout,
-                                    SObj           mallocCapability,
-                                    bool           isIPv6,
-                                    ConnectionType type,
-                                    uint16_t       localPort,
-                                    bool           isListening,
-                                    uint16_t       maxConnections)
+Socket network_socket_create_and_bind(Timeout            *timeout,
+                                      AllocatorCapability mallocCapability,
+                                      bool                isIPv6,
+                                      ConnectionType      type,
+                                      uint16_t            localPort,
+                                      bool                isListening,
+                                      uint16_t            maxConnections)
 {
 	return with_restarting_checks(
-	  [&]() -> SObj {
+	  [&]() -> Socket {
 		  // TODO: This should have nice RAII wrappers!
 		  // Add the socket lock to the linked list and make sure that the RAII
 		  // wrapper removes it from there.
@@ -591,16 +593,16 @@ SObj network_socket_create_and_bind(Timeout       *timeout,
 		  c.release();
 		  return sealedSocket;
 	  },
-	  static_cast<SObj>(nullptr) /* return nullptr if we are restarting */);
+	  static_cast<Socket>(nullptr) /* return nullptr if we are restarting */);
 }
 
-SObj network_socket_accept_tcp(Timeout        *timeout,
-                               SObj            mallocCapability,
-                               SObj            sealedListeningSocket,
-                               NetworkAddress *address,
-                               uint16_t       *port)
+Socket network_socket_accept_tcp(Timeout            *timeout,
+                                 AllocatorCapability mallocCapability,
+                                 Socket              sealedListeningSocket,
+                                 NetworkAddress     *address,
+                                 uint16_t           *port)
 {
-	SObj socket = nullptr;
+	Socket socket = nullptr;
 	with_sealed_socket(
 	  [&](SealedSocket *listeningSocket) {
 		  if (!check_timeout_pointer(timeout))
@@ -717,7 +719,7 @@ SObj network_socket_accept_tcp(Timeout        *timeout,
 }
 
 int network_socket_connect_tcp_internal(Timeout       *timeout,
-                                        SObj           socket,
+                                        Socket         socket,
                                         NetworkAddress address,
                                         short          port)
 {
@@ -755,7 +757,9 @@ int network_socket_connect_tcp_internal(Timeout       *timeout,
 	  socket);
 }
 
-SObj network_socket_udp(Timeout *timeout, SObj mallocCapability, bool isIPv6)
+Socket network_socket_udp(Timeout            *timeout,
+                          AllocatorCapability mallocCapability,
+                          bool                isIPv6)
 {
 	if (!check_timeout_pointer(timeout))
 	{
@@ -765,7 +769,9 @@ SObj network_socket_udp(Timeout *timeout, SObj mallocCapability, bool isIPv6)
 	  timeout, mallocCapability, isIPv6, ConnectionTypeUDP);
 }
 
-int network_socket_close(Timeout *t, SObj mallocCapability, SObj sealedSocket)
+int network_socket_close(Timeout            *t,
+                         AllocatorCapability mallocCapability,
+                         Socket              sealedSocket)
 {
 	if (!check_timeout_pointer(t))
 	{
@@ -951,11 +957,12 @@ int network_socket_close(Timeout *t, SObj mallocCapability, SObj sealedSocket)
 	  sealedSocket);
 }
 
-NetworkReceiveResult network_socket_receive_from(Timeout *timeout,
-                                                 SObj     mallocCapability,
-                                                 SObj     socket,
-                                                 NetworkAddress *address,
-                                                 uint16_t       *port)
+NetworkReceiveResult
+network_socket_receive_from(Timeout            *timeout,
+                            AllocatorCapability mallocCapability,
+                            Socket              socket,
+                            NetworkAddress     *address,
+                            uint16_t           *port)
 {
 	uint8_t *buffer = nullptr;
 	ssize_t  result = with_sealed_socket(
@@ -1050,7 +1057,7 @@ NetworkReceiveResult network_socket_receive_from(Timeout *timeout,
 }
 
 int network_socket_receive_preallocated(Timeout *timeout,
-                                        SObj     sealedSocket,
+                                        Socket   sealedSocket,
                                         void    *buffer,
                                         size_t   length)
 {
@@ -1075,9 +1082,10 @@ int network_socket_receive_preallocated(Timeout *timeout,
 	  [&](void *buffer) -> void { return; });
 }
 
-NetworkReceiveResult network_socket_receive(Timeout *timeout,
-                                            SObj     mallocCapability,
-                                            SObj     sealedSocket)
+NetworkReceiveResult
+network_socket_receive(Timeout            *timeout,
+                       AllocatorCapability mallocCapability,
+                       Socket              sealedSocket)
 {
 	uint8_t *buffer = nullptr;
 	ssize_t  result = network_socket_receive_internal(
@@ -1129,8 +1137,10 @@ NetworkReceiveResult network_socket_receive(Timeout *timeout,
 	return {result, buffer};
 }
 
-ssize_t
-network_socket_send(Timeout *timeout, SObj socket, void *buffer, size_t length)
+ssize_t network_socket_send(Timeout *timeout,
+                            Socket   socket,
+                            void    *buffer,
+                            size_t   length)
 {
 	if (!check_timeout_pointer(timeout))
 	{
@@ -1183,7 +1193,7 @@ network_socket_send(Timeout *timeout, SObj socket, void *buffer, size_t length)
 }
 
 ssize_t network_socket_send_to(Timeout              *timeout,
-                               SObj                  socket,
+                               Socket                socket,
                                const NetworkAddress *address,
                                uint16_t              port,
                                const void           *buffer,
@@ -1259,7 +1269,7 @@ ssize_t network_socket_send_to(Timeout              *timeout,
 	  socket);
 }
 
-int network_socket_kind(SObj socket, SocketKind *kind)
+int network_socket_kind(Socket socket, SocketKind *kind)
 {
 	return with_restarting_checks(
 	  [&]() -> int {

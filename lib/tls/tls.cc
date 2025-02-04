@@ -7,12 +7,59 @@
 #include <function_wrapper.hh>
 #include <locks.hh>
 #include <platform-entropy.hh>
+#include <sealed_cleanup.hh>
 #include <timeout.h>
 #include <tls.h>
 #include <token.h>
 
 using Debug = ConditionalDebug<false, "TLS">;
 using namespace CHERI;
+
+/**
+ * The object for a sealed TLS connection.
+ */
+struct TLSContext
+{
+	/// The underlying TCP socket.
+	Socket socket;
+	/**
+	 * The allocator used to allocate memory for this object.  Needed for
+	 * freeing it and for allocating internal buffers.
+	 */
+	AllocatorCapability allocator;
+	/// The BearSSL client context.
+	br_ssl_client_context *clientContext;
+	/// The BearSSL X.509 context.
+	br_x509_minimal_context *x509Context;
+	/// The input buffer for the TLS engine.
+	unsigned char *iobufIn;
+	/// The output buffer for the TLS engine.
+	unsigned char            *iobufOut;
+	FlagLockPriorityInherited lock;
+	TLSContext(Socket                   socket,
+	           AllocatorCapability      allocator,
+	           br_ssl_client_context   *clientContext,
+	           br_x509_minimal_context *x509Context,
+	           unsigned char           *iobufIn,
+	           unsigned char           *iobufOut)
+	  : socket{socket},
+	    allocator{allocator},
+	    clientContext{clientContext},
+	    x509Context{x509Context},
+	    iobufIn{iobufIn},
+	    iobufOut{iobufOut}
+	{
+	}
+	~TLSContext()
+	{
+		Timeout t{UnlimitedTimeout};
+		network_socket_close(&t, allocator, socket);
+		heap_free(allocator, iobufIn);
+		heap_free(allocator, iobufOut);
+		heap_free(allocator, clientContext);
+		heap_free(allocator, x509Context);
+	}
+};
 
 namespace
 {
@@ -23,51 +70,6 @@ namespace
 	  false
 #endif
 	  ;
-	/**
-	 * The object for a sealed TLS connection.
-	 */
-	struct TLSContext
-	{
-		/// The underlying TCP socket.
-		SObj socket;
-		/**
-		 * The allocator used to allocate memory for this object.  Needed for
-		 * freeing it and for allocating internal buffers.
-		 */
-		SObj allocator;
-		/// The BearSSL client context.
-		br_ssl_client_context *clientContext;
-		/// The BearSSL X.509 context.
-		br_x509_minimal_context *x509Context;
-		/// The input buffer for the TLS engine.
-		unsigned char *iobufIn;
-		/// The output buffer for the TLS engine.
-		unsigned char            *iobufOut;
-		FlagLockPriorityInherited lock;
-		TLSContext(SObj                     socket,
-		           SObj                     allocator,
-		           br_ssl_client_context   *clientContext,
-		           br_x509_minimal_context *x509Context,
-		           unsigned char           *iobufIn,
-		           unsigned char           *iobufOut)
-		  : socket{socket},
-		    allocator{allocator},
-		    clientContext{clientContext},
-		    x509Context{x509Context},
-		    iobufIn{iobufIn},
-		    iobufOut{iobufOut}
-		{
-		}
-		~TLSContext()
-		{
-			Timeout t{UnlimitedTimeout};
-			network_socket_close(&t, allocator, socket);
-			heap_free(allocator, iobufIn);
-			heap_free(allocator, iobufOut);
-			heap_free(allocator, clientContext);
-			heap_free(allocator, x509Context);
-		}
-	};
 
 	__always_inline SKey tls_key()
 
@@ -81,8 +83,9 @@ namespace
 		return source();
 	}
 
-	ssize_t
-	with_sealed_tls_context(Timeout *timeout, SObj sealed, auto callback)
+	ssize_t with_sealed_tls_context(Timeout      *timeout,
+	                                TLSConnection sealed,
+	                                auto          callback)
 	{
 		Sealed<TLSContext> sealedContext{sealed};
 		auto              *unsealed = token_unseal(tls_key(), sealedContext);
@@ -264,9 +267,10 @@ namespace
 	 * `prepareBuffer` function to acquire a buffer for the data.
 	 */
 	__noinline int tls_connection_receive_internal(
-	  Timeout *t,
-	  SObj     sealedConnection,
-	  FunctionWrapper<void *(int &available, SObj &mallocCapability)>
+	  Timeout      *t,
+	  TLSConnection sealedConnection,
+	  FunctionWrapper<void *(int                 &available,
+	                         AllocatorCapability &mallocCapability)>
 	    prepareBuffer)
 	{
 		if (!check_timeout_pointer(t))
@@ -312,7 +316,7 @@ namespace
 					  br_ssl_engine_recvapp_ack(engine, length);
 					  Debug::log(
 					    "Received {} bytes into {}", length, receivedBuffer);
-					  return ssize_t(length);
+					  return static_cast<ssize_t>(length);
 				  }
 				  if ((state & BR_SSL_RECVREC) == BR_SSL_RECVREC)
 				  {
@@ -348,11 +352,11 @@ namespace
 
 } // namespace
 
-SObj tls_connection_create(Timeout                    *t,
-                           SObj                        allocator,
-                           SObj                        connectionCapability,
-                           const br_x509_trust_anchor *trustAnchors,
-                           size_t                      trustAnchorsCount)
+TLSConnection tls_connection_create(Timeout             *t,
+                                    AllocatorCapability  allocator,
+                                    ConnectionCapability connectionCapability,
+                                    const br_x509_trust_anchor *trustAnchors,
+                                    size_t trustAnchorsCount)
 {
 	const char *hostname = network_host_get(connectionCapability);
 	if (hostname == nullptr)
@@ -360,17 +364,17 @@ SObj tls_connection_create(Timeout                    *t,
 		Debug::log("Failed to get hostname");
 		return nullptr;
 	}
-	auto socketDeleter = [&](SObj s) {
+	auto socketDeleter = [&](Socket s) {
 		Timeout unlimited{UnlimitedTimeout};
 		network_socket_close(&unlimited, allocator, s);
 		t->elapse(unlimited.elapsed);
 	};
-	std::unique_ptr<struct SObjStruct, decltype(socketDeleter)> socket{
+	SealedOwner socket{
 	  network_socket_connect_tcp(t, allocator, connectionCapability),
 	  socketDeleter};
-	if (socket == nullptr)
+	if (!socket)
 	{
-		Debug::log("Failed to connect to host");
+		Debug::log("Failed to connect to host: {}", socket.get());
 		return nullptr;
 	}
 	auto deleter = [=](void *ptr) { heap_free(allocator, ptr); };
@@ -424,11 +428,14 @@ SObj tls_connection_create(Timeout                    *t,
 	br_ssl_engine_inject_entropy(
 	  &clientContext->eng, &entropy, sizeof(entropy));
 
-	void *unsealed;
-	SObj  sealed = token_sealed_unsealed_alloc(
-      t, allocator, tls_key(), sizeof(TLSContext), &unsealed);
+	auto [unsealed, sealed] =
+	  token_allocate<TLSContext>(t, allocator, tls_key());
+	// Pull this out into a separate variable to silence a clang static
+	// analyser false positive from not realising that the null-pointer check
+	// below guaranteed that sealed.get() must provide an initialised value.
+	auto rawSealed = sealed.get();
 	Debug::log("Created tls context sealed with {}", tls_key());
-	if (sealed == nullptr)
+	if (rawSealed == nullptr)
 	{
 		Debug::log("Failed to allocate TLS context");
 		return nullptr;
@@ -439,12 +446,11 @@ SObj tls_connection_create(Timeout                    *t,
 	                                                x509Context.release(),
 	                                                iobufIn.release(),
 	                                                iobufOut.release()};
-	auto        cleanup = [&](auto *) {
+	auto        cleanup = [&](decltype(sealed)) {
         context->~TLSContext();
-        token_obj_destroy(allocator, tls_key(), sealed);
+        token_obj_destroy(allocator, tls_key(), rawSealed);
 	};
-	std::unique_ptr<struct SObjStruct, decltype(cleanup)> sealedContext{
-	  sealed, cleanup};
+	SealedOwner sealedContext{sealed.get(), cleanup};
 
 	// Try to connect to the server.
 	Debug::log("Resetting TLS connection for {}", hostname);
@@ -492,11 +498,11 @@ SObj tls_connection_create(Timeout                    *t,
 	return sealedContext.release();
 }
 
-ssize_t tls_connection_send(Timeout *t,
-                            SObj     sealedConnection,
-                            void    *buffer,
-                            size_t   length,
-                            int      flags)
+ssize_t tls_connection_send(Timeout      *t,
+                            TLSConnection sealedConnection,
+                            void         *buffer,
+                            size_t        length,
+                            int           flags)
 {
 	if (!check_timeout_pointer(t))
 	{
@@ -582,17 +588,18 @@ ssize_t tls_connection_send(Timeout *t,
 				  }
 			  }
 		  }
-		  return totalSent > 0 ? int(totalSent) : -ETIMEDOUT;
+		  return totalSent > 0 ? static_cast<int>(totalSent) : -ETIMEDOUT;
 	  });
 }
 
-NetworkReceiveResult tls_connection_receive(Timeout *t, SObj sealedConnection)
+NetworkReceiveResult tls_connection_receive(Timeout      *t,
+                                            TLSConnection sealedConnection)
 {
 	uint8_t *buffer = nullptr;
 	ssize_t  result = tls_connection_receive_internal(
       t,
       sealedConnection,
-      [&](int &available, SObj &mallocCapability) -> void  *{
+      [&](int &available, AllocatorCapability &mallocCapability) -> void  *{
           do
           {
               // Do the initial allocation without timeout: if the quota or the
@@ -638,15 +645,15 @@ NetworkReceiveResult tls_connection_receive(Timeout *t, SObj sealedConnection)
 	return {result, buffer};
 }
 
-int tls_connection_receive_preallocated(Timeout *t,
-                                        SObj     sealedConnection,
-                                        void    *outputBuffer,
-                                        size_t   outputBufferLength)
+int tls_connection_receive_preallocated(Timeout      *t,
+                                        TLSConnection sealedConnection,
+                                        void         *outputBuffer,
+                                        size_t        outputBufferLength)
 {
 	return tls_connection_receive_internal(
 	  t,
 	  sealedConnection,
-	  [&](int &available, SObj &mallocCapability) -> void * {
+	  [&](int &available, AllocatorCapability &mallocCapability) -> void * {
 		  int ret = heap_claim_ephemeral(t, outputBuffer);
 		  if (ret != 0)
 		  {
@@ -667,7 +674,7 @@ int tls_connection_receive_preallocated(Timeout *t,
 	  });
 }
 
-int tls_connection_close(Timeout *t, SObj sealed)
+int tls_connection_close(Timeout *t, TLSConnection sealed)
 {
 	if (!check_timeout_pointer(t))
 	{

@@ -29,11 +29,12 @@ namespace
 	/**
 	 * Flags for the state of startup.
 	 */
-	enum [[clang::flag_enum]] StartupState{
-	  Uninitialised = 0,
-	  Starting      = 1,
-	  DoneIPv4      = 2,
-	  DoneIPv6      = 4,
+	enum [[clang::flag_enum]] StartupState
+	{
+		Uninitialised = 0,
+		Starting      = 1,
+		DoneIPv4      = 2,
+		DoneIPv6      = 4,
 	};
 	/**
 	 * A simple state machine represented with some bits in a bitfield for the

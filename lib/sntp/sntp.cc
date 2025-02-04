@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 // Uncomment for useful debugging message on CHERI faults.
-//#include <fail-simulator-on-error.h>
+// #include <fail-simulator-on-error.h>
 
 /**
  * Size of our malloc quota.
@@ -43,7 +43,7 @@ DECLARE_AND_DEFINE_CONNECTION_CAPABILITY(NtpPool,
 struct NetworkContext
 {
 	Timeout *timeout;
-	SObj     socket;
+	Socket   socket;
 };
 
 namespace
@@ -70,7 +70,7 @@ namespace
 	{
 		Debug::log("Creating socket with malloc capability: {}",
 		           MALLOC_CAPABILITY);
-		SObj socket =
+		Socket socket =
 		  network_socket_udp(context->timeout, MALLOC_CAPABILITY, false);
 		Debug::log("Created socket {}", socket);
 		if (!Capability{socket}.is_valid())
@@ -78,7 +78,7 @@ namespace
 			return -ETIMEDOUT;
 		}
 		auto address = network_socket_udp_authorise_host(
-		  context->timeout, socket, STATIC_SEALED_VALUE(NtpPool));
+		  context->timeout, socket, CONNECTION_CAPABILITY(NtpPool));
 		if (address.kind == NetworkAddress::AddressKindInvalid)
 		{
 			Timeout unlimited{UnlimitedTimeout};
@@ -122,11 +122,11 @@ namespace
 		};
 		ntpRequestStart = rdcycle64();
 		int ret         = network_socket_send_to(pNetworkContext->timeout,
-		                                         pNetworkContext->socket,
-		                                         &address,
-		                                         serverPort,
-		                                         pBuffer,
-		                                         bytesToSend);
+                                         pNetworkContext->socket,
+                                         &address,
+                                         serverPort,
+                                         pBuffer,
+                                         bytesToSend);
 		if (ret < 0)
 		{
 			return 0;
@@ -222,7 +222,7 @@ namespace
 		// Seconds now relative to UNIX epoch
 		seconds -= SNTP_TIME_AT_UNIX_EPOCH_SECS;
 		// NTP dates roll over every 136 years, so we need to add the era
-		seconds += uint64_t(era) << 32;
+		seconds += static_cast<uint64_t>(era) << 32;
 		cache.seconds = seconds;
 		cache.microseconds =
 		  currentNTPTime.fractions / SNTP_FRACTION_VALUE_PER_MICROSECOND;
@@ -308,7 +308,7 @@ namespace
 		  "Old time: {}.{}", currentTime.seconds, currentTime.fractions);
 		Debug::log(
 		  "Setting time: {}.{}", pServerTime->seconds, pServerTime->fractions);
-		Debug::log("clockOffsetMs: {}", uint64_t(clockOffsetMs));
+		Debug::log("clockOffsetMs: {}", static_cast<uint64_t>(clockOffsetMs));
 		// FIXME: This should update the era but I need to think more about the
 		// heuristic to use.  We may see some jitter (including time moving
 		// backwards) around the rollover point, so we need to handle the era

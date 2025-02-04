@@ -85,8 +85,8 @@ class FunctionWrapper<R(Args...)>
 	 * This is a non-owning reference, delete its copy and move
 	 * constructors to avoid accidental copies.
 	 */
-	FunctionWrapper(FunctionWrapper &)  = delete;
-	FunctionWrapper(FunctionWrapper &&) = delete;
+	FunctionWrapper(FunctionWrapper &)             = delete;
+	FunctionWrapper(FunctionWrapper &&)            = delete;
 	FunctionWrapper &operator=(FunctionWrapper &&) = delete;
 
 	/**

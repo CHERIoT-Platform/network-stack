@@ -26,7 +26,7 @@ using Debug = ConditionalDebug<DebugMQTT, "MQTT Client">;
 
 struct NetworkContext
 {
-	SObj tlsHandle;
+	TLSConnection tlsHandle;
 
 	/**
 	 * Pointer to the caller-supplied PUBLISH callback. This callback will
@@ -48,62 +48,63 @@ struct NetworkContext
 	bool isDisconnected;
 };
 
+/**
+ * The object for a sealed CHERIoT MQTT connection.
+ */
+struct CHERIoTMqttContext
+{
+	// The underlying TLS stream.
+	TLSConnection tlsHandle;
+
+	/**
+	 * MQTT internal buffers. We must keep a link to them here for
+	 * freeing.
+	 */
+	MQTTContext_t        coreMQTTContext;
+	TransportInterface_t transportInterface;
+	MQTTFixedBuffer_t    networkBuffer;
+	NetworkContext_t     networkContext;
+
+	/**
+	 * Lock on which the whole public API synchronizes.  This is a
+	 * recursive mutex so that you can publish during a callback.
+	 * Arbitrary recursion is discouraged by coreMQTT, but at least this
+	 * minimal case works.
+	 *
+	 * See: https://github.com/FreeRTOS/coreMQTT/issues/278
+	 */
+	RecursiveMutex lock;
+
+	/**
+	 * Constructor of the CHERIoT MQTT context object. We keep
+	 * track of all allocated objects to free them later on.
+	 */
+	CHERIoTMqttContext(TLSConnection tlsHandle, AllocatorCapability allocator)
+	  : tlsHandle{tlsHandle}
+	{
+	}
+
+	/**
+	 * Destructor of the CHERIoT MQTT context object. This takes
+	 * care of closing the TLS link, and de-allocating all objects.
+	 */
+	~CHERIoTMqttContext()
+	{
+		Timeout t{UnlimitedTimeout};
+		tls_connection_close(&t, tlsHandle);
+	}
+
+	/**
+	 * Following this we allocate variable length data:
+	 * - incoming publishes (array of MQTTPubAckInfo_t)
+	 * - outgoing publishes (array of MQTTPubAckInfo_t)
+	 * - the network buffer (array of uint8_t)
+	 */
+	alignas(MQTTPubAckInfo_t) uint8_t variableLengthData;
+};
+
 namespace
 {
-	/**
-	 * The object for a sealed CHERIoT MQTT connection.
-	 */
-	struct CHERIoTMqttContext
-	{
-		// The underlying TLS stream.
-		SObj tlsHandle;
-
-		/**
-		 * MQTT internal buffers. We must keep a link to them here for
-		 * freeing.
-		 */
-		MQTTContext_t        coreMQTTContext;
-		TransportInterface_t transportInterface;
-		MQTTFixedBuffer_t    networkBuffer;
-		NetworkContext_t     networkContext;
-
-		/**
-		 * Lock on which the whole public API synchronizes.  This is a
-		 * recursive mutex so that you can publish during a callback.
-		 * Arbitrary recursion is discouraged by coreMQTT, but at least this
-		 * minimal case works.
-		 *
-		 * See: https://github.com/FreeRTOS/coreMQTT/issues/278
-		 */
-		RecursiveMutex lock;
-
-		/**
-		 * Constructor of the CHERIoT MQTT context object. We keep
-		 * track of all allocated objects to free them later on.
-		 */
-		CHERIoTMqttContext(SObj tlsHandle, SObj allocator)
-		  : tlsHandle{tlsHandle}
-		{
-		}
-
-		/**
-		 * Destructor of the CHERIoT MQTT context object. This takes
-		 * care of closing the TLS link, and de-allocating all objects.
-		 */
-		~CHERIoTMqttContext()
-		{
-			Timeout t{UnlimitedTimeout};
-			tls_connection_close(&t, tlsHandle);
-		}
-
-		/**
-		 * Following this we allocate variable length data:
-		 * - incoming publishes (array of MQTTPubAckInfo_t)
-		 * - outgoing publishes (array of MQTTPubAckInfo_t)
-		 * - the network buffer (array of uint8_t)
-		 */
-		alignas(MQTTPubAckInfo_t) uint8_t variableLengthData;
-	};
 
 	/**
 	 * Helper to return the unsealing key for CHERIoT MQTT objects.
@@ -198,10 +199,10 @@ namespace
 	 * If the parameter `destructMode` is set to `true`, this will acquire
 	 * the lock in destruct mode, and free the sealed CHERIoT MQTT handle.
 	 */
-	ssize_t with_sealed_mqtt_context(Timeout *timeout,
-	                                 SObj     sealed,
-	                                 auto     callback,
-	                                 bool     destructMode = false)
+	ssize_t with_sealed_mqtt_context(Timeout       *timeout,
+	                                 MQTTConnection sealed,
+	                                 auto           callback,
+	                                 bool           destructMode = false)
 	{
 		Sealed<CHERIoTMqttContext> sealedContext{sealed};
 		auto *unsealed = token_unseal(mqtt_key(), sealedContext);
@@ -302,7 +303,7 @@ namespace
 	                       void             *recvBuffer,
 	                       size_t            bytesToRecv)
 	{
-		SObj sealed = networkContext->tlsHandle;
+		auto sealed = networkContext->tlsHandle;
 
 		/**
 		 * Note from the coreMQTT documentation: It is RECOMMENDED that the
@@ -362,7 +363,7 @@ namespace
 	                       const void       *sendBuffer,
 	                       size_t            bytesToSend)
 	{
-		SObj sealed = networkContext->tlsHandle;
+		auto sealed = networkContext->tlsHandle;
 		int  flags  = 0;
 
 		// TODO Determine a good value for this timeout.
@@ -506,19 +507,19 @@ namespace
 
 // Public CHERIoT MQTT API
 
-SObj mqtt_connect(Timeout                    *t,
-                  SObj                        allocator,
-                  SObj                        hostCapability,
-                  MQTTPublishCallback         publishCallback,
-                  MQTTAckCallback             ackCallback,
-                  const br_x509_trust_anchor *trustAnchors,
-                  size_t                      trustAnchorsCount,
-                  size_t                      networkBufferSize,
-                  size_t                      incomingPublishCount,
-                  size_t                      outgoingPublishCount,
-                  const char                 *clientID,
-                  size_t                      clientIDLength,
-                  bool                        newSession)
+MQTTConnection mqtt_connect(Timeout                    *t,
+                            AllocatorCapability         allocator,
+                            ConnectionCapability        hostCapability,
+                            MQTTPublishCallback         publishCallback,
+                            MQTTAckCallback             ackCallback,
+                            const br_x509_trust_anchor *trustAnchors,
+                            size_t                      trustAnchorsCount,
+                            size_t                      networkBufferSize,
+                            size_t                      incomingPublishCount,
+                            size_t                      outgoingPublishCount,
+                            const char                 *clientID,
+                            size_t                      clientIDLength,
+                            bool                        newSession)
 {
 	// Note: do not check trustAnchors because we don't use technically use
 	// it. We only pass it on to the TLS compartment which we assume will
@@ -557,8 +558,8 @@ SObj mqtt_connect(Timeout                    *t,
 
 	// Create a sealed MQTT handle.
 	void *unsealedMQTTHandle;
-	SObj  sealedMQTTHandle = token_sealed_unsealed_alloc(
-	   t, allocator, mqtt_key(), handleSize, &unsealedMQTTHandle);
+	auto  sealedMQTTHandle = token_sealed_unsealed_alloc(
+      t, allocator, mqtt_key(), handleSize, &unsealedMQTTHandle);
 	if (sealedMQTTHandle == nullptr)
 	{
 		Debug::log("Failed to allocate CHERIoT MQTT context.");
@@ -568,7 +569,7 @@ SObj mqtt_connect(Timeout                    *t,
 	Debug::log("Created CHERIoT MQTT context sealed with {}.", mqtt_key());
 
 	// Set up a TLS stream with the broker.
-	SObj tlsHandle = tls_connection_create(
+	auto tlsHandle = tls_connection_create(
 	  t, allocator, hostCapability, trustAnchors, trustAnchorsCount);
 	if (!Capability{tlsHandle}.is_valid())
 	{
@@ -608,15 +609,17 @@ SObj mqtt_connect(Timeout                    *t,
 	context->transportInterface.writev          = NULL;
 	context->transportInterface.pNetworkContext = &context->networkContext;
 
-	auto cleanup = [&](auto *) {
+	auto cleanup = [&](void *) {
 		// `token_obj_destroy` will free the `CHERIoTMqttContext`
 		// object through `heap_free`, but not call its destructor. We
 		// must do that manually.
 		context->~CHERIoTMqttContext();
-		token_obj_destroy(allocator, mqtt_key(), sealedMQTTHandle);
+		token_obj_destroy(allocator,
+		                  mqtt_key(),
+		                  static_cast<CHERI_SEALED(void *)>(sealedMQTTHandle));
 	};
-	std::unique_ptr<struct SObjStruct, decltype(cleanup)> sealedContext{
-	  sealedMQTTHandle, cleanup};
+	std::unique_ptr<void, decltype(cleanup)> sealedContext{sealedMQTTHandle,
+	                                                       cleanup};
 
 	Debug::log("Initializing coreMQTT.");
 	MQTTStatus_t ret = MQTT_Init(&context->coreMQTTContext,
@@ -684,11 +687,11 @@ SObj mqtt_connect(Timeout                    *t,
 		uint32_t remaining = (t->remaining * MS_PER_TICK) / 1000;
 		ret                = with_elapse_timeout(t, [&]() {
             return MQTT_Connect(&context->coreMQTTContext,
-			                                   &connectInfo,
-			                                   nullptr,
-			                                   remaining,
-			                                   &sessionPresent);
-		               });
+                                &connectInfo,
+                                nullptr,
+                                remaining,
+                                &sessionPresent);
+        });
 
 		if (ret == MQTTNoMemory || ret == MQTTBadParameter)
 		{
@@ -726,10 +729,12 @@ SObj mqtt_connect(Timeout                    *t,
 
 	Debug::log("Connected to the broker {}.", hostCapability);
 
-	return sealedContext.release();
+	return static_cast<MQTTConnection>(sealedContext.release());
 }
 
-int mqtt_disconnect(Timeout *t, SObj allocator, SObj mqttHandle)
+int mqtt_disconnect(Timeout            *t,
+                    AllocatorCapability allocator,
+                    MQTTConnection      mqttHandle)
 {
 	if (!check_timeout_pointer(t))
 	{
@@ -812,14 +817,14 @@ int mqtt_disconnect(Timeout *t, SObj allocator, SObj mqttHandle)
 	  true /* grab the context in destruct mode */);
 }
 
-int mqtt_publish(Timeout    *t,
-                 SObj        mqttHandle,
-                 uint8_t     qos,
-                 const char *topic,
-                 size_t      topicLength,
-                 const void *payload,
-                 size_t      payloadLength,
-                 bool        retain)
+int mqtt_publish(Timeout       *t,
+                 MQTTConnection mqttHandle,
+                 uint8_t        qos,
+                 const char    *topic,
+                 size_t         topicLength,
+                 const void    *payload,
+                 size_t         payloadLength,
+                 bool           retain)
 {
 	if (!CHERI::check_pointer(topic, topicLength))
 	{
@@ -894,11 +899,11 @@ int mqtt_publish(Timeout    *t,
 	  });
 }
 
-int mqtt_subscribe(Timeout    *t,
-                   SObj        mqttHandle,
-                   uint8_t     qos,
-                   const char *filter,
-                   size_t      filterLength)
+int mqtt_subscribe(Timeout       *t,
+                   MQTTConnection mqttHandle,
+                   uint8_t        qos,
+                   const char    *filter,
+                   size_t         filterLength)
 {
 	if (!CHERI::check_pointer(filter, filterLength))
 	{
@@ -955,11 +960,11 @@ int mqtt_subscribe(Timeout    *t,
 	  });
 }
 
-int mqtt_unsubscribe(Timeout    *t,
-                     SObj        mqttHandle,
-                     uint8_t     qos,
-                     const char *filter,
-                     size_t      filterLength)
+int mqtt_unsubscribe(Timeout       *t,
+                     MQTTConnection mqttHandle,
+                     uint8_t        qos,
+                     const char    *filter,
+                     size_t         filterLength)
 {
 	if (!CHERI::check_pointer(filter, filterLength))
 	{
@@ -1016,7 +1021,7 @@ int mqtt_unsubscribe(Timeout    *t,
 	  });
 }
 
-int mqtt_run(Timeout *t, SObj mqttHandle)
+int mqtt_run(Timeout *t, MQTTConnection mqttHandle)
 {
 	if (!check_timeout_pointer(t))
 	{

@@ -53,7 +53,7 @@ void __cheri_callback publishCallback(const char *topicName,
 {
 	// Check input pointers (can be skipped if the MQTT library is trusted)
 	Timeout t{MS_TO_TICKS(5000)};
-	if (heap_claim_fast(&t, topicName) != 0 ||
+	if (heap_claim_ephemeral(&t, topicName) != 0 ||
 	    !CHERI::check_pointer(topicName, topicNameLength))
 	{
 		Debug::log(
@@ -61,7 +61,7 @@ void __cheri_callback publishCallback(const char *topicName,
 		return;
 	}
 
-	if (heap_claim_fast(&t, payload) != 0 ||
+	if (heap_claim_ephemeral(&t, payload) != 0 ||
 	    !CHERI::check_pointer(payload, payloadLength))
 	{
 		Debug::log("Cannot claim or verify PUBLISH callback payload pointer.");
@@ -127,9 +127,9 @@ void __cheri_compartment("mqtt_example") example()
 
 	Debug::log("Connecting to MQTT broker...");
 
-	SObj handle = mqtt_connect(&t,
+	auto handle = mqtt_connect(&t,
 	                           STATIC_SEALED_VALUE(mqttTestMalloc),
-	                           STATIC_SEALED_VALUE(MosquittoOrgMQTT),
+	                           CONNECTION_CAPABILITY(MosquittoOrgMQTT),
 	                           publishCallback,
 	                           ackCallback,
 	                           TAs,

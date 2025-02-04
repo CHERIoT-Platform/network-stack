@@ -34,21 +34,21 @@
  *
  * This should be called only from the NetAPI or TCP/IP compartments.
  */
-SObj __cheri_compartment("TCPIP")
-  network_socket_create_and_bind(Timeout       *timeout,
-                                 SObj           mallocCapability,
-                                 bool           isIPv6,
-                                 ConnectionType type,
-                                 uint16_t       localPort      = 0,
-                                 bool           isListening    = false,
-                                 uint16_t       maxConnections = 0);
+Socket __cheri_compartment("TCPIP")
+  network_socket_create_and_bind(Timeout            *timeout,
+                                 AllocatorCapability mallocCapability,
+                                 bool                isIPv6,
+                                 ConnectionType      type,
+                                 uint16_t            localPort      = 0,
+                                 bool                isListening    = false,
+                                 uint16_t            maxConnections = 0);
 
 /**
  * Connect a TCP socket to the given address.
  */
 int __cheri_compartment("TCPIP")
   network_socket_connect_tcp_internal(Timeout       *timeout,
-                                      SObj           socket,
+                                      Socket         socket,
                                       NetworkAddress address,
                                       short          port);
 /**
@@ -84,4 +84,4 @@ struct SocketKind
  * This returns zero for success, or a negative value on error.
  */
 int __cheri_compartment("TCPIP")
-  network_socket_kind(SObj socket, SocketKind *kind);
+  network_socket_kind(Socket socket, SocketKind *kind);
