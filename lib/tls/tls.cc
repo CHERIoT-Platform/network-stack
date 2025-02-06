@@ -369,7 +369,7 @@ TLSConnection tls_connection_create(Timeout             *t,
 		network_socket_close(&unlimited, allocator, s);
 		t->elapse(unlimited.elapsed);
 	};
-	SealedOwner socket{
+	SealedOwner<SealedSocket, decltype(socketDeleter)> socket{
 	  network_socket_connect_tcp(t, allocator, connectionCapability),
 	  socketDeleter};
 	if (!socket)
@@ -450,7 +450,8 @@ TLSConnection tls_connection_create(Timeout             *t,
         context->~TLSContext();
         token_obj_destroy(allocator, tls_key(), rawSealed);
 	};
-	SealedOwner sealedContext{sealed.get(), cleanup};
+	SealedOwner<TLSContext, decltype(cleanup)> sealedContext{sealed.get(),
+	                                                         cleanup};
 
 	// Try to connect to the server.
 	Debug::log("Resetting TLS connection for {}", hostname);
