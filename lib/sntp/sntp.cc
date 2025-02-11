@@ -241,6 +241,7 @@ namespace
 		  "Current time: {}.{}", currentTime.seconds, currentTime.fractions);
 		currentUNIXTime.updatingEpoch++;
 		ntp_date_to_timeval(currentUNIXTime, currentTime, ntpEra);
+		currentUNIXTime.cycles = cycles;
 		currentUNIXTime.updatingEpoch++;
 		Debug::log("Updated UNIX time");
 		Debug::log("Current UNIX time: {}.{}",
