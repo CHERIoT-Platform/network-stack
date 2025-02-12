@@ -472,13 +472,39 @@ namespace
 			// The payload and topic are only valid within the
 			// context of the callback: make them read-only,
 			// non-capturable, and limits to the length of the
-			// topic and payload.
+			// topic and payload (up to representability)
 			Capability topic{publishInfo->pTopicName};
 			Capability payload{publishInfo->pPayload};
 			topic.permissions() &= CHERI::Permission::Load;
 			topic.bounds() = publishInfo->topicNameLength;
 			payload.permissions() &= CHERI::Permission::Load;
-			payload.bounds() = publishInfo->payloadLength;
+			payload.bounds().set_inexact(publishInfo->payloadLength);
+
+			/*
+			 * We've had to set the payload bounds inexactly, because payloads
+			 * are often larger than what our capabilities can represent with
+			 * byte-granularity.  The way the deserializer works (see
+			 * deserializePublish in coreMQTT/source/core_mqtt_serializer.c) is
+			 * to point into the (reused) packet buffer.  That means that bytes
+			 * between payload.base and payload.address are part of the current
+			 * packet (for example, the packet identifier or topic string) while
+			 * bytes between payload.address + payloadLength and payload.top are
+			 * from prior packets.  In case our client is multiplexing between
+			 * multiple consumers, zero that region.
+			 *
+			 * Recall that payload.bounds() is top - address, *as if* we could
+			 * precisely set bounds, not top - base.
+			 */
+			if (static_cast<ptrdiff_t>(payload.bounds()) >
+			    publishInfo->payloadLength)
+			{
+				memset(static_cast<uint8_t *>(
+				         const_cast<void *>(publishInfo->pPayload)) +
+				         publishInfo->payloadLength,
+				       0,
+				       static_cast<ptrdiff_t>(payload.bounds()) -
+				         publishInfo->payloadLength);
+			}
 
 			publishCallback(topic,
 			                publishInfo->topicNameLength,
