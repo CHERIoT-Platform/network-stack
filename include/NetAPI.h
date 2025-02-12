@@ -130,13 +130,14 @@ typedef CHERI_SEALED(struct SealedSocket *) Socket;
  */
 #define DECLARE_AND_DEFINE_CONNECTION_CAPABILITY(                              \
   name, authorisedHost, portNumber, connectionType)                            \
-	DECLARE_AND_DEFINE_STATIC_SEALED_VALUE(                                    \
+	DECLARE_AND_DEFINE_STATIC_SEALED_VALUE_EXPLICIT_TYPE(                      \
 	  struct {                                                                 \
 		  ConnectionType type;                                                 \
 		  uint16_t       port;                                                 \
 		  size_t         nameLength;                                           \
 		  const char     hostname[sizeof(authorisedHost)];                     \
 	  },                                                                       \
+	  ConnectionCapabilityState,                                               \
 	  NetAPI,                                                                  \
 	  NetworkConnectionKey,                                                    \
 	  name,                                                                    \
@@ -145,8 +146,17 @@ typedef CHERI_SEALED(struct SealedSocket *) Socket;
 	  sizeof(authorisedHost),                                                  \
 	  authorisedHost)
 
-#define CONNECTION_CAPABILITY(name)                                            \
-	(ConnectionCapability) STATIC_SEALED_VALUE(name)
+/**
+ * Get a (sealed) pointer to the ConnectionCapability called `name`.
+ *
+ * This macro was added when compiler support for sealed capabilities was
+ * introduced in order to cast between the actual STATIC_SEALED_VALUE, which has
+ * a fixed `hostname` length, and ConnectionCapability, which has variable
+ * `hostname` length. Since DECLARE_AND_DEFINE_STATIC_SEALED_VALUE_EXPLICIT_TYPE
+ * was added we no longer need the cast, but keep the macro for backwards
+ * compatibility and because it neatly documents intent.
+ */
+#define CONNECTION_CAPABILITY(name) STATIC_SEALED_VALUE(name)
 
 /**
  * Define a capability that authorises binding to a specific server port with
