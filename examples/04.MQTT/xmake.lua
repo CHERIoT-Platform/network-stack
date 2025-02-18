@@ -22,11 +22,7 @@ compartment("mqtt_example")
   -- stdio only needed for debug prints in MQTT, can be removed with --debug-mqtt=n
   add_deps("stdio")
   add_files("mqtt.cc")
-  on_load(function(target)
-    target:add('options', "IPv6")
-    local IPv6 = get_config("IPv6")
-    target:add("defines", "CHERIOT_RTOS_OPTION_IPv6=" .. tostring(IPv6))
-  end)
+  add_rules("cheriot.network-stack.ipv6")
 
 firmware("04.mqtt_example")
   set_policy("build.warning", true)
