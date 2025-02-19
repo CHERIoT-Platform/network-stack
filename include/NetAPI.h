@@ -164,12 +164,13 @@ typedef CHERI_SEALED(struct SealedSocket *) Socket;
  */
 #define DECLARE_AND_DEFINE_BIND_CAPABILITY(                                    \
   name, isIPv6Binding, portNumber, maxConnections)                             \
-	DECLARE_AND_DEFINE_STATIC_SEALED_VALUE(                                    \
+	DECLARE_AND_DEFINE_STATIC_SEALED_VALUE_EXPLICIT_TYPE(                      \
 	  struct {                                                                 \
 		  bool     isIPv6;                                                     \
 		  uint16_t port;                                                       \
 		  uint16_t maximumNumberOfConcurrentTCPConnections;                    \
 	  },                                                                       \
+	  BindCapabilityState,                                                     \
 	  NetAPI,                                                                  \
 	  NetworkBindKey,                                                          \
 	  name,                                                                    \
