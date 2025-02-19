@@ -971,7 +971,7 @@ bool ethernet_link_is_up()
 	return ethernet.phy_link_status();
 }
 
-void firewall_dns_server_ip_set(uint32_t ip)
+int firewall_dns_server_ip_set(uint32_t ip)
 {
 	// This is potentially racy but, since it's called very early in network
 	// stack initialisation, it's not worth worrying about an attacker being
@@ -982,40 +982,46 @@ void firewall_dns_server_ip_set(uint32_t ip)
 		dnsServerAddress = ip;
 	}
 	Debug::log("DNS server address set to {}", ip);
+	return 0;
 }
 
-void firewall_permit_dns(bool dnsIsPermitted)
+int firewall_permit_dns(bool dnsIsPermitted)
 {
 	::dnsIsPermitted += dnsIsPermitted ? 1 : -1;
+	return 0;
 }
 
-void firewall_add_tcpipv4_server_port(uint16_t localPort)
+int firewall_add_tcpipv4_server_port(uint16_t localPort)
 {
 	EndpointsTable<uint32_t>::instance().add_server_port(localPort);
+	return 0;
 }
 
-void firewall_remove_tcpipv4_server_port(uint16_t localPort)
+int firewall_remove_tcpipv4_server_port(uint16_t localPort)
 {
 	EndpointsTable<uint32_t>::instance().remove_server_port(localPort);
+	return 0;
 }
 
-void firewall_add_tcpipv4_endpoint(uint32_t remoteAddress,
-                                   uint16_t localPort,
-                                   uint16_t remotePort)
+int firewall_add_tcpipv4_endpoint(uint32_t remoteAddress,
+                                  uint16_t localPort,
+                                  uint16_t remotePort)
 {
 	EndpointsTable<uint32_t>::instance().add_endpoint(
 	  IPProtocolNumber::TCP, remoteAddress, localPort, remotePort);
+	return 0;
 }
 
-void firewall_add_udpipv4_endpoint(uint32_t remoteAddress,
-                                   uint16_t localPort,
-                                   uint16_t remotePort)
+int firewall_add_udpipv4_endpoint(uint32_t remoteAddress,
+                                  uint16_t localPort,
+                                  uint16_t remotePort)
 {
 	EndpointsTable<uint32_t>::instance().add_endpoint(
 	  IPProtocolNumber::UDP, remoteAddress, localPort, remotePort);
+	return 0;
 }
 
-void firewall_remove_tcpipv4_local_endpoint(uint16_t localPort)
+int firewall_remove_tcpipv4_local_endpoint(uint16_t localPort)
 {
 	// Server ports are likely to be associated to more than one entry in
 	// the firewall.
@@ -1024,11 +1030,12 @@ void firewall_remove_tcpipv4_local_endpoint(uint16_t localPort)
 	  "Trying to remove a local endpoint on a server port.");
 	EndpointsTable<uint32_t>::instance().remove_endpoint(IPProtocolNumber::TCP,
 	                                                     localPort);
+	return 0;
 }
 
-void firewall_remove_tcpipv4_remote_endpoint(uint32_t remoteAddress,
-                                             uint16_t localPort,
-                                             uint16_t remotePort)
+int firewall_remove_tcpipv4_remote_endpoint(uint32_t remoteAddress,
+                                            uint16_t localPort,
+                                            uint16_t remotePort)
 {
 	EndpointsTable<uint32_t>::instance().remove_endpoint(
 	  IPProtocolNumber::TCP, remoteAddress, localPort, remotePort);
@@ -1036,20 +1043,23 @@ void firewall_remove_tcpipv4_remote_endpoint(uint32_t remoteAddress,
 	{
 		currentClientCount--;
 	}
+	return 0;
 }
 
-void firewall_remove_udpipv4_local_endpoint(uint16_t localPort)
+int firewall_remove_udpipv4_local_endpoint(uint16_t localPort)
 {
 	EndpointsTable<uint32_t>::instance().remove_endpoint(IPProtocolNumber::UDP,
 	                                                     localPort);
+	return 0;
 }
 
-void firewall_remove_udpipv4_remote_endpoint(uint32_t remoteAddress,
-                                             uint16_t localPort,
-                                             uint16_t remotePort)
+int firewall_remove_udpipv4_remote_endpoint(uint32_t remoteAddress,
+                                            uint16_t localPort,
+                                            uint16_t remotePort)
 {
 	EndpointsTable<uint32_t>::instance().remove_endpoint(
 	  IPProtocolNumber::UDP, remoteAddress, localPort, remotePort);
+	return 0;
 }
 
 namespace
@@ -1073,50 +1083,55 @@ namespace
 } // namespace
 
 #if CHERIOT_RTOS_OPTION_IPv6
-void firewall_add_tcpipv6_server_port(uint16_t localPort)
+int firewall_add_tcpipv6_server_port(uint16_t localPort)
 {
 	EndpointsTable<IPv6Address>::instance().add_server_port(localPort);
+	return 0;
 }
 
-void firewall_remove_tcpipv6_server_port(uint16_t localPort)
+int firewall_remove_tcpipv6_server_port(uint16_t localPort)
 {
 	EndpointsTable<IPv6Address>::instance().remove_server_port(localPort);
+	return 0;
 }
 
-void firewall_add_tcpipv6_endpoint(uint8_t *remoteAddress,
-                                   uint16_t localPort,
-                                   uint16_t remotePort)
+int firewall_add_tcpipv6_endpoint(uint8_t *remoteAddress,
+                                  uint16_t localPort,
+                                  uint16_t remotePort)
 {
 	if (auto copy = copy_address(remoteAddress))
 	{
 		EndpointsTable<IPv6Address>::instance().add_endpoint(
 		  IPProtocolNumber::TCP, *copy, localPort, remotePort);
 	}
+	return 0;
 }
 
-void firewall_add_udpipv6_endpoint(uint8_t *remoteAddress,
-                                   uint16_t localPort,
-                                   uint16_t remotePort)
+int firewall_add_udpipv6_endpoint(uint8_t *remoteAddress,
+                                  uint16_t localPort,
+                                  uint16_t remotePort)
 {
 	if (auto copy = copy_address(remoteAddress))
 	{
 		EndpointsTable<IPv6Address>::instance().add_endpoint(
 		  IPProtocolNumber::UDP, *copy, localPort, remotePort);
 	}
+	return 0;
 }
 
-void firewall_remove_tcpipv6_local_endpoint(uint16_t localPort)
+int firewall_remove_tcpipv6_local_endpoint(uint16_t localPort)
 {
 	Debug::Assert(
 	  !EndpointsTable<IPv6Address>::instance().is_server_port(localPort),
 	  "Trying to remove a local endpoint on a server port.");
 	EndpointsTable<IPv6Address>::instance().remove_endpoint(
 	  IPProtocolNumber::TCP, localPort);
+	return 0;
 }
 
-void firewall_remove_tcpipv6_remote_endpoint(uint8_t *remoteAddress,
-                                             uint16_t localPort,
-                                             uint16_t remotePort)
+int firewall_remove_tcpipv6_remote_endpoint(uint8_t *remoteAddress,
+                                            uint16_t localPort,
+                                            uint16_t remotePort)
 {
 	if (auto copy = copy_address(remoteAddress))
 	{
@@ -1127,23 +1142,26 @@ void firewall_remove_tcpipv6_remote_endpoint(uint8_t *remoteAddress,
 			currentClientCount--;
 		}
 	}
+	return 0;
 }
 
-void firewall_remove_udpipv6_local_endpoint(uint16_t localPort)
+int firewall_remove_udpipv6_local_endpoint(uint16_t localPort)
 {
 	EndpointsTable<IPv6Address>::instance().remove_endpoint(
 	  IPProtocolNumber::UDP, localPort);
+	return 0;
 }
 
-void firewall_remove_udpipv6_remote_endpoint(uint8_t *remoteAddress,
-                                             uint16_t localPort,
-                                             uint16_t remotePort)
+int firewall_remove_udpipv6_remote_endpoint(uint8_t *remoteAddress,
+                                            uint16_t localPort,
+                                            uint16_t remotePort)
 {
 	if (auto copy = copy_address(remoteAddress))
 	{
 		EndpointsTable<IPv6Address>::instance().remove_endpoint(
 		  IPProtocolNumber::UDP, *copy, localPort, remotePort);
 	}
+	return 0;
 }
 #endif
 

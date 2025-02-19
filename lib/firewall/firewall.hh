@@ -74,14 +74,14 @@ bool __cheri_compartment("TCPIP")
  * The DNS resolver expects to be passed all ARP, DHCP, and DNS packets.  This
  * does not support IPv6 for now.
  */
-void __cheri_compartment("DNS")
+int __cheri_compartment("DNS")
   dns_resolver_receive_frame(uint8_t *packet, size_t length);
 
 /**
  * Initialize the DNS resolver. This must be passed the `macAddress` of the
  * device.
  */
-void __cheri_compartment("DNS") initialize_dns_resolver(uint8_t *macAddress);
+int __cheri_compartment("DNS") initialize_dns_resolver(uint8_t *macAddress);
 
 /**
  * Set the IP address of the DNS server to use.  Packets to and from this
@@ -89,7 +89,7 @@ void __cheri_compartment("DNS") initialize_dns_resolver(uint8_t *macAddress);
  *
  * This should only be called from the TCP/IP compartment.
  */
-void __cheri_compartment("Firewall") firewall_dns_server_ip_set(uint32_t ip);
+int __cheri_compartment("Firewall") firewall_dns_server_ip_set(uint32_t ip);
 
 /**
  * Toggle whether DNS is permitted.  This is used to open a hole in the
@@ -97,7 +97,7 @@ void __cheri_compartment("Firewall") firewall_dns_server_ip_set(uint32_t ip);
  *
  * This should be called only by the NetAPI compartment.
  */
-void __cheri_compartment("Firewall")
+int __cheri_compartment("Firewall")
   firewall_permit_dns(bool dnsIsPermitted = true);
 
 /**
@@ -107,7 +107,7 @@ void __cheri_compartment("Firewall")
  *
  * This should be called only by the NetAPI compartment.
  */
-void __cheri_compartment("Firewall")
+int __cheri_compartment("Firewall")
   firewall_add_tcpipv4_endpoint(uint32_t remoteAddress,
                                 uint16_t localPort,
                                 uint16_t remotePort);
@@ -119,7 +119,7 @@ void __cheri_compartment("Firewall")
  *
  * This should be called only by the NetAPI compartment.
  */
-void __cheri_compartment("Firewall")
+int __cheri_compartment("Firewall")
   firewall_add_udpipv4_endpoint(uint32_t remoteAddress,
                                 uint16_t localPort,
                                 uint16_t remotePort);
@@ -135,7 +135,7 @@ void __cheri_compartment("Firewall")
  * calling it is DoS itself.  There is limited risk that it would fail to call
  * it when a connection should be closed.
  */
-void __cheri_compartment("Firewall")
+int __cheri_compartment("Firewall")
   firewall_remove_tcpipv4_local_endpoint(uint16_t localPort);
 
 /**
@@ -144,7 +144,7 @@ void __cheri_compartment("Firewall")
  * This is called from the TCP/IP compartment when a TCP connection is closed
  * (see discussion in `firewall_remove_tcpipv4_local_endpoint`).
  */
-void __cheri_compartment("Firewall")
+int __cheri_compartment("Firewall")
   firewall_remove_tcpipv4_remote_endpoint(uint32_t remoteAddress,
                                           uint16_t localPort,
                                           uint16_t remotePort);
@@ -157,7 +157,7 @@ void __cheri_compartment("Firewall")
  * can do by calling it is DoS itself.  There is limited risk that it would
  * fail to call it when a connection should be closed.
  */
-void __cheri_compartment("Firewall")
+int __cheri_compartment("Firewall")
   firewall_remove_udpipv4_local_endpoint(uint16_t endpoint);
 
 /**
@@ -166,7 +166,7 @@ void __cheri_compartment("Firewall")
  * This is called from the TCP/IP compartment when a UDP "connection" is closed
  * (see discussion in `firewall_remove_udpipv4_local_endpoint`).
  */
-void __cheri_compartment("Firewall")
+int __cheri_compartment("Firewall")
   firewall_remove_udpipv4_remote_endpoint(uint32_t remoteAddress,
                                           uint16_t localPort,
                                           uint16_t remotePort);
@@ -189,7 +189,7 @@ void __cheri_compartment("Firewall")
  *
  * This should be called only by the NetAPI compartment.
  */
-void __cheri_compartment("Firewall")
+int __cheri_compartment("Firewall")
   firewall_add_tcpipv4_server_port(uint16_t localPort);
 
 /**
@@ -200,7 +200,7 @@ void __cheri_compartment("Firewall")
  * security risk: the worst that the TCP/IP compartment can do by calling it is
  * DoS itself.
  */
-void __cheri_compartment("Firewall")
+int __cheri_compartment("Firewall")
   firewall_remove_tcpipv4_server_port(uint16_t localPort);
 
 #if CHERIOT_RTOS_OPTION_IPv6
@@ -211,7 +211,7 @@ void __cheri_compartment("Firewall")
  *
  * This should be called only by the NetAPI compartment.
  */
-void __cheri_compartment("Firewall")
+int __cheri_compartment("Firewall")
   firewall_add_tcpipv6_endpoint(uint8_t *remoteAddress,
                                 uint16_t localPort,
                                 uint16_t remotePort);
@@ -223,7 +223,7 @@ void __cheri_compartment("Firewall")
  *
  * This should be called only by the NetAPI compartment.
  */
-void __cheri_compartment("Firewall")
+int __cheri_compartment("Firewall")
   firewall_add_udpipv6_endpoint(uint8_t *remoteAddress,
                                 uint16_t localPort,
                                 uint16_t remotePort);
@@ -239,7 +239,7 @@ void __cheri_compartment("Firewall")
  * calling it is DoS itself.  There is limited risk that it would fail to call
  * it when a connection should be closed.
  */
-void __cheri_compartment("Firewall")
+int __cheri_compartment("Firewall")
   firewall_remove_tcpipv6_local_endpoint(uint16_t localPort);
 
 /**
@@ -248,7 +248,7 @@ void __cheri_compartment("Firewall")
  * This is called from the TCP/IP compartment when a TCP connection is closed
  * (see discussion in `firewall_remove_tcpipv6_local_endpoint`).
  */
-void __cheri_compartment("Firewall")
+int __cheri_compartment("Firewall")
   firewall_remove_tcpipv6_remote_endpoint(uint8_t *remoteAddress,
                                           uint16_t localPort,
                                           uint16_t remotePort);
@@ -261,7 +261,7 @@ void __cheri_compartment("Firewall")
  * can do by calling it is DoS itself.  There is limited risk that it would
  * fail to call it when a connection should be closed.
  */
-void __cheri_compartment("Firewall")
+int __cheri_compartment("Firewall")
   firewall_remove_udpipv6_local_endpoint(uint16_t endpoint);
 
 /**
@@ -270,7 +270,7 @@ void __cheri_compartment("Firewall")
  * This is called from the TCP/IP compartment when a UDP "connection" is closed
  * (see discussion in `firewall_remove_udpipv6_local_endpoint`).
  */
-void __cheri_compartment("Firewall")
+int __cheri_compartment("Firewall")
   firewall_remove_udpipv6_remote_endpoint(uint8_t *remoteAddress,
                                           uint16_t localPort,
                                           uint16_t remotePort);
@@ -286,13 +286,13 @@ void __cheri_compartment("Firewall")
  *
  * This should be called only by the NetAPI compartment.
  */
-void __cheri_compartment("Firewall")
+int __cheri_compartment("Firewall")
   firewall_add_tcpipv6_server_port(uint16_t localPort);
 
 /**
  * Remove a server port from the firewall.
  */
-void __cheri_compartment("Firewall")
+int __cheri_compartment("Firewall")
   firewall_remove_tcpipv6_server_port(uint16_t localPort);
 
 #else

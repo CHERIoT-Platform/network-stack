@@ -3,4 +3,5 @@ compartment("DNS")
   add_includedirs("../../include")
   add_rules("cheriot.network-stack.ipv6")
   add_files("dns.cc")
+  add_cxflags("-Wcheri-compartment-return-void")
 
