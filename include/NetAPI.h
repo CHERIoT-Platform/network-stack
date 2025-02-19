@@ -181,7 +181,7 @@ typedef CHERI_SEALED(struct SealedSocket *) Socket;
  * Start the network.  This is a temporary API.  It will eventually be replaced
  * by a non-blocking version.
  */
-void __cheri_compartment("TCPIP") network_start(void);
+int __cheri_compartment("TCPIP") network_start(void);
 
 /**
  * Create a connected TCP socket.
@@ -431,4 +431,4 @@ const char *__cheri_compartment("NetAPI")
  *
  * This is disabled unless compiled with the `network-inject-faults` option.
  */
-void __cheri_compartment("TCPIP") network_inject_fault(void);
+int __cheri_compartment("TCPIP") network_inject_fault(void);
