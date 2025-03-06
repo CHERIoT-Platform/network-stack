@@ -1,9 +1,12 @@
+debugOption("TCPIP")
+
 option("network-inject-faults")
   set_default(false)
   set_showmenu(true)
   set_description("Inject network faults for testing")
 
 compartment("TCPIP")
+  add_rules("cheriot.component-debug")
   set_default(false)
   add_deps("freestanding", "string", "message_queue_library", "event_group", "cxxrt", "unwind_error_handler", "DNS")
   add_cflags("-Wno-error=int-conversion", "-Wno-error=cheri-provenance", "-Wno-error=pointer-integer-compare", { force = true})

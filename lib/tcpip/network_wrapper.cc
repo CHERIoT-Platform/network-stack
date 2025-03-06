@@ -19,7 +19,15 @@
 #include <platform-ethernet.hh>
 #include <token.h>
 
-using Debug = ConditionalDebug<false, "Network stack wrapper">;
+constexpr bool DebugTCPIP =
+#ifdef DEBUG_TCPIP
+  DEBUG_TCPIP
+#else
+  false
+#endif
+  ;
+
+using Debug = ConditionalDebug<DebugTCPIP, "Network stack wrapper">;
 
 #include "../firewall/firewall.hh"
 
