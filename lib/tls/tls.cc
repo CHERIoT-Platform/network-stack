@@ -12,7 +12,15 @@
 #include <tls.h>
 #include <token.h>
 
-using Debug = ConditionalDebug<false, "TLS">;
+constexpr bool DebugTLS =
+#ifdef DEBUG_TLS
+  DEBUG_TLS
+#else
+  false
+#endif
+  ;
+
+using Debug = ConditionalDebug<DebugTLS, "TLS">;
 using namespace CHERI;
 
 /**
