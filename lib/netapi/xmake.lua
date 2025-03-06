@@ -1,4 +1,7 @@
+debugOption("NetAPI")
+
 compartment("NetAPI")
+  add_rules("cheriot.component-debug")
   set_default(false)
   add_includedirs("../../include")
   add_deps("freestanding", "TCPIP")
