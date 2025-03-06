@@ -749,7 +749,11 @@ int network_socket_connect_tcp_internal(Timeout       *timeout,
 			  server.sin_address.ulIP_IPv4 = address.ipv4;
 		  }
 		  Debug::log("Trying to connect to server");
-		  switch (FreeRTOS_connect(socket->socket, &server, sizeof(server)))
+		  switch (with_freertos_timeout(
+		    timeout, socket->socket, FREERTOS_SO_RCVTIMEO, [&] {
+			    return FreeRTOS_connect(
+			      socket->socket, &server, sizeof(server));
+		    }))
 		  {
 			  default:
 				  return -EINVAL;
