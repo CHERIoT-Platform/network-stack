@@ -19,7 +19,15 @@
 #include <platform-ethernet.hh>
 #include <token.h>
 
-using Debug = ConditionalDebug<false, "Network stack wrapper">;
+constexpr bool DebugTCPIP =
+#ifdef DEBUG_TCPIP
+  DEBUG_TCPIP
+#else
+  false
+#endif
+  ;
+
+using Debug = ConditionalDebug<DebugTCPIP, "Network stack wrapper">;
 
 #include "../firewall/firewall.hh"
 
@@ -741,7 +749,11 @@ int network_socket_connect_tcp_internal(Timeout       *timeout,
 			  server.sin_address.ulIP_IPv4 = address.ipv4;
 		  }
 		  Debug::log("Trying to connect to server");
-		  switch (FreeRTOS_connect(socket->socket, &server, sizeof(server)))
+		  switch (with_freertos_timeout(
+		    timeout, socket->socket, FREERTOS_SO_RCVTIMEO, [&] {
+			    return FreeRTOS_connect(
+			      socket->socket, &server, sizeof(server));
+		    }))
 		  {
 			  default:
 				  return -EINVAL;

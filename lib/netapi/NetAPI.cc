@@ -9,7 +9,15 @@
 #include <endianness.hh>
 #include <token.h>
 
-using Debug = ConditionalDebug<false, "Network API">;
+constexpr bool DebugNetAPI =
+#ifdef DEBUG_NETAPI
+  DEBUG_NETAPI
+#else
+  false
+#endif
+  ;
+
+using Debug = ConditionalDebug<DebugNetAPI, "Network API">;
 
 #include "../dns/dns.hh"
 #include "../firewall/firewall.hh"

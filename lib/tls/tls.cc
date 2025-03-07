@@ -12,7 +12,15 @@
 #include <tls.h>
 #include <token.h>
 
-using Debug = ConditionalDebug<false, "TLS">;
+constexpr bool DebugTLS =
+#ifdef DEBUG_TLS
+  DEBUG_TLS
+#else
+  false
+#endif
+  ;
+
+using Debug = ConditionalDebug<DebugTLS, "TLS">;
 using namespace CHERI;
 
 /**
@@ -287,6 +295,23 @@ namespace
 				  {
 					  return -ENOTCONN;
 				  }
+
+				  if ((state & BR_SSL_SENDREC) == BR_SSL_SENDREC)
+				  {
+					  // If we need to send records, send them first.
+					  auto [sent, unfinished] = send_records(t, connection);
+					  if (sent == -ECOMPARTMENTFAIL)
+					  {
+						  // The TCP/IP stack crashed; tell the
+						  // caller that the link is dead.
+						  return -ENOTCONN;
+					  }
+					  if (sent <= 0)
+					  {
+						  return sent;
+					  }
+				  }
+
 				  if ((state & BR_SSL_RECVAPP) == BR_SSL_RECVAPP)
 				  {
 					  // If there are data ready to receive, return

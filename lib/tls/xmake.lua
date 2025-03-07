@@ -1,3 +1,5 @@
+debugOption("TLS")
+
 option("tls-rsa")
     set_default(true)
     set_description("Enable RSA (in addition to ECDSA) for TLS")
@@ -12,6 +14,7 @@ option("tls-sha384")
 
 
 compartment("TLS")
+  add_rules("cheriot.component-debug")
   add_options("tls-rsa", "tls-sha384")
   set_default(false)
   -- TLS API
