@@ -710,7 +710,7 @@ MQTTConnection mqtt_connect(Timeout                    *t,
 	do
 	{
 		// `remaining` is in milliseconds
-		uint32_t remaining = (t->remaining * MS_PER_TICK) / 1000;
+		uint32_t remaining = (t->remaining * MS_PER_TICK);
 		ret                = with_elapse_timeout(t, [&]() {
             return MQTT_Connect(&context->coreMQTTContext,
                                 &connectInfo,
