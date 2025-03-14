@@ -1275,30 +1275,25 @@ ssize_t network_socket_send_to(Timeout              *timeout,
 
 int network_socket_kind(Socket socket, SocketKind *kind)
 {
-	return with_restarting_checks(
-	  [&]() -> int {
-		  kind->protocol  = SocketKind::Invalid;
-		  kind->localPort = 0;
-		  int ret         = with_sealed_socket(
-            [&](SealedSocket *socket) {
-                if (socket->socket->ucProtocol == FREERTOS_IPPROTO_TCP)
-                {
-                    kind->protocol = socket->socket->bits.bIsIPv6
-				                               ? SocketKind::TCPIPv6
-				                               : SocketKind::TCPIPv4;
-                }
-                else
-                {
-                    kind->protocol = socket->socket->bits.bIsIPv6
-				                               ? SocketKind::UDPIPv6
-				                               : SocketKind::UDPIPv4;
-                }
-                kind->localPort = listGET_LIST_ITEM_VALUE(
-                  (&((socket->socket)->xBoundSocketListItem)));
-                return 0;
-            },
-            socket);
-		  return ret;
+	kind->protocol  = SocketKind::Invalid;
+	kind->localPort = 0;
+	return with_sealed_socket(
+	  [&](SealedSocket *socket) {
+		  if (socket->socket->ucProtocol == FREERTOS_IPPROTO_TCP)
+		  {
+			  kind->protocol = socket->socket->bits.bIsIPv6
+			                     ? SocketKind::TCPIPv6
+			                     : SocketKind::TCPIPv4;
+		  }
+		  else
+		  {
+			  kind->protocol = socket->socket->bits.bIsIPv6
+			                     ? SocketKind::UDPIPv6
+			                     : SocketKind::UDPIPv4;
+		  }
+		  kind->localPort = listGET_LIST_ITEM_VALUE(
+		    (&((socket->socket)->xBoundSocketListItem)));
+		  return 0;
 	  },
-	  -1 /* invalid if we are restarting */);
+	  socket);
 }
