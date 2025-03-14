@@ -4,6 +4,7 @@
 #pragma once
 #include <FreeRTOS_IP.h>
 #include <ds/linked_list.h>
+#include <function_wrapper.hh>
 #include <locks.hh>
 #include <unwind.h>
 
@@ -106,9 +107,10 @@ extern std::atomic<uint8_t> userThreadCount;
  * thread, see below) should go through this unless it manipulates
  * `userThreadCount` and sets up the error handler manually.
  */
-auto with_restarting_checks(auto operation, auto errorValue)
+int with_restarting_checks(FunctionWrapper<int(void)> operation,
+                           auto                       errorValue)
 {
-	auto ret = errorValue;
+	int ret = errorValue;
 
 	on_error(
 	  [&]() {
@@ -145,9 +147,10 @@ auto with_restarting_checks(auto operation, auto errorValue)
  * when not to call - if it does call at an inapproriate time during reset,
  * this is a firewall bug. Thus, do not check `restartState` here.
  */
-auto with_restarting_checks_driver(auto operation, auto errorValue)
+int with_restarting_checks_driver(FunctionWrapper<int(void)> operation,
+                                  auto                       errorValue)
 {
-	auto ret = errorValue;
+	int ret = errorValue;
 
 	on_error(
 	  [&]() {
