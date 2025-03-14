@@ -98,9 +98,9 @@ namespace
 	 * the socket is coming from a previous instantiation of the network
 	 * stack.
 	 */
-	template<bool IsCloseOperation = false>
 	int with_sealed_socket(FunctionWrapper<int(SealedSocket *socket)> operation,
-	                       Sealed<SealedSocket> sealedSocket)
+	                       Sealed<SealedSocket> sealedSocket,
+	                       bool                 isCloseOperation = false)
 	{
 		return with_restarting_checks(
 		  [&]() {
@@ -118,7 +118,7 @@ namespace
 				    "(epochs mismatch: socket = {}; current = {}).",
 				    socket->socketEpoch,
 				    currentSocketEpoch.load());
-				  if constexpr (!IsCloseOperation)
+				  if (!isCloseOperation)
 				  {
 					  // This should push the caller to free the socket.
 					  return -ENOTCONN;
@@ -780,7 +780,7 @@ int network_socket_close(Timeout            *t,
 	{
 		return -EINVAL;
 	}
-	return with_sealed_socket<true /* this is a close operation */>(
+	return with_sealed_socket(
 	  [=](SealedSocket *socket) {
 		  // We will fail to lock if the socket is coming from
 		  // a previous instance of the network stack as it set
@@ -957,7 +957,8 @@ int network_socket_close(Timeout            *t,
 		  }
 		  return -ETIMEDOUT;
 	  },
-	  sealedSocket);
+	  sealedSocket,
+	  true /* this is a close operation */);
 }
 
 NetworkReceiveResult
