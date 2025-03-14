@@ -201,7 +201,7 @@ namespace
 	 * Note: if our own IP address has not yet been determined, this will
 	 * send an ARP probe.
 	 */
-	void send_arp_request(uint32_t ip)
+	int send_arp_request(uint32_t ip)
 	{
 		struct FullARPPacket *arpPacket =
 		  reinterpret_cast<struct FullARPPacket *>(packetBuffer);
@@ -221,14 +221,14 @@ namespace
 		arpPacket->arp.spa = deviceIP;
 		arpPacket->arp.tpa = ip;
 
-		ethernet_send_frame(packetBuffer, sizeof(FullARPPacket));
+		return ethernet_send_frame(packetBuffer, sizeof(FullARPPacket));
 	}
 
 	/**
 	 * Send a DNS query for passed `hostname` of length `length` (not
 	 * including the zero terminator).
 	 */
-	void send_dns_query(const char *hostname, size_t length, bool askIPv6)
+	int send_dns_query(const char *hostname, size_t length, bool askIPv6)
 	{
 		Debug::log("Sending a DNS query for {} (IPv6: {})", hostname, askIPv6);
 
@@ -294,7 +294,7 @@ namespace
 		// Request IN (Internet) class information
 		*reinterpret_cast<uint16_t *>(question + length + 4) = DNSClassIN;
 
-		ethernet_send_frame(packetBuffer, packetSize);
+		return ethernet_send_frame(packetBuffer, packetSize);
 	}
 
 	/**
@@ -365,9 +365,9 @@ namespace
 	 * negotiated with the new DHCP server by the network stack. This is an
 	 * edge-case which we should be able to safely ignore for now.
 	 */
-	void process_incoming_dhcp_packet(const uint8_t  *dhcpPacket,
-	                                  size_t          length,
-	                                  EthernetHeader *ethernetHeader)
+	int process_incoming_dhcp_packet(const uint8_t  *dhcpPacket,
+	                                 size_t          length,
+	                                 EthernetHeader *ethernetHeader)
 	{
 		// DHCP packets may be updating our IP address
 		// or the address of the gateway.
@@ -378,7 +378,7 @@ namespace
 		if (sizeof(DHCPHeader) > length)
 		{
 			Debug::log("Ignoring truncated DHCP packet");
-			return;
+			return 0;
 		}
 		auto  *dhcpHeader    = reinterpret_cast<const DHCPHeader *>(dhcpPacket);
 		size_t currentOffset = sizeof(DHCPHeader);
@@ -387,7 +387,7 @@ namespace
 		{
 			Debug::log("Ignoring DHCP packet with incorrect magic cookie {}",
 			           dhcpHeader->cookie);
-			return;
+			return 0;
 		}
 
 		// Go through the options to get the DHCP
@@ -497,7 +497,7 @@ namespace
 			{
 				Debug::log("DHCP OFFER does not provide DNS server IP, "
 				           "gateway, or mask.");
-				return;
+				return 0;
 			}
 
 			dnsServerIP = extractedDnsServerIP;
@@ -507,7 +507,9 @@ namespace
 			           static_cast<int>(dnsServerIP >> 8) & 0xff,
 			           static_cast<int>(dnsServerIP >> 16) & 0xff,
 			           static_cast<int>(dnsServerIP >> 24) & 0xff);
-			firewall_dns_server_ip_set(dnsServerIP);
+			int err = firewall_dns_server_ip_set(dnsServerIP);
+			if (err < 0)
+				return err;
 
 			gatewayIP = extractedGateway;
 			Debug::log("The gateway IP is {}.{}.{}.{}",
@@ -588,6 +590,8 @@ namespace
 			deviceIP = dhcpHeader->yiaddr;
 			state |= ResolverState::DeviceIPSet;
 		}
+
+		return 0;
 	}
 
 	/**
@@ -902,11 +906,12 @@ namespace
  * This must be called by the firewall exclusively (checked via rego), before
  * any other API of the DNS resolver.
  */
-__cheri_compartment("DNS") void initialize_dns_resolver(uint8_t *macAddress)
+__cheri_compartment("DNS") int initialize_dns_resolver(uint8_t *macAddress)
 {
 	Debug::log("Initializing the DNS resolver.");
 	memcpy(deviceMAC.data(), macAddress, 6);
 	state |= ResolverState::DeviceMACSet;
+	return 0;
 }
 
 /**
@@ -921,7 +926,7 @@ __cheri_compartment("DNS") void initialize_dns_resolver(uint8_t *macAddress)
  * This does not currently work with DHCP lease renewal if the address of the
  * gateway changes, but neither does the firewall.
  */
-void __cheri_compartment("DNS")
+int __cheri_compartment("DNS")
   dns_resolver_receive_frame(uint8_t *packet, size_t length)
 {
 	on_error(
@@ -1017,6 +1022,7 @@ void __cheri_compartment("DNS")
 		    "Crashed while the DNS resolver was not yet initialized. This "
 		    "may result in a non-functional resolver.");
 	  });
+	return 0;
 }
 
 /**
