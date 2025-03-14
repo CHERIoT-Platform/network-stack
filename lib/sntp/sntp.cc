@@ -334,6 +334,10 @@ namespace
 	{
 		static FlagLockPriorityInherited lock;
 		NetworkContext                   udpContext{timeout, nullptr};
+		SntpStatus_t                     status;
+		// Use the do {...} while {false} to deduplicate
+		// error-handling.
+		do
 		{
 			if (LockGuard guard{lock, timeout})
 			{
@@ -364,7 +368,7 @@ namespace
 				SntpContext_t context;
 
 				/* Initialize context. */
-				SntpStatus_t status =
+				status =
 				  Sntp_Init(&context,
 				            timeServers,
 				            sizeof(timeServers) / sizeof(SntpServerInfo_t),
@@ -380,11 +384,7 @@ namespace
 				if (status != SntpSuccess)
 				{
 					Debug::log("Failed to initialize SNTP client: {}", status);
-					Timeout t{UnlimitedTimeout};
-					network_socket_close(
-					  &t, MALLOC_CAPABILITY, udpContext.socket);
-					timeout->elapse(t.elapsed);
-					return ntp_error_to_errno(status);
+					break;
 				}
 
 				/* Loop of SNTP client for period time synchronization. */
@@ -393,11 +393,7 @@ namespace
 				if (status != SntpSuccess)
 				{
 					Debug::log("Failed to send SNTP request: {}", status);
-					Timeout t{UnlimitedTimeout};
-					network_socket_close(
-					  &t, MALLOC_CAPABILITY, udpContext.socket);
-					timeout->elapse(t.elapsed);
-					return ntp_error_to_errno(status);
+					break;
 				}
 
 				SntpStatus_t lastStatus = SntpSuccess;
@@ -424,25 +420,22 @@ namespace
 				{
 					Debug::log("Failed to receive SNTP time response: {}",
 					           status);
-					Timeout t{UnlimitedTimeout};
-					network_socket_close(
-					  &t, MALLOC_CAPABILITY, udpContext.socket);
-					timeout->elapse(t.elapsed);
-					return ntp_error_to_errno(status);
+					break;
 				}
 
 				Debug::log("Received new time from NTP!");
+				status = SntpSuccess;
 			}
 			else
 			{
 				return -ETIMEDOUT;
 			}
-		}
+		} while (false);
 		Timeout t{UnlimitedTimeout};
 		network_socket_close(&t, MALLOC_CAPABILITY, udpContext.socket);
 		timeout->elapse(t.elapsed);
 		Debug::log("Closed NTP socket {}", udpContext.socket);
-		return 0;
+		return ntp_error_to_errno(status);
 	}
 
 } // namespace
