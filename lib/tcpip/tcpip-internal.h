@@ -112,28 +112,26 @@ int with_restarting_checks(FunctionWrapper<int(void)> operation,
 {
 	int ret = errorValue;
 
-	on_error(
-	  [&]() {
-		  // Is a reset ongoing?
-		  if (restartState.load() == 0)
-		  {
-			  // We are not resetting.
-			  userThreadCount++;
-			  ret = operation();
-			  // The decrement will happen in the error handler if
-			  // the thread crashes.
-			  userThreadCount--;
-			  return;
-		  }
-		  // A reset is ongoing. yield to give a chance to the restart
-		  // code to make some progress, in case applications are
-		  // aggressively trying to re-open the socket.
-		  yield();
-	  },
-	  [&]() {
-		  // Call the network stack error handler.
-		  reset_network_stack_state(false /* this is not the IP thread */);
-	  });
+	CHERIOT_DURING
+	// Is a reset ongoing?
+	if (restartState.load() == 0)
+	{
+		// We are not resetting.
+		userThreadCount++;
+		ret = operation();
+		// The decrement will happen in the error handler if
+		// the thread crashes.
+		userThreadCount--;
+		return ret;
+	}
+	// A reset is ongoing. yield to give a chance to the restart
+	// code to make some progress, in case applications are
+	// aggressively trying to re-open the socket.
+	yield();
+	CHERIOT_HANDLER
+	// Call the network stack error handler.
+	reset_network_stack_state(false /* this is not the IP thread */);
+	CHERIOT_END_HANDLER
 
 	return ret;
 }
@@ -152,18 +150,16 @@ int with_restarting_checks_driver(FunctionWrapper<int(void)> operation,
 {
 	int ret = errorValue;
 
-	on_error(
-	  [&]() {
-		  userThreadCount++;
-		  ret = operation();
-		  // The decrement will happen in the error handler if the thread
-		  // crashes.
-		  userThreadCount--;
-	  },
-	  [&]() {
-		  // Call the network stack error handler.
-		  reset_network_stack_state(false /* this is not the IP thread */);
-	  });
+	CHERIOT_DURING
+	userThreadCount++;
+	ret = operation();
+	// The decrement will happen in the error handler if the thread
+	// crashes.
+	userThreadCount--;
+	CHERIOT_HANDLER
+	// Call the network stack error handler.
+	reset_network_stack_state(false /* this is not the IP thread */);
+	CHERIOT_END_HANDLER
 
 	return ret;
 }
