@@ -12,7 +12,7 @@
 #include <simulator.h>
 #include <vector>
 
-using DebugErrorHandler = ConditionalDebug<true, "TCP/IP Stack error handler">;
+using DebugErrorHandler = ConditionalDebug<false, "TCP/IP Stack error handler">;
 using CHERI::Capability;
 
 /**
