@@ -13,7 +13,6 @@
 #include <NetAPI.h>
 #include <debug.hh>
 #include <endianness.hh>
-#include <function_wrapper.hh>
 #include <limits>
 #include <locks.hh>
 #include <platform-ethernet.hh>
@@ -108,7 +107,8 @@ namespace
 	 * stack.
 	 */
 	template<bool IsCloseOperation = false>
-	int with_sealed_socket(auto operation, Sealed<SealedSocket> sealedSocket)
+	int with_sealed_socket(FunctionWrapper<int(SealedSocket *socket)> operation,
+	                       Sealed<SealedSocket> sealedSocket)
 	{
 		return with_restarting_checks(
 		  [&]() {
@@ -145,8 +145,8 @@ namespace
 	 * (which must not try to release the lock after the lock has been
 	 * deallocated).
 	 */
-	int with_sealed_socket(Timeout             *timeout,
-	                       auto                 operation,
+	int with_sealed_socket(Timeout                                   *timeout,
+	                       FunctionWrapper<int(SealedSocket *socket)> operation,
 	                       Sealed<SealedSocket> sealedSocket)
 	{
 		return with_sealed_socket(
@@ -248,10 +248,10 @@ namespace
 	 * timeout on the socket (for the direction identified by `directionFlag`),
 	 * calls `fn`, and then updates the timeout with the number of ticks taken.
 	 */
-	auto with_freertos_timeout(Timeout           *timeout,
-	                           FreeRTOS_Socket_t *socket,
-	                           auto               directionFlag,
-	                           auto             &&fn)
+	auto with_freertos_timeout(Timeout                   *timeout,
+	                           FreeRTOS_Socket_t         *socket,
+	                           auto                       directionFlag,
+	                           FunctionWrapper<int(void)> fn)
 	{
 		auto       startTick = thread_systemtick_get();
 		TickType_t remaining = timeout->remaining;
@@ -468,8 +468,9 @@ Socket network_socket_create_and_bind(Timeout            *timeout,
                                       bool                isListening,
                                       uint16_t            maxConnections)
 {
-	return with_restarting_checks(
-	  [&]() -> Socket {
+	Socket ret = nullptr;
+	with_restarting_checks(
+	  [&]() {
 		  // TODO: This should have nice RAII wrappers!
 		  // Add the socket lock to the linked list and make sure that the RAII
 		  // wrapper removes it from there.
@@ -478,7 +479,7 @@ Socket network_socket_create_and_bind(Timeout            *timeout,
 		  if (socketWrapper == nullptr)
 		  {
 			  Debug::log("Failed to allocate socket wrapper.");
-			  return nullptr;
+			  return -ENOMEM;
 		  }
 
 		  // Set the socket epoch
@@ -498,7 +499,7 @@ Socket network_socket_create_and_bind(Timeout            *timeout,
 			  // allocated the token with this malloc capability. Same for
 			  // other calls to `token_obj_destroy` in this function.
 			  token_obj_destroy(mallocCapability, socket_key(), sealedSocket);
-			  return nullptr;
+			  return -ENOMEM;
 		  }
 		  socketWrapper->socket = socket;
 
@@ -518,7 +519,7 @@ Socket network_socket_create_and_bind(Timeout            *timeout,
 			  close_socket_retry(timeout, socket);
 			  // Cannot fail, see above.
 			  token_obj_destroy(mallocCapability, socket_key(), sealedSocket);
-			  return nullptr;
+			  return -ENOMEM;
 		  }
 
 		  // Acquire the lock until we complete the bind to ensure that
@@ -550,7 +551,7 @@ Socket network_socket_create_and_bind(Timeout            *timeout,
 				  close_socket_retry(timeout, socket);
 				  token_obj_destroy(
 				    mallocCapability, socket_key(), sealedSocket);
-				  return nullptr;
+				  return -EAGAIN;
 			  }
 
 			  if (isListening)
@@ -578,7 +579,7 @@ Socket network_socket_create_and_bind(Timeout            *timeout,
 					  close_socket_retry(timeout, socket);
 					  token_obj_destroy(
 					    mallocCapability, socket_key(), sealedSocket);
-					  return nullptr;
+					  return -EAGAIN;
 				  }
 
 				  FreeRTOS_setsockopt(
@@ -595,13 +596,15 @@ Socket network_socket_create_and_bind(Timeout            *timeout,
 			  Debug::log("Failed to add socket to the socket reset list.");
 			  close_socket_retry(timeout, socket);
 			  token_obj_destroy(mallocCapability, socket_key(), sealedSocket);
-			  return nullptr;
+			  return -EAGAIN;
 		  }
 
 		  c.release();
-		  return sealedSocket;
+		  ret = sealedSocket;
+		  return 0;
 	  },
-	  static_cast<Socket>(nullptr) /* return nullptr if we are restarting */);
+	  -EAGAIN /* this will be returned if we are restarting */);
+	return ret;
 }
 
 Socket network_socket_accept_tcp(Timeout            *timeout,
