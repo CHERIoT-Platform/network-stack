@@ -924,99 +924,94 @@ __cheri_compartment("DNS") void initialize_dns_resolver(uint8_t *macAddress)
 void __cheri_compartment("DNS")
   dns_resolver_receive_frame(uint8_t *packet, size_t length)
 {
-	on_error(
-	  [&]() {
-		  size_t currentOffset = 0;
+	CHERIOT_DURING
+	size_t currentOffset = 0;
 
-		  // Trust the firewall checked the size of the packet is large enough
-		  // for an Ethernet header.
-		  EthernetHeader *ethernetHeader =
-		    reinterpret_cast<EthernetHeader *>(const_cast<uint8_t *>(packet));
-		  currentOffset += sizeof(EthernetHeader);
+	// Trust the firewall checked the size of the packet is large enough
+	// for an Ethernet header.
+	EthernetHeader *ethernetHeader =
+	  reinterpret_cast<EthernetHeader *>(const_cast<uint8_t *>(packet));
+	currentOffset += sizeof(EthernetHeader);
 
-		  switch (ethernetHeader->etherType)
-		  {
-			  case EtherType::ARP:
-			  {
-				  process_incoming_arp_packet(packet + currentOffset,
-				                              length - currentOffset);
-				  break;
-			  }
-			  case EtherType::IPv4:
-			  {
-				  // Trust the firewall checked the size of the packet is
-				  // large enough for an IPv4 header.
-				  auto *ipv4Header = reinterpret_cast<const IPv4Header *>(
-				    packet + currentOffset);
-				  currentOffset += ipv4Header->body_offset();
+	switch (ethernetHeader->etherType)
+	{
+		case EtherType::ARP:
+		{
+			process_incoming_arp_packet(packet + currentOffset,
+			                            length - currentOffset);
+			break;
+		}
+		case EtherType::IPv4:
+		{
+			// Trust the firewall checked the size of the packet is
+			// large enough for an IPv4 header.
+			auto *ipv4Header =
+			  reinterpret_cast<const IPv4Header *>(packet + currentOffset);
+			currentOffset += ipv4Header->body_offset();
 
-				  // We are only interested in UDP packets.
-				  if (ipv4Header->protocol != IPProtocolNumber::UDP)
-				  {
-					  return;
-				  }
+			// We are only interested in UDP packets.
+			if (ipv4Header->protocol != IPProtocolNumber::UDP)
+			{
+				return;
+			}
 
-				  // Trust the firewall checked the size of the packet is
-				  // large enough for a TCP/UDP common header.
-				  auto *tcpudpHeader =
-				    reinterpret_cast<const TCPUDPCommonPrefix *>(packet +
-				                                                 currentOffset);
-				  // Count the offset of a UDP header but don't create an
-				  // object as we don't need it.
-				  currentOffset += sizeof(UDPHeader);
+			// Trust the firewall checked the size of the packet is
+			// large enough for a TCP/UDP common header.
+			auto *tcpudpHeader = reinterpret_cast<const TCPUDPCommonPrefix *>(
+			  packet + currentOffset);
+			// Count the offset of a UDP header but don't create an
+			// object as we don't need it.
+			currentOffset += sizeof(UDPHeader);
 
-				  if ((tcpudpHeader->destinationPort ==
-				       htons(DhcpClientPort)) &&
-				      (tcpudpHeader->sourcePort == htons(DhcpServerPort)))
-				  {
-					  process_incoming_dhcp_packet(packet + currentOffset,
-					                               length - currentOffset,
-					                               ethernetHeader);
-				  }
-				  else if (tcpudpHeader->sourcePort == htons(DnsServerPort))
-				  {
-					  process_incoming_dns_packet(packet + currentOffset,
-					                              length - currentOffset);
-				  }
-				  break;
-			  }
-			  default:
-				  break;
-		  }
-	  },
-	  [&]() {
-		  Debug::log("Handling crash in the DNS resolver firewall thread");
-		  if ((state & ResolverState::Ready) == ResolverState::Ready)
-		  {
-			  // There is nothing to do.
+			if ((tcpudpHeader->destinationPort == htons(DhcpClientPort)) &&
+			    (tcpudpHeader->sourcePort == htons(DhcpServerPort)))
+			{
+				process_incoming_dhcp_packet(packet + currentOffset,
+				                             length - currentOffset,
+				                             ethernetHeader);
+			}
+			else if (tcpudpHeader->sourcePort == htons(DnsServerPort))
+			{
+				process_incoming_dns_packet(packet + currentOffset,
+				                            length - currentOffset);
+			}
+			break;
+		}
+		default:
+			break;
+	}
+	CHERIOT_HANDLER
+	Debug::log("Handling crash in the DNS resolver firewall thread");
+	if ((state & ResolverState::Ready) == ResolverState::Ready)
+	{
+		// There is nothing to do.
 
-			  // If we are in the `WaitingForDNSReply` state, the
-			  // crash will be just like loosing a UDP packet. The
-			  // user thread will retransmit and hopefully
-			  // everything will be OK next time. If not, the user
-			  // thread will eventually time out.
+		// If we are in the `WaitingForDNSReply` state, the
+		// crash will be just like loosing a UDP packet. The
+		// user thread will retransmit and hopefully
+		// everything will be OK next time. If not, the user
+		// thread will eventually time out.
 
-			  // If we are in the `ProcessingDNSReply` state, we
-			  // already processed the answer.  We probably crashed
-			  // while processing a packet that we were not
-			  // expecting anyways.
+		// If we are in the `ProcessingDNSReply` state, we
+		// already processed the answer.  We probably crashed
+		// while processing a packet that we were not
+		// expecting anyways.
 
-			  // If we are in the `Ready` state, we crashed while
-			  // processing a packet that we were not expecting
-			  // anyways.
-			  return;
-		  }
-		  // Otherwise, the crash happened while we were not
-		  // yet initialized. Recovering from such crashes is
-		  // left for future works. If we crashed while parsing
-		  // DHCP, recovery could be implemented by asking the
-		  // DHCP server to re-send the OFFER or the ACK. If we
-		  // crashed while parsing ARP, this could be done by
-		  // making another ARP query for the DNS server.
-		  Debug::log(
-		    "Crashed while the DNS resolver was not yet initialized. This "
-		    "may result in a non-functional resolver.");
-	  });
+		// If we are in the `Ready` state, we crashed while
+		// processing a packet that we were not expecting
+		// anyways.
+		return;
+	}
+	// Otherwise, the crash happened while we were not
+	// yet initialized. Recovering from such crashes is
+	// left for future works. If we crashed while parsing
+	// DHCP, recovery could be implemented by asking the
+	// DHCP server to re-send the OFFER or the ACK. If we
+	// crashed while parsing ARP, this could be done by
+	// making another ARP query for the DNS server.
+	Debug::log("Crashed while the DNS resolver was not yet initialized. This "
+	           "may result in a non-functional resolver.");
+	CHERIOT_END_HANDLER
 }
 
 /**
@@ -1028,126 +1023,112 @@ __cheri_compartment("DNS") int network_host_resolve(Timeout        *timeout,
                                                     bool            useIPv6,
                                                     NetworkAddress *outAddress)
 {
-	// Volatile since this is used by both the error handler and the main
-	// block.
-	volatile int ret = 0;
+	CHERIOT_DURING
+	// Do not check the `hostname` and `outAddress` pointers -
+	// this can only be called by the NetAPI, which is trusted.
+	// We assume that `hostname` is null-terminated - since this
+	// string is derived from the sealed connection capability,
+	// we check this through auditing.
+	size_t length = strlen(hostname);
+	// As per RFC 1035, the limit is 254 characters - 1 for the
+	// trailing dot.
+	size_t maxLength = 254;
+	if (hostname[length - 1] != '.')
+	{
+		maxLength--;
+	}
+	if ((length == 0) || (length > maxLength))
+	{
+		return -EINVAL;
+	}
 
-	on_error(
-	  [&]() {
-		  // Do not check the `hostname` and `outAddress` pointers -
-		  // this can only be called by the NetAPI, which is trusted.
-		  // We assume that `hostname` is null-terminated - since this
-		  // string is derived from the sealed connection capability,
-		  // we check this through auditing.
-		  size_t length = strlen(hostname);
-		  // As per RFC 1035, the limit is 254 characters - 1 for the
-		  // trailing dot.
-		  size_t maxLength = 254;
-		  if (hostname[length - 1] != '.')
-		  {
-			  maxLength--;
-		  }
-		  if ((length == 0) || (length > maxLength))
-		  {
-			  ret = -EINVAL;
-			  return;
-		  }
+	// Check if the DNS query packet template is fully
+	// initialized and not already performing a lookup. If not,
+	// we cannot make a DNS query.
+	while (timeout->may_block())
+	{
+		uint32_t expected = ResolverState::Ready;
+		if (!state.compare_exchange_strong(expected,
+		                                   ResolverState::WaitingForDNSReply))
+		{
+			Debug::log("DNS resolver is not ready or busy, waiting.");
+			state.wait(timeout, ResolverState::Ready);
+		}
+		else
+		{
+			break;
+		}
+	}
 
-		  // Check if the DNS query packet template is fully
-		  // initialized and not already performing a lookup. If not,
-		  // we cannot make a DNS query.
-		  while (timeout->may_block())
-		  {
-			  uint32_t expected = ResolverState::Ready;
-			  if (!state.compare_exchange_strong(
-			        expected, ResolverState::WaitingForDNSReply))
-			  {
-				  Debug::log("DNS resolver is not ready or busy, waiting.");
-				  state.wait(timeout, ResolverState::Ready);
-			  }
-			  else
-			  {
-				  break;
-			  }
-		  }
+	if (!timeout->may_block())
+	{
+		return -ETIMEDOUT;
+	}
 
-		  if (!timeout->may_block())
-		  {
-			  ret = -ETIMEDOUT;
-			  return;
-		  }
+	// Prepare the query answer buffer and ID for the new query.
+	memset(&queryResult, 0, sizeof(NetworkAddress));
+	queryID = rand();
 
-		  // Prepare the query answer buffer and ID for the new query.
-		  memset(&queryResult, 0, sizeof(NetworkAddress));
-		  queryID = rand();
+	// Zero-out in case we fail (DNS resolution is not on the critical path
+	// anyways).
+	outAddress->kind = NetworkAddress::AddressKindInvalid;
+	outAddress->ipv4 = 0;
 
-		  perform_dns_lookup(timeout, hostname, length, useIPv6);
+	perform_dns_lookup(timeout, hostname, length, useIPv6);
 
-		  if ((state == ResolverState::LookupFailed) && useIPv6)
-		  {
-			  // Try with IPv4 if the lookup failed.
-			  perform_dns_lookup(timeout, hostname, length, false);
-		  }
+	if ((state == ResolverState::LookupFailed) && useIPv6)
+	{
+		// Try with IPv4 if the lookup failed.
+		perform_dns_lookup(timeout, hostname, length, false);
+	}
 
-		  if (state == ResolverState::LookupFailed)
-		  {
-			  Debug::log("DNS request failed.");
-			  ret = -EAGAIN;
-		  }
-		  else if (state == ResolverState::LookupTimedOut)
-		  {
-			  Debug::log("DNS request timed out.");
-			  ret = -ETIMEDOUT;
-		  }
-		  else
-		  {
-			  // Copy the result of the lookup into the output
-			  // buffer.
-			  memcpy(outAddress, &queryResult, sizeof(NetworkAddress));
+	if (state == ResolverState::LookupFailed)
+	{
+		Debug::log("DNS request failed.");
+		return -EAGAIN;
+	}
+	if (state == ResolverState::LookupTimedOut)
+	{
+		Debug::log("DNS request timed out.");
+		return -ETIMEDOUT;
+	}
 
-			  if (queryResult.kind == NetworkAddress::AddressKindIPv4)
-			  {
-				  Debug::log("Resolved {} -> {}.{}.{}.{}",
-				             hostname,
-				             static_cast<int>(queryResult.ipv4) & 0xff,
-				             static_cast<int>(queryResult.ipv4 >> 8) & 0xff,
-				             static_cast<int>(queryResult.ipv4 >> 16) & 0xff,
-				             static_cast<int>(queryResult.ipv4 >> 24) & 0xff);
-			  }
-			  else
-			  {
-				  Debug::log(
-				    "Resolved {} -> {}:{}:{}:{}:{}:{}:{}:{}",
-				    hostname,
-				    *reinterpret_cast<uint16_t *>(&queryResult.ipv6[0]),
-				    *reinterpret_cast<uint16_t *>(&queryResult.ipv6[2]),
-				    *reinterpret_cast<uint16_t *>(&queryResult.ipv6[4]),
-				    *reinterpret_cast<uint16_t *>(&queryResult.ipv6[6]),
-				    *reinterpret_cast<uint16_t *>(&queryResult.ipv6[8]),
-				    *reinterpret_cast<uint16_t *>(&queryResult.ipv6[10]),
-				    *reinterpret_cast<uint16_t *>(&queryResult.ipv6[12]),
-				    *reinterpret_cast<uint16_t *>(&queryResult.ipv6[14]),
-				    *reinterpret_cast<uint16_t *>(&queryResult.ipv6[16]));
-			  }
-		  }
+	// Copy the result of the lookup into the output
+	// buffer.
+	memcpy(outAddress, &queryResult, sizeof(NetworkAddress));
 
-		  if (ret < 0)
-		  {
-			  outAddress->kind = NetworkAddress::AddressKindInvalid;
-			  outAddress->ipv4 = 0;
-		  }
+	if (queryResult.kind == NetworkAddress::AddressKindIPv4)
+	{
+		Debug::log("Resolved {} -> {}.{}.{}.{}",
+		           hostname,
+		           static_cast<int>(queryResult.ipv4) & 0xff,
+		           static_cast<int>(queryResult.ipv4 >> 8) & 0xff,
+		           static_cast<int>(queryResult.ipv4 >> 16) & 0xff,
+		           static_cast<int>(queryResult.ipv4 >> 24) & 0xff);
+	}
+	else
+	{
+		Debug::log("Resolved {} -> {}:{}:{}:{}:{}:{}:{}:{}",
+		           hostname,
+		           *reinterpret_cast<uint16_t *>(&queryResult.ipv6[0]),
+		           *reinterpret_cast<uint16_t *>(&queryResult.ipv6[2]),
+		           *reinterpret_cast<uint16_t *>(&queryResult.ipv6[4]),
+		           *reinterpret_cast<uint16_t *>(&queryResult.ipv6[6]),
+		           *reinterpret_cast<uint16_t *>(&queryResult.ipv6[8]),
+		           *reinterpret_cast<uint16_t *>(&queryResult.ipv6[10]),
+		           *reinterpret_cast<uint16_t *>(&queryResult.ipv6[12]),
+		           *reinterpret_cast<uint16_t *>(&queryResult.ipv6[14]),
+		           *reinterpret_cast<uint16_t *>(&queryResult.ipv6[16]));
+	}
 
-		  // We are now good to process the next lookup.
-		  state = ResolverState::Ready;
-	  },
-	  [&]() {
-		  Debug::log("Handling crash in the DNS resolver user thread");
-		  state            = ResolverState::Ready;
-		  outAddress->kind = NetworkAddress::AddressKindInvalid;
-		  outAddress->ipv4 = 0;
-		  ret              = -EINVAL;
-		  return;
-	  });
-
-	return ret;
+	// We are now good to process the next lookup.
+	state = ResolverState::Ready;
+	CHERIOT_HANDLER
+	Debug::log("Handling crash in the DNS resolver user thread");
+	state            = ResolverState::Ready;
+	outAddress->kind = NetworkAddress::AddressKindInvalid;
+	outAddress->ipv4 = 0;
+	return -EINVAL;
+	CHERIOT_END_HANDLER
+	return 0;
 }
