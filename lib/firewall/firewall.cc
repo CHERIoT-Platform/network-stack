@@ -1165,8 +1165,10 @@ bool ethernet_driver_start(std::atomic<uint8_t> *state)
 		// This is a restart, no need to actually reset the driver.
 		// Instead, just remove all firewall entries.
 		Debug::log("Network stack restart: clearing all entries.");
+#if CHERIOT_RTOS_OPTION_IPv6
 		EndpointsTable<IPv6Address>::instance().clear(IPProtocolNumber::UDP);
 		EndpointsTable<IPv6Address>::instance().clear(IPProtocolNumber::TCP);
+#endif
 		EndpointsTable<uint32_t>::instance().clear(IPProtocolNumber::UDP);
 		EndpointsTable<uint32_t>::instance().clear(IPProtocolNumber::TCP);
 		return true;
