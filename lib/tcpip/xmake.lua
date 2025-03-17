@@ -38,7 +38,14 @@ compartment("TCPIP")
   end)
   add_includedirs("../../include", ".", "../../third_party/freertos-plus-tcp/source/include")
   add_includedirs("../../third_party/freertos")
-  add_includedirs(path.join(sdkdir, "include/FreeRTOS-Compat"))
+  -- If the SDK path is relative, it's relative to the working directory, not
+  -- the script directory.  We need to adjust it to make sure that it points in
+  -- the right place.
+  if path.is_absolute(sdkdir) then
+    add_includedirs(path.join(sdkdir, "include/FreeRTOS-Compat"))
+  else
+    add_includedirs(path.join("$(curdir)", sdkdir, "include/FreeRTOS-Compat"))
+  end
   add_files("../../third_party/freertos/list.c")
   add_files("externs.c")
   add_files("FreeRTOS_IP_wrapper.c")
