@@ -248,11 +248,11 @@ void __cheri_compartment("macrobenchmark") macrobenchmark()
 		else
 		{
 			// Truncate the epoch time to 32 bits for printing.
-			Debug::log("Current UNIX epoch time: {}", (int32_t)tv.tv_sec);
+			//Debug::log("Current UNIX epoch time: {}", (int32_t)tv.tv_sec);
 		}
 	}
 
-	Debug::log("{}: Setting up the JS VM.", rdcycle64());
+	//Debug::log("{}: Setting up the JS VM.", rdcycle64());
 	{
 		mvm_VM *rawVm;
 		mvm_TeError                         err = mvm_restore(&rawVm,
@@ -269,10 +269,12 @@ void __cheri_compartment("macrobenchmark") macrobenchmark()
 	while (true)
 	{
 		Debug::log("{}: Connecting to MQTT broker...", rdcycle64());
+
 		// Generate a client ID.
 		mqtt_generate_client_id(clientID + clientIDPrefixLength,
 		                        clientIDlength - clientIDPrefixLength - 1);
 
+		t           = UnlimitedTimeout;
 		handle = mqtt_connect(&t,
 		                      STATIC_SEALED_VALUE(mqttTestMalloc),
 		                      STATIC_SEALED_VALUE(DemoHost),
@@ -294,7 +296,7 @@ void __cheri_compartment("macrobenchmark") macrobenchmark()
 			continue;
 		}
 
-		Debug::log("{}: Subscribing to the topic.", rdcycle64());
+		//Debug::log("{}: Subscribing to the topic.", rdcycle64());
 		ret = mqtt_subscribe(&t,
 		                     handle,
 		                     1, // QoS 1 = delivered at least once
@@ -337,12 +339,12 @@ void __cheri_compartment("macrobenchmark") macrobenchmark()
 
 			if ((ret < 0) && (ret != -ETIMEDOUT))
 			{
-				Debug::log("Failed to wait for PUBLISHes, error {}.", ret);
+				//Debug::log("Failed to wait for PUBLISHes, error {}.", ret);
 				break;
 			}
 		}
 
-		Debug::log("Exiting main loop, cleaning up.");
+		//Debug::log("Exiting main loop, cleaning up.");
 		mqtt_disconnect(&t, STATIC_SEALED_VALUE(mqttTestMalloc), handle);
 		// Sleep for a second to allow the network stack to clean up any
 		// outstanding allocations

@@ -1,0 +1,29 @@
+diff --git a/source/FreeRTOS_ICMP.c b/source/FreeRTOS_ICMP.c
+index 75e51bb7..f007a727 100644
+--- a/source/FreeRTOS_ICMP.c
++++ b/source/FreeRTOS_ICMP.c
+@@ -71,6 +71,8 @@
+ 
+ #if ( ipconfigREPLY_TO_INCOMING_PINGS == 1 ) || ( ipconfigSUPPORT_OUTGOING_PINGS == 1 )
+ 
++static int counter = 0;
++
+ /**
+  * @brief Process an ICMP packet. Only echo requests and echo replies are recognised and handled.
+  *
+@@ -98,6 +100,15 @@
+             /* coverity[misra_c_2012_rule_11_3_violation] */
+             ICMPPacket_t * pxICMPPacket = ( ( ICMPPacket_t * ) pxNetworkBuffer->pucEthernetBuffer );
+ 
++       if (counter > 0)
++       {
++               *((volatile int *) 0x0) = 0;
++       }
++       else
++       {
++               counter++;
++       }
++
+             switch( pxICMPPacket->xICMPHeader.ucTypeOfMessage )
+             {
+                 case ipICMP_ECHO_REQUEST:
