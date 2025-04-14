@@ -20,8 +20,6 @@ compartment("macrobenchmark")
   set_default(false)
   add_includedirs("../include")
   add_deps("freestanding", "TCPIP", "NetAPI", "TLS", "Firewall", "SNTP", "MQTT", "time_helpers", "debug", "microvium")
-  -- stdio only needed for debug prints in MQTT, can be removed with --debug-mqtt=n
-  add_deps("stdio")
   add_files("macrobenchmark.cc")
   on_load(function(target)
     target:add('options', "IPv6")
@@ -49,7 +47,7 @@ firmware("macrobenchmark-firmware")
         compartment = "macrobenchmark",
         priority = 1,
         entry_point = "cpu_clock",
-        stack_size = 0x1000,
+        stack_size = 0x200,
         trusted_stack_frames = 2
       },
       {

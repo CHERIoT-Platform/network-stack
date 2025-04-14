@@ -163,7 +163,7 @@ namespace
 		std::string_view topic{topicName, topicNameLength};
 		if (topic == LedTopic)
 		{
-			Debug::log("{}: Received an LED publish.", rdcycle64());
+			Debug::log("{}: Received an LED publish ({}).", rdcycle64(), thread_elapsed_cycles_idle());
 
 			// Get a handle to the JavaScript `callback` function.
 			mvm_Value callback;
@@ -223,14 +223,14 @@ void __cheri_compartment("macrobenchmark") macrobenchmark()
 
 	MMIO_CAPABILITY(GPIO, gpio_led0)->enable_all();
 
-	Debug::log("{}: Starting the network stack.", rdcycle64());
+	Debug::log("{}: Starting the network stack ({}).", rdcycle64(), thread_elapsed_cycles_idle());
 	printCyclesGuard = 1;
 	futex_wake(&printCyclesGuard, 1);
 	network_start();
 
 	// SNTP must be run for the TLS stack to be able to check certificate
 	// dates.
-	Debug::log("{}: Fetching NTP time.", rdcycle64());
+	Debug::log("{}: Fetching NTP time ({}).", rdcycle64(), thread_elapsed_cycles_idle());
 	t = Timeout{MS_TO_TICKS(5000)};
 	while (sntp_update(&t) != 0)
 	{
@@ -268,7 +268,7 @@ void __cheri_compartment("macrobenchmark") macrobenchmark()
 	// Macrobenchmark loop.
 	while (true)
 	{
-		Debug::log("{}: Connecting to MQTT broker...", rdcycle64());
+		Debug::log("{}: Connecting to MQTT broker ({}).", rdcycle64(), thread_elapsed_cycles_idle());
 
 		// Generate a client ID.
 		mqtt_generate_client_id(clientID + clientIDPrefixLength,
@@ -329,7 +329,7 @@ void __cheri_compartment("macrobenchmark") macrobenchmark()
 		}
 
 		Timeout coolDown{0};
-		Debug::log("{}: Waiting for a PUBLISH.", rdcycle64());
+		Debug::log("{}: Waiting for a PUBLISH ({}).", rdcycle64(), thread_elapsed_cycles_idle());
 		while (true)
 		{
 			// Check for PUBLISHes

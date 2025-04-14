@@ -13,6 +13,7 @@
 #include <vector>
 
 using DebugErrorHandler = ConditionalDebug<false, "TCP/IP Stack error handler">;
+using DebugErrorHandlergMacroBenchmark = ConditionalDebug<true, "Macrobenchmark">;
 using CHERI::Capability;
 
 /**
@@ -149,7 +150,7 @@ extern "C" void reset_network_stack_state(bool isIpThread)
 
 	/// Phase 2: Unblock and evacuate all threads from the network stack
 	/// (apart from the network thread).
-	DebugErrorHandler::log("Resetting the network stack.");
+	DebugErrorHandlerMacroBenchmark::log("{}: Resetting the network stack ({}).", rdcycle64(), thread_elapsed_cycles_idle());
 
 	// We need to acquire the sealed sockets lock because we do not want
 	// the sealed sockets list to be in an inconsistent state when we go
