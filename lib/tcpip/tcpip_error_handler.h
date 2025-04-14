@@ -13,7 +13,7 @@
 #include <vector>
 
 using DebugErrorHandler = ConditionalDebug<false, "TCP/IP Stack error handler">;
-using DebugErrorHandlergMacroBenchmark = ConditionalDebug<true, "Macrobenchmark">;
+using DebugErrorHandlerMacroBenchmark = ConditionalDebug<false, "Macrobenchmark">;
 using CHERI::Capability;
 
 /**
