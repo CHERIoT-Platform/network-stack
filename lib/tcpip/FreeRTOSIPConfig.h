@@ -101,6 +101,13 @@
 #define pvPortMalloc(x) malloc(x)
 #define vPortFree(x) free(x)
 
+// Zero indicates that the checksum is omitted.  This is common for link-local
+// things such as DHCP offers (where they can rely on the Ethernet checksum to
+// provide marginally better integrity guarantees).  With this not set, the
+// TCP/IP stack will decide to drop DHCP Offer packets from a load of
+// consumer-grade routers.
+#define ipconfigUDP_PASS_ZERO_CHECKSUM_PACKETS 1
+
 // #define DEBUG_FREERTOS_TCP
 #ifdef DEBUG_FREERTOS_TCP
 #	define ipconfigHAS_DEBUG_PRINTF 1
