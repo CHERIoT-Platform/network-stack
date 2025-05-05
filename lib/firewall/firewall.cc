@@ -1186,6 +1186,22 @@ bool ethernet_driver_start(std::atomic<uint8_t> *state)
 	auto &ethernet = lazy_network_interface();
 	ethernet.mac_address_set(mac_address());
 	initialize_dns_resolver(firewall_mac_address_get());
+
+	/*
+	 * If the interface link isn't ready, wait for any IRQ.  Acknowledging
+	 * it can't hurt, since the driver's thread's about to go poll for frames.
+	 */
+	{
+		uint32_t firstInterrupt = ethernet.receive_interrupt_value();
+		if (!ethernet.phy_link_status())
+		{
+			Debug::log("Link not ready; wait for first IRQ");
+			Timeout t{UnlimitedTimeout};
+			ethernet.receive_interrupt_complete(&t, firstInterrupt);
+			Debug::log("Link ready? {}", ethernet.phy_link_status());
+		}
+	}
+
 	// Poke the barrier and make the driver thread start.
 	barrier = 2;
 	barrier.notify_one();
