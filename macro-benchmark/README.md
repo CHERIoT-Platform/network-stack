@@ -3,7 +3,7 @@ FreeRTOS+TCP must be instrumented with the "Ping of the death" patch, in
 
 Must be compiled with:
 ```
-xmake config --sdk=/cheriot-tools/ --board=ibex-arty-a7-100 --scheduler-accounting=y --IPv6=n
+xmake config --sdk=/cheriot-tools/ --board=ibex-arty-a7-100 --scheduler-accounting=y --IPv6=n --network-force-non-unique-mac=y
 xmake
 ../../cheriot-rtos/scripts/ibex-build-firmware.sh build/cheriot/cheriot/release/macrobenchmark-firmware
 ```
