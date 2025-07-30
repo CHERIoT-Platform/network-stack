@@ -4,7 +4,11 @@ FreeRTOS+TCP must be instrumented with the "Ping of the death" patch, in
 Must be compiled with:
 ```
 xmake config --sdk=/cheriot-tools/ --board=ibex-arty-a7-100 --scheduler-accounting=y --IPv6=n
+xmake
+../../cheriot-rtos/scripts/ibex-build-firmware.sh build/cheriot/cheriot/release/macrobenchmark-firmware
 ```
+
+Then load it onto the FPGA with minicom. See screencast.
 
 Handy command to publish to the MQTT topic:
 ```
