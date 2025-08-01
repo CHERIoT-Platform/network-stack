@@ -4,6 +4,7 @@
 #pragma once
 
 #include "../firewall/protocol-headers.hh"
+#include "endianness.hh"
 
 /**
  * ARP header.
@@ -68,7 +69,7 @@ uint16_t compute_ipv4_checksum(const uint8_t *header, uint16_t length)
 
 	while (length > 1)
 	{
-		sum += *reinterpret_cast<const uint16_t *>(header);
+		sum += read_unaligned<uint16_t>(header);
 		header += 2;
 		length -= 2;
 	}
