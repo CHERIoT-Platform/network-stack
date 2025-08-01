@@ -1,6 +1,7 @@
 // Copyright SCI Semiconductor and CHERIoT Contributors.
 // SPDX-License-Identifier: MIT
 
+#include "cdefs.h"
 #include <stdint.h>
 
 uint16_t constexpr ntohs(uint16_t value)
@@ -23,4 +24,12 @@ uint16_t constexpr htons(uint16_t value)
 	  value
 #endif
 	    ;
+}
+
+template<class T>
+__always_inline T read_unaligned(const void *p)
+{
+	T val;
+	__builtin_memcpy(&val, p, sizeof(T));
+	return val;
 }
