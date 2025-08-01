@@ -808,12 +808,12 @@ namespace
 		if (isIPv6)
 		{
 			queryResult.kind = NetworkAddress::AddressKindIPv6;
-			uint16_t *ipv6 = reinterpret_cast<uint16_t *>(&queryResult.ipv6[0]);
+			uint8_t *ipv6    = queryResult.ipv6;
 			// Enforce machine byte order by block of 2 byte.
 			for (int i = 0; i < 8; i++)
 			{
-				*ipv6++ = ntohs(
-				  *reinterpret_cast<uint16_t *>(dnsPacket + currentOffset));
+				*ipv6++ =
+				  ntohs(read_unaligned<uint16_t>(dnsPacket + currentOffset));
 				currentOffset += 2;
 			}
 		}
@@ -1110,15 +1110,15 @@ __cheri_compartment("DNS") int network_host_resolve(Timeout        *timeout,
 	{
 		Debug::log("Resolved {} -> {}:{}:{}:{}:{}:{}:{}:{}",
 		           hostname,
-		           *reinterpret_cast<uint16_t *>(&queryResult.ipv6[0]),
-		           *reinterpret_cast<uint16_t *>(&queryResult.ipv6[2]),
-		           *reinterpret_cast<uint16_t *>(&queryResult.ipv6[4]),
-		           *reinterpret_cast<uint16_t *>(&queryResult.ipv6[6]),
-		           *reinterpret_cast<uint16_t *>(&queryResult.ipv6[8]),
-		           *reinterpret_cast<uint16_t *>(&queryResult.ipv6[10]),
-		           *reinterpret_cast<uint16_t *>(&queryResult.ipv6[12]),
-		           *reinterpret_cast<uint16_t *>(&queryResult.ipv6[14]),
-		           *reinterpret_cast<uint16_t *>(&queryResult.ipv6[16]));
+		           read_unaligned<uint16_t>(&queryResult.ipv6[0]),
+		           read_unaligned<uint16_t>(&queryResult.ipv6[2]),
+		           read_unaligned<uint16_t>(&queryResult.ipv6[4]),
+		           read_unaligned<uint16_t>(&queryResult.ipv6[6]),
+		           read_unaligned<uint16_t>(&queryResult.ipv6[8]),
+		           read_unaligned<uint16_t>(&queryResult.ipv6[10]),
+		           read_unaligned<uint16_t>(&queryResult.ipv6[12]),
+		           read_unaligned<uint16_t>(&queryResult.ipv6[14]),
+		           read_unaligned<uint16_t>(&queryResult.ipv6[16]));
 	}
 
 	// We are now good to process the next lookup.
