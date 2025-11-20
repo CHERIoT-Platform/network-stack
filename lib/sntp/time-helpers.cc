@@ -17,12 +17,18 @@ int timeval_calculate(struct timeval *__restrict tp)
 	struct timeval time;
 	uint64_t       cycles;
 	uint32_t       epoch;
+	// Is the epoch currently updating?  This is factored out to a separate
+	// variable because the clang static analyser does not spot that the two
+	// expressions on epoch are identical and so can't be both true and false
+	// at the same time.
+	bool epochIsUpdating;
 	do
 	{
-		epoch = atomic_load(&sntpTime->updatingEpoch);
+		epoch           = atomic_load(&sntpTime->updatingEpoch);
+		epochIsUpdating = epoch & 0x1;
 		// If the low bit is set then the time is being updated.  Wait for the
 		// update to finish.
-		if (epoch & 0x1)
+		if (epochIsUpdating)
 		{
 			Debug::log("Waiting for SNTP update");
 			// Wait for the update to finish
@@ -32,7 +38,7 @@ int timeval_calculate(struct timeval *__restrict tp)
 		time.tv_sec  = sntpTime->seconds;
 		time.tv_usec = sntpTime->microseconds;
 		cycles       = sntpTime->cycles;
-	} while ((epoch & 0x1) || epoch != atomic_load(&sntpTime->updatingEpoch));
+	} while (epochIsUpdating || epoch != atomic_load(&sntpTime->updatingEpoch));
 	Debug::log(
 	  "Got raw time {}.{}", static_cast<uint64_t>(time.tv_sec), time.tv_usec);
 	uint64_t now = rdcycle64();
