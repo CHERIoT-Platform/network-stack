@@ -84,7 +84,7 @@ namespace
 	/**
 	 * Returns the key with which SealedSocket instances are sealed.
 	 */
-	__always_inline SKey socket_key()
+	__always_inline auto socket_key()
 	{
 		return STATIC_SEALING_TYPE(Socket);
 	}

@@ -79,7 +79,7 @@ namespace
 #endif
 	  ;
 
-	__always_inline SKey tls_key()
+	__always_inline auto tls_key()
 
 	{
 		return STATIC_SEALING_TYPE(TLSConnection);

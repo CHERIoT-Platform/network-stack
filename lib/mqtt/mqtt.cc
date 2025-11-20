@@ -109,7 +109,7 @@ namespace
 	/**
 	 * Helper to return the unsealing key for CHERIoT MQTT objects.
 	 */
-	__always_inline SKey mqtt_key()
+	__always_inline auto mqtt_key()
 
 	{
 		return STATIC_SEALING_TYPE(MQTTHandle);

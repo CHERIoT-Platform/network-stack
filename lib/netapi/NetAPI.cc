@@ -29,7 +29,7 @@ namespace
 	/**
 	 * Returns the sealing key used for a ConnectionCapability.
 	 */
-	__always_inline SKey host_capability_key()
+	__always_inline auto host_capability_key()
 	{
 		return STATIC_SEALING_TYPE(NetworkConnectionKey);
 	}
@@ -37,7 +37,7 @@ namespace
 	/**
 	 * Returns the sealing key used for a server port.
 	 */
-	__always_inline SKey bind_capability_key()
+	__always_inline auto bind_capability_key()
 	{
 		return STATIC_SEALING_TYPE(NetworkBindKey);
 	}
