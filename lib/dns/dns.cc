@@ -55,7 +55,7 @@ namespace
 	 * nor the firewall support it. When the limitation is addressed for
 	 * the firewall, a similar solution can be applied here.
 	 */
-	struct FullDNSPacket
+	struct alignas(2) FullDNSPacket
 	{
 		EthernetHeader ethernet;
 		IPv4Header     ipv4;
@@ -192,6 +192,7 @@ namespace
 	 * 254 is the maximum length of the hostname (RFC 1035) and 6 = 2
 	 * (needed for the encoding of the hostname) + 2 (qtype) + 2 (qclass)
 	 */
+	[[gnu::aligned(8)]]
 	static uint8_t packetBuffer[sizeof(FullDNSPacket) + 254 + 6];
 	static_assert(sizeof(packetBuffer) > sizeof(FullARPPacket));
 
@@ -1117,8 +1118,7 @@ __cheri_compartment("DNS") int network_host_resolve(Timeout        *timeout,
 		           *reinterpret_cast<uint16_t *>(&queryResult.ipv6[8]),
 		           *reinterpret_cast<uint16_t *>(&queryResult.ipv6[10]),
 		           *reinterpret_cast<uint16_t *>(&queryResult.ipv6[12]),
-		           *reinterpret_cast<uint16_t *>(&queryResult.ipv6[14]),
-		           *reinterpret_cast<uint16_t *>(&queryResult.ipv6[16]));
+		           *reinterpret_cast<uint16_t *>(&queryResult.ipv6[14]));
 	}
 
 	// We are now good to process the next lookup.

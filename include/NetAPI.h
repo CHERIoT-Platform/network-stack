@@ -20,7 +20,7 @@ struct NetworkAddress
 		/// IPv4 addresses are 32 bits.  Stored in network byte order.
 		uint32_t ipv4;
 		/// IPv6 addresses are 16 bytes.  Stored in network byte order.
-		uint8_t ipv6[16];
+		uint8_t _Alignas(uint32_t) ipv6[16];
 	};
 	/// The kind of address that this holds.
 	enum
