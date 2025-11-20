@@ -1,10 +1,10 @@
 #include "timeout.h"
 #include <NetAPI.h>
+#if __has_include(<allocator.h>)
+#	include <allocator.h>
+#endif
 #include <debug.hh>
-#include <errno.h>
 #include <fail-simulator-on-error.h>
-#include <memory>
-#include <string_view>
 #include <thread.h>
 #include <tick_macros.h>
 
@@ -64,7 +64,7 @@ void __cheri_compartment("http_server_example") example()
 		Debug::log("Creating a listening socket.");
 		Timeout unlimited{UnlimitedTimeout};
 		auto    socket = network_socket_listen_tcp(
-		     &unlimited, TEST_MALLOC, STATIC_SEALED_VALUE(HTTPPort));
+          &unlimited, TEST_MALLOC, STATIC_SEALED_VALUE(HTTPPort));
 
 		if (!Capability{socket}.is_valid())
 		{

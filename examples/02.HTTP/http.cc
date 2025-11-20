@@ -1,4 +1,7 @@
 #include "timeout.h"
+#if __has_include(<allocator.h>)
+#	include <allocator.h>
+#endif
 #include <NetAPI.h>
 #include <debug.hh>
 #include <errno.h>
@@ -26,7 +29,7 @@ void __cheri_compartment("http_example") example()
 	Debug::log("Creating connection");
 	Timeout unlimited{UnlimitedTimeout};
 	auto    socket = network_socket_connect_tcp(
-	     &unlimited, TEST_MALLOC, CONNECTION_CAPABILITY(ExampleCom));
+      &unlimited, TEST_MALLOC, CONNECTION_CAPABILITY(ExampleCom));
 
 	static char      message[] = "GET / HTTP/1.1\r\n"
 	                             "Host: example.com\r\n"

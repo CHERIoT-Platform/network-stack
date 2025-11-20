@@ -1,4 +1,7 @@
 #include <NetAPI.h>
+#if __has_include(<allocator.h>)
+#	include <allocator.h>
+#endif
 #include <debug.hh>
 #include <errno.h>
 #include <fail-simulator-on-error.h>
@@ -56,10 +59,10 @@ void __cheri_compartment("https_example") example()
 	Debug::log("Creating TLS connection");
 	Timeout unlimited{UnlimitedTimeout};
 	auto    tlsSocket = tls_connection_create(&unlimited,
-	                                          TEST_MALLOC,
-	                                          CONNECTION_CAPABILITY(ExampleComTLS),
-	                                          TAs,
-	                                          TAs_NUM);
+                                           TEST_MALLOC,
+                                           CONNECTION_CAPABILITY(ExampleComTLS),
+                                           TAs,
+                                           TAs_NUM);
 	Debug::log("TLS socket: {}", tlsSocket);
 
 	Debug::log("Starting HTTP test");
