@@ -130,13 +130,15 @@ typedef CHERI_SEALED(struct SealedSocket *) Socket;
  */
 #define DECLARE_AND_DEFINE_CONNECTION_CAPABILITY(                              \
   name, authorisedHost, portNumber, connectionType)                            \
+	struct ConnectionCapabilityState##__COUNTER__                              \
+	{                                                                          \
+		ConnectionType type;                                                   \
+		uint16_t       port;                                                   \
+		size_t         nameLength;                                             \
+		const char     hostname[sizeof(authorisedHost)];                       \
+	};                                                                         \
 	DECLARE_AND_DEFINE_STATIC_SEALED_VALUE_EXPLICIT_TYPE(                      \
-	  struct {                                                                 \
-		  ConnectionType type;                                                 \
-		  uint16_t       port;                                                 \
-		  size_t         nameLength;                                           \
-		  const char     hostname[sizeof(authorisedHost)];                     \
-	  },                                                                       \
+	  struct ConnectionCapabilityState##__COUNTER__,                           \
 	  ConnectionCapabilityState,                                               \
 	  NetAPI,                                                                  \
 	  NetworkConnectionKey,                                                    \
