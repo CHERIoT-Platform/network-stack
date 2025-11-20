@@ -2,6 +2,9 @@
 // SPDX-License-Identifier: MIT
 
 #include <NetAPI.h>
+#if __has_include(<allocator.h>)
+#	include <allocator.h>
+#endif
 #include <cheri.hh>
 #include <core_mqtt.h>
 #include <debug.hh>
