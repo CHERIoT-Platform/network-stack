@@ -3,6 +3,9 @@
 
 #include "../../third_party/BearSSL/inc/bearssl.h"
 #include <NetAPI.h>
+#if __has_include(<allocator.h>)
+#	include <allocator.h>
+#endif
 #include <debug.hh>
 #include <function_wrapper.hh>
 #include <locks.hh>
