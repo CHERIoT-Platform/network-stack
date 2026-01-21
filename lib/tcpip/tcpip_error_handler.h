@@ -39,6 +39,7 @@ extern struct RecursiveMutexState __CriticalSectionFlagLock;
 extern struct RecursiveMutexState __SuspendFlagLock;
 extern QueueHandle_t              xNetworkEventQueue;
 extern FlagLockPriorityInherited  sealedSocketsListLock;
+extern uint32_t                   threadEntryGuard;
 
 /**
  * Restart the network stack. See documentation in `startup.cc`
@@ -141,6 +142,22 @@ extern "C" void reset_network_stack_state(bool isIpThread)
 			DebugErrorHandler::log("The network thread crashed while "
 			                       "restarting. This may be unrecoverable.");
 		}
+		else if (isIpThread)
+		{
+			// Reset the IP thread entry guard. We only want to do
+			// this in the case of a user thread crash, and we will
+			// only ever reach this line if a user thread crashed
+			// first (causing the network thread to crash).
+			//
+			// This is guaranteed not to race with
+			// `ip_thread_start` since that function will only get
+			// called after we return.
+			//
+			// For more information, look at the other place where
+			// we reset `threadEntryGuard` in
+			// `FreeRTOS_IP_wrapper.c`.
+			threadEntryGuard = 0;
+		}
 
 		// Another instance of the error handler is running, do not do
 		// anything.
@@ -173,8 +190,13 @@ extern "C" void reset_network_stack_state(bool isIpThread)
 	// ensure that threads waiting on them exit the compartment. We will
 	// empty the list later.
 	//
-	// FIXME This should be made more resilient against corruption of the
-	// linked list by checking all pointers.
+	// This is designed to be resilient to a corrupted socket list. If the
+	// socket list somehow ended up corrupted, we would still manage to
+	// reset, albeit slower. In the case of socket locks, we would need to
+	// wait up to 500ms for waiters to wake up, check the network stack
+	// state machine, and bail out.  For event groups, we would need to
+	// wait 500ms too, until waiters try to re-acquire the lock and crash
+	// because it was freed through the heap-free-all below.
 	DebugErrorHandler::log(
 	  "Setting socket locks for destruction and destroying event groups.");
 	if (!sealedSockets.is_empty())
@@ -182,36 +204,49 @@ extern "C" void reset_network_stack_state(bool isIpThread)
 		auto *cell = sealedSockets.first();
 		while (cell != &sealedSockets.sentinel)
 		{
+			if (!Capability{cell}.is_valid())
+			{
+				DebugErrorHandler::log(
+				  "Ignoring corrupted cell {} in the socket list.", cell);
+				// We have to stop here because we cannot
+				// retrieve the next cell from a corrupted
+				// cell.
+				break;
+			}
+
 			struct SealedSocket *socket = SealedSocket::from_ring(cell);
 
-			FlagLockPriorityInherited *lock = &(socket->socketLock);
-			if (Capability{lock}.is_valid())
+			if (Capability{socket}.is_valid())
 			{
-				DebugErrorHandler::log("Destroying socket lock {}.", lock);
-				lock->upgrade_for_destruction();
-			}
-			else
-			{
-				DebugErrorHandler::log("Ignoring corrupted socket lock {}.",
-				                       lock);
-			}
+				FlagLockPriorityInherited *lock = &(socket->socketLock);
+				if (Capability{lock}.is_valid())
+				{
+					DebugErrorHandler::log("Destroying socket lock {}.", lock);
+					lock->upgrade_for_destruction();
+				}
+				else
+				{
+					DebugErrorHandler::log("Ignoring corrupted socket lock {}.",
+					                       lock);
+				}
 
-			FreeRTOS_Socket_t *s = socket->socket;
-			if (Capability{s}.is_valid() &&
-			    Capability{s->xEventGroup}.is_valid())
-			{
-				DebugErrorHandler::log("Destroying event group {}.",
-				                       s->xEventGroup);
-				eventgroup_destroy_force(MALLOC_CAPABILITY, s->xEventGroup);
+				FreeRTOS_Socket_t *s = socket->socket;
+				if (Capability{s}.is_valid() &&
+				    Capability{s->xEventGroup}.is_valid())
+				{
+					DebugErrorHandler::log("Destroying event group {}.",
+					                       s->xEventGroup);
+					eventgroup_destroy_force(MALLOC_CAPABILITY, s->xEventGroup);
+				}
+				else
+				{
+					DebugErrorHandler::log("Ignoring corrupted socket {}.", s);
+				}
 			}
 			else
 			{
-				// The memory of the event group will still be
-				// freed later with the `heap_free_all`,
-				// however we run the risk to have the IP
-				// thread stuck on the event queue which we
-				// didn't manage to destroy.
-				DebugErrorHandler::log("Ignoring corrupted socket {}.", s);
+				DebugErrorHandler::log(
+				  "Ignoring corrupted socket {} in the socket list.", socket);
 			}
 
 			cell = cell->cell_next();
