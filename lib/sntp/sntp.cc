@@ -64,6 +64,11 @@ namespace
 	uint32_t nextAddress;
 
 	/**
+	 * Mutex for synchronisation when required.
+	 */
+	FlagLockPriorityInherited lock;
+
+	/**
 	 * Create a socket and authorise it to connect to the NTP pool.
 	 */
 	int socket_create(NetworkContext *context)
@@ -332,9 +337,8 @@ namespace
 	 */
 	int ntp_time_update(Timeout *timeout)
 	{
-		static FlagLockPriorityInherited lock;
-		NetworkContext                   udpContext{timeout, nullptr};
-		SntpStatus_t                     status;
+		NetworkContext udpContext{timeout, nullptr};
+		SntpStatus_t   status;
 		// Use the do {...} while {false} to deduplicate
 		// error-handling.
 		do
@@ -448,4 +452,24 @@ int sntp_update(Timeout *timeout)
 		return -EINVAL;
 	}
 	return ntp_time_update(timeout);
+}
+
+int sntp_time_set_unix(Timeout *timeout, time_t time)
+{
+	if (!check_timeout_pointer(timeout))
+	{
+		Debug::log("Invalid timeout pointer: {}", timeout);
+		return -EINVAL;
+	}
+
+	if (LockGuard g{lock, timeout})
+	{
+		time_t ntpTime        = time + SNTP_TIME_AT_UNIX_EPOCH_SECS;
+		currentTime.seconds   = ntpTime & 0xffffffff;
+		currentTime.fractions = 0;
+		ntpEra                = ntpTime >> 32;
+		unix_time_update(rdcycle64());
+		return 0;
+	}
+	return -ETIMEDOUT;
 }

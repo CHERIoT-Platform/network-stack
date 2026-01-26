@@ -43,6 +43,13 @@ _Static_assert(sizeof(struct SynchronisedTime) == 24,
 int __cheri_compartment("SNTP") sntp_update(Timeout *timeout);
 
 /**
+ * Set the time to given Unix time, without doing a network
+ * request. Useful for setting the time from RTC on boot. Returns zero on
+ * success, negative on failure (e.g. timeout acquiring lock).
+ */
+int __cheri_compartment("SNTP") sntp_time_set_unix(Timeout *t, time_t time);
+
+/**
  * Returns a read-only pointer to the synchronised time structure.  This can be
  * used to get the current time (modulo clock drift) without a
  * cross-compartment call.
