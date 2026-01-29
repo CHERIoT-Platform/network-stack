@@ -335,6 +335,7 @@ namespace
 					Debug::log("ARP packet tells us the MAC of the gateway.");
 					memcpy(dnsServerMAC.data(), &arpHeader->sha, 6);
 					state |= ResolverState::DNSServerMACSet;
+					state.notify_all();
 				}
 				else if (arpHeader->spa == dnsServerIP)
 				{
@@ -342,6 +343,7 @@ namespace
 					  "ARP packet tells us the MAC of the DNS server.");
 					memcpy(dnsServerMAC.data(), &arpHeader->sha, 6);
 					state |= ResolverState::DNSServerMACSet;
+					state.notify_all();
 				}
 			}
 		}
@@ -502,6 +504,8 @@ namespace
 
 			dnsServerIP = extractedDnsServerIP;
 			state |= ResolverState::ServerIPSet;
+			// notify is at end of messageType block
+
 			Debug::log("The DNS server IP is {}.{}.{}.{}",
 			           static_cast<int>(dnsServerIP) & 0xff,
 			           static_cast<int>(dnsServerIP >> 8) & 0xff,
@@ -530,6 +534,7 @@ namespace
 				           "their MAC.");
 				memcpy(dnsServerMAC.data(), &ethernetHeader->source, 6);
 				state |= ResolverState::DNSServerMACSet;
+				// notify is at end of messageType block
 			}
 			else if ((dnsServerIP & extractedMask) ==
 			         (gatewayIP & extractedMask))
@@ -562,6 +567,7 @@ namespace
 					           "their MAC.");
 					memcpy(dnsServerMAC.data(), &ethernetHeader->source, 6);
 					state |= ResolverState::DNSServerMACSet;
+					// notify is at end of messageType block
 				}
 				else
 				{
@@ -575,6 +581,8 @@ namespace
 					send_arp_request(gatewayIP);
 				}
 			}
+			// there's been at least one write to state above
+			state.notify_all();
 		}
 		else if (messageType == DhcpAckMessageType)
 		{
@@ -587,6 +595,7 @@ namespace
 			           static_cast<int>(dhcpHeader->yiaddr >> 24) & 0xff);
 			deviceIP = dhcpHeader->yiaddr;
 			state |= ResolverState::DeviceIPSet;
+			state.notify_all();
 		}
 	}
 
@@ -907,6 +916,7 @@ __cheri_compartment("DNS") void initialize_dns_resolver(uint8_t *macAddress)
 	Debug::log("Initializing the DNS resolver.");
 	memcpy(deviceMAC.data(), macAddress, 6);
 	state |= ResolverState::DeviceMACSet;
+	state.notify_all(); // probably unnecessary but does no harm
 }
 
 /**
@@ -1052,7 +1062,9 @@ __cheri_compartment("DNS") int network_host_resolve(Timeout        *timeout,
 		                                   ResolverState::WaitingForDNSReply))
 		{
 			Debug::log("DNS resolver is not ready or busy, waiting.");
-			state.wait(timeout, ResolverState::Ready);
+			// wait for the futex to change from the non-ready state we just
+			// loaded
+			state.wait(timeout, expected);
 		}
 		else
 		{
@@ -1085,11 +1097,15 @@ __cheri_compartment("DNS") int network_host_resolve(Timeout        *timeout,
 	if (state == ResolverState::LookupFailed)
 	{
 		Debug::log("DNS request failed.");
+		state = ResolverState::Ready;
+		state.notify_all();
 		return -EAGAIN;
 	}
 	if (state == ResolverState::LookupTimedOut)
 	{
 		Debug::log("DNS request timed out.");
+		state = ResolverState::Ready;
+		state.notify_all();
 		return -ETIMEDOUT;
 	}
 
@@ -1123,6 +1139,7 @@ __cheri_compartment("DNS") int network_host_resolve(Timeout        *timeout,
 
 	// We are now good to process the next lookup.
 	state = ResolverState::Ready;
+	state.notify_all();
 	CHERIOT_HANDLER
 	Debug::log("Handling crash in the DNS resolver user thread");
 	state            = ResolverState::Ready;
