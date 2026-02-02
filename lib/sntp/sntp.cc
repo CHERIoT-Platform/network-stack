@@ -35,7 +35,7 @@ using Debug = ConditionalDebug<false, "NTP Client">;
  *
  * Note: In real use, this should be an NTP server controlled by the user.
  */
-DECLARE_AND_DEFINE_CONNECTION_CAPABILITY(NtpPool,
+DECLARE_AND_DEFINE_CONNECTION_CAPABILITY(ntpPool,
                                          "pool.ntp.org",
                                          123,
                                          ConnectionType::ConnectionTypeUDP);
@@ -83,7 +83,7 @@ namespace
 			return -ETIMEDOUT;
 		}
 		auto address = network_socket_udp_authorise_host(
-		  context->timeout, socket, CONNECTION_CAPABILITY(NtpPool));
+		  context->timeout, socket, CONNECTION_CAPABILITY(ntpPool));
 		if (address.kind == NetworkAddress::AddressKindInvalid)
 		{
 			Timeout unlimited{UnlimitedTimeout};
