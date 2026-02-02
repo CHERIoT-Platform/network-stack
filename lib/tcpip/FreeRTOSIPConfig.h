@@ -125,6 +125,8 @@
 // Use dynamic allocation
 #define configSUPPORT_DYNAMIC_ALLOCATION 1
 
+#define ipconfigMAXIMUM_DISCOVER_TX_PERIOD portMAX_DELAY
+
 // We don't support static allocation
 #define configSUPPORT_STATIC_ALLOCATION 0
 
