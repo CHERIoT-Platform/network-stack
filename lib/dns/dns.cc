@@ -621,7 +621,7 @@ namespace
 
 		// Only process DNS messages that correspond to
 		// the query we sent.
-		if (dnsHeader->id == ntohs(queryID))
+		if (dnsHeader->id != queryID)
 		{
 			Debug::log("Ignoring DNS answer for the wrong query.");
 			return;
