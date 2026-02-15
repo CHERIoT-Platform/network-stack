@@ -40,6 +40,14 @@ DECLARE_AND_DEFINE_CONNECTION_CAPABILITY(MosquittoOrgMQTT,
                                          "test.mosquitto.org",
                                          8883,
                                          ConnectionTypeTCP);
+// Another connection capability for port 1883 (unencrypted)
+// We don't actually use this but it is here as a regression test for
+// https://github.com/CHERIoT-Platform/network-stack/pull/83 as it would fail
+// to compile without that fix.
+DECLARE_AND_DEFINE_CONNECTION_CAPABILITY(MosquittoOrgMQTT2,
+                                         "test.mosquitto.org",
+                                         1883,
+                                         ConnectionTypeTCP);
 
 DECLARE_AND_DEFINE_ALLOCATOR_CAPABILITY(mqttTestMalloc, 32 * 1024);
 
