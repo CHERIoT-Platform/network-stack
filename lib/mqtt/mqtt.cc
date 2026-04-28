@@ -588,7 +588,7 @@ MQTTConnection mqtt_connect(Timeout                    *t,
 	// Create a sealed MQTT handle.
 	void *unsealedMQTTHandle;
 	auto  sealedMQTTHandle = token_sealed_unsealed_alloc(
-      t, allocator, mqtt_key(), handleSize, &unsealedMQTTHandle);
+	  t, allocator, mqtt_key(), handleSize, &unsealedMQTTHandle);
 	if (sealedMQTTHandle == nullptr)
 	{
 		Debug::log("Failed to allocate CHERIoT MQTT context.");
@@ -715,12 +715,12 @@ MQTTConnection mqtt_connect(Timeout                    *t,
 		// `remaining` is in milliseconds
 		uint32_t remaining = (t->remaining * MS_PER_TICK);
 		ret                = with_elapse_timeout(t, [&]() {
-            return MQTT_Connect(&context->coreMQTTContext,
-                                &connectInfo,
-                                nullptr,
-                                remaining,
-                                &sessionPresent);
-        });
+			return MQTT_Connect(&context->coreMQTTContext,
+			                    &connectInfo,
+			                    nullptr,
+			                    remaining,
+			                    &sessionPresent);
+		});
 
 		if (ret == MQTTNoMemory || ret == MQTTBadParameter)
 		{

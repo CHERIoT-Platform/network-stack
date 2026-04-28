@@ -25,7 +25,7 @@ fi
 if which nproc ; then
 	PARALLEL_JOBS=$(nproc)
 else
-	PARALLEL_JOBS=$(sysctl -n kern.smp.cpus)
+	PARALLEL_JOBS=10
 fi
 DIRECTORIES="lib include"
 HEADERS=$(find ${DIRECTORIES} -name '*.h' -or -name '*.hh' | grep -v FreeRTOSIPConfig.h | grep -v pack_struct_end.h)

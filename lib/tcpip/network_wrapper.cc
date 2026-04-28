@@ -635,7 +635,7 @@ Socket network_socket_accept_tcp(Timeout            *timeout,
 		  struct freertos_sockaddr addressTmp;
 		  uint32_t                 addressLength = sizeof(addressTmp);
 		  auto                     rawSocket     = FreeRTOS_accept(
-            listeningSocket->socket, &addressTmp, &addressLength);
+		    listeningSocket->socket, &addressTmp, &addressLength);
 		  if (rawSocket == nullptr)
 		  {
 			  Debug::log("Failed to create socket.");
@@ -982,93 +982,93 @@ network_socket_receive_from(Timeout            *timeout,
 {
 	uint8_t *buffer = nullptr;
 	ssize_t  result = with_sealed_socket(
-      timeout,
-      [&](SealedSocket *socket) {
-          freertos_sockaddr remoteAddress;
-          socklen_t         remoteAddressLength = sizeof(remoteAddress);
-          uint8_t          *unclaimedBuffer     = nullptr;
-          int               received            = with_freertos_timeout(
-            timeout, socket->socket, FREERTOS_SO_RCVTIMEO, [&] {
-                // Receive a packet with zero copy.  The zero-copy interface for
-                // UDP returns a pointer to the packet buffer, so we don't end
-                // up claiming a huge stream buffer.
-                return FreeRTOS_recvfrom(socket->socket,
-                                         &unclaimedBuffer,
-                                         0,
-                                         FREERTOS_ZERO_COPY,
-                                         &remoteAddress,
-                                         &remoteAddressLength);
-            } /* with_freertos_timeout */);
-          if (received > 0)
-          {
-              Claim c{mallocCapability, unclaimedBuffer};
-              FreeRTOS_ReleaseUDPPayloadBuffer(unclaimedBuffer);
-              if (!c)
-              {
-                  Debug::log("Failed to claim socket.");
-                  return -ENOMEM;
-              }
+	  timeout,
+	  [&](SealedSocket *socket) {
+		  freertos_sockaddr remoteAddress;
+		  socklen_t         remoteAddressLength = sizeof(remoteAddress);
+		  uint8_t          *unclaimedBuffer     = nullptr;
+		  int               received            = with_freertos_timeout(
+		    timeout, socket->socket, FREERTOS_SO_RCVTIMEO, [&] {
+			    // Receive a packet with zero copy.  The zero-copy interface for
+			    // UDP returns a pointer to the packet buffer, so we don't end
+			    // up claiming a huge stream buffer.
+			    return FreeRTOS_recvfrom(socket->socket,
+			                             &unclaimedBuffer,
+			                             0,
+			                             FREERTOS_ZERO_COPY,
+			                             &remoteAddress,
+			                             &remoteAddressLength);
+		    } /* with_freertos_timeout */);
+		  if (received > 0)
+		  {
+			  Claim c{mallocCapability, unclaimedBuffer};
+			  FreeRTOS_ReleaseUDPPayloadBuffer(unclaimedBuffer);
+			  if (!c)
+			  {
+				  Debug::log("Failed to claim socket.");
+				  return -ENOMEM;
+			  }
 
-              Debug::log("Claimed {}-byte buffer", received);
-              Capability claimedBuffer{unclaimedBuffer};
-              claimedBuffer.bounds() = received;
+			  Debug::log("Claimed {}-byte buffer", received);
+			  Capability claimedBuffer{unclaimedBuffer};
+			  claimedBuffer.bounds() = received;
 
-              if (heap_claim_ephemeral(timeout, address, port) < 0)
-              {
-                  return -ETIMEDOUT;
-              }
+			  if (heap_claim_ephemeral(timeout, address, port) < 0)
+			  {
+				  return -ETIMEDOUT;
+			  }
 
-              if (address != nullptr)
-              {
-                  if (!check_pointer<PermissionSet{Permission::Store}>(address))
-                  {
-                      return -EPERM;
-                  }
-                  if (remoteAddress.sin_family == FREERTOS_AF_INET6)
-                  {
-                      address->kind = NetworkAddress::AddressKindIPv6;
-                      memcpy(address->ipv6,
-                             remoteAddress.sin_address.xIP_IPv6.ucBytes,
-                             16);
-                  }
-                  else
-                  {
-                      address->kind = NetworkAddress::AddressKindIPv4;
-                      address->ipv4 = remoteAddress.sin_address.ulIP_IPv4;
-                  }
-              }
-              if (port != nullptr)
-              {
-                  if (!check_pointer<PermissionSet{Permission::Store}>(port))
-                  {
-                      return -EPERM;
-                  }
-                  *port = ntohs(remoteAddress.sin_port);
-              }
+			  if (address != nullptr)
+			  {
+				  if (!check_pointer<PermissionSet{Permission::Store}>(address))
+				  {
+					  return -EPERM;
+				  }
+				  if (remoteAddress.sin_family == FREERTOS_AF_INET6)
+				  {
+					  address->kind = NetworkAddress::AddressKindIPv6;
+					  memcpy(address->ipv6,
+					         remoteAddress.sin_address.xIP_IPv6.ucBytes,
+					         16);
+				  }
+				  else
+				  {
+					  address->kind = NetworkAddress::AddressKindIPv4;
+					  address->ipv4 = remoteAddress.sin_address.ulIP_IPv4;
+				  }
+			  }
+			  if (port != nullptr)
+			  {
+				  if (!check_pointer<PermissionSet{Permission::Store}>(port))
+				  {
+					  return -EPERM;
+				  }
+				  *port = ntohs(remoteAddress.sin_port);
+			  }
 
-              buffer = claimedBuffer;
-              c.release();
-              return received;
-          }
-          if (received < 0)
-          {
-              if (received == -pdFREERTOS_ERRNO_ENOTCONN)
-              {
-                  Debug::log("Connection closed, not receiving");
-                  return -ENOTCONN;
-              }
-              if (received == -pdFREERTOS_ERRNO_EAGAIN)
-              {
-                  return -ETIMEDOUT;
-              }
+			  buffer = claimedBuffer;
+			  c.release();
+			  return received;
+		  }
+		  if (received < 0)
+		  {
+			  if (received == -pdFREERTOS_ERRNO_ENOTCONN)
+			  {
+				  Debug::log("Connection closed, not receiving");
+				  return -ENOTCONN;
+			  }
+			  if (received == -pdFREERTOS_ERRNO_EAGAIN)
+			  {
+				  return -ETIMEDOUT;
+			  }
 
-              // Something went wrong?
-              Debug::log("Receive failed with unexpected error: {}", received);
-              return -EINVAL;
-          }
-          return received; // We had `received` == 0.
-      } /* with_sealed_socket */,
-      socket);
+			  // Something went wrong?
+			  Debug::log("Receive failed with unexpected error: {}", received);
+			  return -EINVAL;
+		  }
+		  return received; // We had `received` == 0.
+	  } /* with_sealed_socket */,
+	  socket);
 	return {result, buffer};
 }
 
@@ -1105,51 +1105,51 @@ network_socket_receive(Timeout            *timeout,
 {
 	uint8_t *buffer = nullptr;
 	ssize_t  result = network_socket_receive_internal(
-      timeout,
-      sealedSocket,
-      [&](int &available) -> void  *{
-          do
-          {
-              // Do the initial allocation without timeout: if the quota or the
-              // heap is almost exhausted, we will block until timeout without
-              // achieving anything.
-              Timeout zeroTimeout{0};
-              buffer = static_cast<uint8_t *>(
-                heap_allocate(&zeroTimeout, mallocCapability, available));
-              timeout->elapse(zeroTimeout.elapsed);
-              if (!Capability{buffer}.is_valid())
-              {
-                  // If there's a lot of data, just try a small
-                  // allocation and see if that works.
-                  if (available > 128)
-                  {
-                      available = 128;
-                      continue;
-                  }
-                  // If allocation failed and the timeout is zero, give
-                  // up now.
-                  if (!timeout->may_block())
-                  {
-                      available = -ETIMEDOUT;
-                      return nullptr;
-                  }
-                  // If there's time left, let's try allocating a
-                  // smaller buffer.
-                  auto quota = heap_quota_remaining(mallocCapability);
-                  // Subtract 16 bytes to account for the allocation
-                  // header.
-                  if ((quota < available) && (quota > 16))
-                  {
-                      available = quota - 16;
-                      continue;
-                  }
-                  available = -ENOMEM;
-                  return nullptr;
-              }
-          } while (!Capability{buffer}.is_valid());
-          return buffer;
-      },
-      [&](void *buffer) -> void { heap_free(mallocCapability, buffer); });
+	  timeout,
+	  sealedSocket,
+	  [&](int &available) -> void  *{
+		  do
+		  {
+			  // Do the initial allocation without timeout: if the quota or the
+			  // heap is almost exhausted, we will block until timeout without
+			  // achieving anything.
+			  Timeout zeroTimeout{0};
+			  buffer = static_cast<uint8_t *>(
+			    heap_allocate(&zeroTimeout, mallocCapability, available));
+			  timeout->elapse(zeroTimeout.elapsed);
+			  if (!Capability{buffer}.is_valid())
+			  {
+				  // If there's a lot of data, just try a small
+				  // allocation and see if that works.
+				  if (available > 128)
+				  {
+					  available = 128;
+					  continue;
+				  }
+				  // If allocation failed and the timeout is zero, give
+				  // up now.
+				  if (!timeout->may_block())
+				  {
+					  available = -ETIMEDOUT;
+					  return nullptr;
+				  }
+				  // If there's time left, let's try allocating a
+				  // smaller buffer.
+				  auto quota = heap_quota_remaining(mallocCapability);
+				  // Subtract 16 bytes to account for the allocation
+				  // header.
+				  if ((quota < available) && (quota > 16))
+				  {
+					  available = quota - 16;
+					  continue;
+				  }
+				  available = -ENOMEM;
+				  return nullptr;
+			  }
+		  } while (!Capability{buffer}.is_valid());
+		  return buffer;
+	  },
+	  [&](void *buffer) -> void { heap_free(mallocCapability, buffer); });
 	return {result, buffer};
 }
 
