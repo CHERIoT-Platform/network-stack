@@ -127,11 +127,11 @@ namespace
 		};
 		ntpRequestStart = rdcycle64();
 		int ret         = network_socket_send_to(pNetworkContext->timeout,
-                                         pNetworkContext->socket,
-                                         &address,
-                                         serverPort,
-                                         pBuffer,
-                                         bytesToSend);
+		                                         pNetworkContext->socket,
+		                                         &address,
+		                                         serverPort,
+		                                         pBuffer,
+		                                         bytesToSend);
 		if (ret < 0)
 		{
 			return 0;
@@ -239,8 +239,14 @@ namespace
 	 */
 	void unix_time_update(uint64_t cycles)
 	{
-		auto &currentUNIXTime = *SHARED_OBJECT_WITH_PERMISSIONS(
-		  SynchronisedTime, sntp_time_at_last_sync, true, true, false, false, false);
+		auto &currentUNIXTime =
+		  *SHARED_OBJECT_WITH_PERMISSIONS(SynchronisedTime,
+		                                  sntp_time_at_last_sync,
+		                                  true,
+		                                  true,
+		                                  false,
+		                                  false,
+		                                  false);
 		Debug::log("Updating UNIX time");
 		Debug::log(
 		  "Current time: {}.{}", currentTime.seconds, currentTime.fractions);

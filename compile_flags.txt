@@ -15,6 +15,7 @@ riscv32cheriot-unknown-cheriotrtos
 -fno-asynchronous-unwind-tables
 -fno-rtti
 -Werror
+-Wno-cheri-missing-compartment
 -I../cheriot-rtos/sdk/include/c++-config
 -I../cheriot-rtos/sdk/include/libc++
 -I../cheriot-rtos/sdk/include/platform/arty-a7

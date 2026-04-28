@@ -12,8 +12,14 @@ using Debug = ConditionalDebug<false, "Time helper">;
 
 int timeval_calculate(struct timeval *__restrict tp)
 {
-	struct SynchronisedTime *sntpTime = SHARED_OBJECT_WITH_PERMISSIONS(
-	  SynchronisedTime, sntp_time_at_last_sync, true, false, false, false, false);
+	struct SynchronisedTime *sntpTime =
+	  SHARED_OBJECT_WITH_PERMISSIONS(SynchronisedTime,
+	                                 sntp_time_at_last_sync,
+	                                 true,
+	                                 false,
+	                                 false,
+	                                 false,
+	                                 false);
 	struct timeval time;
 	uint64_t       cycles;
 	uint32_t       epoch;

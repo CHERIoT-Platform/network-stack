@@ -475,8 +475,8 @@ TLSConnection tls_connection_create(Timeout             *t,
 	                                                iobufIn.release(),
 	                                                iobufOut.release()};
 	auto        cleanup = [&](decltype(sealed)) {
-        context->~TLSContext();
-        token_obj_destroy(allocator, tls_key(), rawSealed);
+		context->~TLSContext();
+		token_obj_destroy(allocator, tls_key(), rawSealed);
 	};
 	SealedOwner<TLSContext, decltype(cleanup)> sealedContext{sealed.get(),
 	                                                         cleanup};
@@ -626,51 +626,51 @@ NetworkReceiveResult tls_connection_receive(Timeout      *t,
 {
 	uint8_t *buffer = nullptr;
 	ssize_t  result = tls_connection_receive_internal(
-      t,
-      sealedConnection,
-      [&](int &available, AllocatorCapability &mallocCapability) -> void  *{
-          do
-          {
-              // Do the initial allocation without timeout: if the quota or the
-              // heap is almost exhausted, we will block until timeout without
-              // achieving anything.
-              Timeout zeroTimeout{0};
-              buffer = static_cast<unsigned char *>(
-                heap_allocate(&zeroTimeout, mallocCapability, available));
-              t->elapse(zeroTimeout.elapsed);
+	  t,
+	  sealedConnection,
+	  [&](int &available, AllocatorCapability &mallocCapability) -> void  *{
+		  do
+		  {
+			  // Do the initial allocation without timeout: if the quota or the
+			  // heap is almost exhausted, we will block until timeout without
+			  // achieving anything.
+			  Timeout zeroTimeout{0};
+			  buffer = static_cast<unsigned char *>(
+			    heap_allocate(&zeroTimeout, mallocCapability, available));
+			  t->elapse(zeroTimeout.elapsed);
 
-              if (!Capability{buffer}.is_valid())
-              {
-                  // If there's a lot of data, just try a small
-                  // allocation and see if that works.
-                  if (available > 128)
-                  {
-                      available = 128;
-                      continue;
-                  }
-                  // If allocation failed and the timeout is zero, give
-                  // up now.
-                  if (!t->may_block())
-                  {
-                      available = -ETIMEDOUT;
-                      return nullptr;
-                  }
-                  // If there's time left, let's try allocating a
-                  // smaller buffer.
-                  auto quota = heap_quota_remaining(mallocCapability);
-                  // Subtract 16 bytes to account for the allocation
-                  // header.
-                  if ((quota < available) && (quota > 16))
-                  {
-                      available = quota - 16;
-                      continue;
-                  }
-                  available = -ENOMEM;
-                  return nullptr;
-              }
-          } while (!Capability{buffer}.is_valid());
-          return buffer;
-      });
+			  if (!Capability{buffer}.is_valid())
+			  {
+				  // If there's a lot of data, just try a small
+				  // allocation and see if that works.
+				  if (available > 128)
+				  {
+					  available = 128;
+					  continue;
+				  }
+				  // If allocation failed and the timeout is zero, give
+				  // up now.
+				  if (!t->may_block())
+				  {
+					  available = -ETIMEDOUT;
+					  return nullptr;
+				  }
+				  // If there's time left, let's try allocating a
+				  // smaller buffer.
+				  auto quota = heap_quota_remaining(mallocCapability);
+				  // Subtract 16 bytes to account for the allocation
+				  // header.
+				  if ((quota < available) && (quota > 16))
+				  {
+					  available = quota - 16;
+					  continue;
+				  }
+				  available = -ENOMEM;
+				  return nullptr;
+			  }
+		  } while (!Capability{buffer}.is_valid());
+		  return buffer;
+	  });
 	return {result, buffer};
 }
 
