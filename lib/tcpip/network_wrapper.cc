@@ -492,7 +492,7 @@ Socket network_socket_create_and_bind(Timeout            *timeout,
 		                                              : FREERTOS_SOCK_DGRAM,
 		                    type == ConnectionTypeTCP ? FREERTOS_IPPROTO_TCP
 		                                              : FREERTOS_IPPROTO_UDP);
-		  if (socket == nullptr)
+		  if (socket == FREERTOS_INVALID_SOCKET)
 		  {
 			  Debug::log("Failed to create socket.");
 			  // This cannot fail unless buggy - we know that we successfully
