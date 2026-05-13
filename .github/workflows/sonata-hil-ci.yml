@@ -1,0 +1,78 @@
+name: CHERIoT Network-Stack HIL-CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+    inputs:
+      devcontainer:
+        description: 'Set to override default build container'
+        type: string
+        required: false
+
+jobs:
+  build-examples:
+    name: Build Example Projects
+    runs-on: ubuntu-latest
+    container:
+      image: ${{ inputs.devcontainer || 'ghcr.io/cheriot-platform/devcontainer:latest' }}
+      options: --user 1001
+    steps:
+    - name: Checkout repository and submodules
+      uses: actions/checkout@v6
+      with:
+        submodules: recursive
+
+    - name: Check out RTOS
+      run: |
+        cd ..
+        git clone --recurse https://github.com/cheriot-platform/cheriot-rtos
+
+    - name: Build examples for Sonata
+      run: |
+        for d in examples/*/; do (
+          cd $d
+          xmake f --sdk=/cheriot-tools/ --board=sonata-1.3 -m release --IPv6=false
+          xmake run
+        ); done
+
+    - name: Upload firmware artifacts
+      uses: actions/upload-artifact@v7
+      with:
+        name: sonata-firmware
+        path: examples/*/build/**/firmware.uf2
+        if-no-files-found: error
+
+  hardware-test:
+    name: Hardware Test on Sonata
+    needs: build-examples
+    runs-on: [ the-capable-hub-farm, board:Sonata ]
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v6
+
+    - name: Download firmware artifacts
+      uses: actions/download-artifact@v7
+      with:
+        name: sonata-firmware
+        path: firmware
+
+    - name: Mount Sonata
+      run: |
+        # Mount the SONATA at a known location
+        sudo mkdir -p /mnt/SONATA
+        sudo mount -o uid=$(id -u),gid=$(id -g),rw -L SONATA /mnt/SONATA
+
+        # Store mount point for all subsequent steps
+        echo "MOUNT_POINT=/mnt/SONATA" >> $GITHUB_ENV
+
+    - name: Make sure the board is not in reset
+      run: sudo usbrelay HURTM_1=0
+
+    - name: Clean existing firmware
+      run: rm -f "$MOUNT_POINT"/*.uf2
+
+    - name: Flash and test all examples
+      run: bash .github/sonata-hil/run-hil-tests.sh

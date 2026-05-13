@@ -1,0 +1,8 @@
+targets:
+  main:
+    resources:
+      RawSerialPort:
+        port: "/dev/ttyUSB2"
+        speed: 921600
+    drivers:
+      SerialDriver: {}
