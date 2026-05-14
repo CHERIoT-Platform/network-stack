@@ -3,7 +3,7 @@
 
 package network_stack
 
-import future.keywords.every
+import rego.v1
 
 connection_types = ["TCP", "UDP"]
 
@@ -38,9 +38,12 @@ decode_connection_capability(connection) = decoded {
 	host = string_from_hex_string(connection.contents, 8)
 	count(host)+1 == hostLength
 
+	some connectionTypeName
+	connectionTypeName = connection_types[connectionType]
+
 	decoded = {
 		"port": port,
-		"connection_type":  connection_types[connectionType],
+		"connection_type":  connectionTypeName,
 		"host": host
 	}
 }
@@ -163,10 +166,10 @@ valid(ethernetDevice) {
 	all_sealed_bind_capabilities_are_valid
 	firewall_thread_is_valid
 	network_thread_is_valid
-	data.compartment.compartment_call_allow_list("TCPIP", "network_host_resolve.*", {"NetAPI"})
 	data.compartment.compartment_call_allow_list("TCPIP", "network_socket_create_and_bind.*", {"NetAPI", "TCPIP"})
 	data.compartment.compartment_call_allow_list("TCPIP", "network_socket_connect_tcp_internal.*", {"NetAPI"})
 	data.compartment.compartment_call_allow_list("TCPIP", "network_stack_receive_frame.*", {"Firewall"})
+	data.compartment.compartment_call_allow_list("DNS",   "network_host_resolve.*", {"NetAPI"})
 	data.compartment.compartment_call_allow_list("DNS",   "dns_resolver_receive_frame.*", {"Firewall"})
 	data.compartment.compartment_call_allow_list("DNS",   "initialize_dns_resolver.*", {"Firewall"})
 	data.compartment.compartment_call_allow_list("TCPIP", "ip_thread_entry.*", set())
