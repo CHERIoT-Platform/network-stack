@@ -36,5 +36,6 @@ includes("tcpip",
          "mqtt",
          "tls",
          "dns",
-         "firewall")
+         "firewall",
+         "wolfssl")
 
