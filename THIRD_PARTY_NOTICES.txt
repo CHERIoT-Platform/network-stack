@@ -1,0 +1,11 @@
+This repository includes several submodules with their own licenses:
+
+ - BearSSL (MIT, see third_party/BearSSL/LICENSE.txt)
+ - Small quantities of FreeRTOS code (MIT, see copyright headers in
+   third_party/freertos)
+ - FreeRTOS+TCP (third_party/freertos-plus-tcp/LICENSE.md)
+ - coreMQTT (MIT, see third_party/coreMQTT/LICENSE)
+ - coreSNTP (MIT, see third_party/coreSNTP/LICENSE)
+
+New code in this repository is covered by the MIT license, as listed in
+LICENSE and in per-file copyright headers.
