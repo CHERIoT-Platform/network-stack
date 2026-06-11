@@ -196,6 +196,11 @@ void __cheri_compartment("http_server_example") example()
 		if (retries == 0)
 		{
 			Debug::log("Failed to close the listening socket.");
+
+			// We have to stop now - if we cannot close the
+			// listening socket, we will not be able to bind onto
+			// the server port anymore. This is bad!
+			break;
 		}
 	}
 

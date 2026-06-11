@@ -65,6 +65,10 @@ extern "C" int ipFOREVER(void)
  * previous instance of the network stack.
  *
  * This should not be reset by the error handler and is reset-critical.
+ *
+ * Note, however, that only one line in the code ever writes to this variable:
+ * the error handler. Assuming that the control-flow is not compromised (threat
+ * model of the reset), this should be impossible to corrupt.
  */
 std::atomic<uint32_t> currentSocketEpoch = 0;
 
@@ -140,6 +144,17 @@ namespace
 	}
 
 	/**
+	 * Length of a locking step for socket locks. When we attempt to grab a
+	 * socket lock, do so in steps of `SocketLockTimeoutStep`. That way, if
+	 * the network stack crashes and we somehow do not have a pointer to
+	 * the socket lock anymore (and thus cannot reset it), we have a
+	 * guarantee that the blocking thread will become live again within a
+	 * bounded amount of time, and bail out as it finds out, through the
+	 * condition function, that we are currently restarting.
+	 */
+	static constexpr const Ticks SocketLockTimeoutStep = MS_TO_TICKS(500);
+
+	/**
 	 * Wrapper around `with_sealed_socket` that locks the socket before calling
 	 * the operation.  This is used by everything except the close operation
 	 * (which must not try to release the lock after the lock has been
@@ -151,7 +166,24 @@ namespace
 	{
 		return with_sealed_socket(
 		  [&](SealedSocket *socket) {
-			  if (LockGuard g{socket->socketLock, timeout})
+			  if (LockGuard g{
+			        socket->socketLock, timeout, SocketLockTimeoutStep, [&]() {
+					// Return true when we need to bail
+					// out, in two cases:
+					// - we are currently restarting
+					// - the socket is from a previous
+					//   instance of the network stack
+				        //
+					// We must check the latter: if the
+					// socket list was corrupted, we may
+					// not have been able to set this lock
+					// for destruction, and it may still be
+					// left in a "locked" state by a thread
+					// that previously crashed while
+					// holding the lock.
+				        return restartState != 0 || (socket->socketEpoch !=
+				                                     currentSocketEpoch.load());
+			        }})
 			  {
 				  return operation(socket);
 			  }
@@ -794,14 +826,22 @@ int network_socket_close(Timeout            *t,
 	}
 	return with_sealed_socket(
 	  [=](SealedSocket *socket) {
+		  bool socketIsFromPreviousInstance =
+		    (socket->socketEpoch != currentSocketEpoch.load());
 		  // We will fail to lock if the socket is coming from
 		  // a previous instance of the network stack as it set
 		  // for destruction. Ignore the failure: we will not
 		  // call the FreeRTOS API on it anyways.
-		  LockGuard g{socket->socketLock, t};
-		  if (g || (socket->socketEpoch != currentSocketEpoch.load()))
+		  LockGuard g{socket->socketLock, t, SocketLockTimeoutStep, [&]() {
+			              // Return true when we need to bail out,
+			              // in two cases (see comment in
+			              // `with_sealed_socket`).
+			              return restartState != 0 ||
+			                     socketIsFromPreviousInstance;
+		              }};
+		  if (g || socketIsFromPreviousInstance)
 		  {
-			  if (socket->socketEpoch != currentSocketEpoch.load())
+			  if (socketIsFromPreviousInstance)
 			  {
 				  Debug::log(
 				    "Destroying a socket from a previous instance of the "
@@ -830,7 +870,7 @@ int network_socket_close(Timeout            *t,
 			  // stack (the socket is invalid anyways). Don't close
 			  // the firewall either as this was already done
 			  // during the reset.
-			  if (socket->socketEpoch == currentSocketEpoch.load())
+			  if (!socketIsFromPreviousInstance)
 			  {
 				  auto rawSocket = socket->socket;
 
@@ -906,7 +946,7 @@ int network_socket_close(Timeout            *t,
 				  }
 			  }
 			  int ret = 0;
-			  if (socket->socketEpoch == currentSocketEpoch.load())
+			  if (!socketIsFromPreviousInstance)
 			  {
 				  Debug::Assert(!ds::linked_list::is_singleton(&(socket->ring)),
 				                "The socket should be present in the list.");
