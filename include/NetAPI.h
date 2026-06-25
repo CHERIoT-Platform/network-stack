@@ -332,7 +332,7 @@ struct NetworkReceiveResult
  *
  * The negative values will be errno values:
  *
- *  - `-EINVAL`: The socket is not valid.
+ *  - `-EINVAL`: The timeout or socket is not valid.
  *  - `-ETIMEDOUT`: The timeout was reached before data could be received.
  *  - `-ENOTCONN`: The socket is not connected.
  */
@@ -356,7 +356,7 @@ NetworkReceiveResult __cheri_compartment("TCPIP")
  * The negative values will be errno values:
  *
  *  - `-EPERM`: `buffer` and/or `length` are invalid.
- *  - `-EINVAL`: The socket is not valid.
+ *  - `-EINVAL`: The timeout or socket is not valid.
  *  - `-ETIMEDOUT`: The timeout was reached before data could be received.
  *  - `-ENOTCONN`: The socket is not connected.
  */
@@ -387,7 +387,7 @@ int __cheri_compartment("TCPIP")
  *
  *  - `-ENOMEM`: The allocation quota is insufficient to hold the packet.
  *  - `-EPERM`: The `address` and/or `port` pointers are invalid.
- *  - `-EINVAL`: The socket is not valid.
+ *  - `-EINVAL`: The timeout or socket is not valid.
  *  - `-ETIMEDOUT`: The timeout was reached before data could be received.
  *  - `-ENOTCONN`: The socket is not connected.
  */
@@ -399,8 +399,20 @@ NetworkReceiveResult __cheri_compartment("TCPIP")
                               uint16_t           *port);
 
 /**
- * Send data over a TCP socket.  This will block until the data have been sent
- * or the timeout expires.
+ * Send data over a TCP socket. This will block until the data have been queued
+ * for sending or the timeout expires.
+ *
+ * The return value is either the number of bytes queued for sending, or a
+ * negative error code.
+ *
+ * The negative values will be errno values:
+ *
+ *  - `-EPERM`: `buffer` and/or `length` are invalid.
+ *  - `-EINVAL`: The timeout or socket is not valid.
+ *  - `-ETIMEDOUT`: The timeout was reached before data could be sent.
+ *  - `-ENOMEM`: The network stack ran out of memory (quota or available
+ *               memory) to send the packet.
+ *  - `-ENOTCONN`: The socket is not connected.
  */
 ssize_t __cheri_compartment("TCPIP") network_socket_send(Timeout *timeout,
                                                          Socket   socket,
@@ -413,8 +425,19 @@ ssize_t __cheri_compartment("TCPIP") network_socket_send(Timeout *timeout,
  * authorised with `network_socket_udp_authorise_host` (the packets will be
  * silently dropped if not, there will be no error reported).
  *
- * This will block until the data have been sent or the timeout expires.  The
- * return value is the number of bytes sent or a negative error code.
+ * This will block until the data have been queued for sending or the timeout
+ * expires. The return value is the number of bytes queued for sending or a
+ * negative error code.
+ *
+ * The negative values will be errno values:
+ *
+ *  - `-EPERM`: `buffer` and/or `length` and/or `address` are invalid.
+ *  - `-EINVAL`: The timeout or socket is not valid.
+ *  - `-ETIMEDOUT`: The timeout was reached before data could be sent.
+ *  - `-ENOMEM`: The network stack ran out of memory (quota or available
+ *               memory) to send the packet.
+ *  - `-ENOTCONN`: The socket is invalid and should be closed (typically caused
+ *                 by a network stack reset).
  */
 ssize_t __cheri_compartment("TCPIP")
   network_socket_send_to(Timeout              *timeout,
