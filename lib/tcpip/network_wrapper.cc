@@ -988,6 +988,10 @@ network_socket_receive_from(Timeout            *timeout,
                             uint16_t           *port)
 {
 	uint8_t *buffer = nullptr;
+	if (!check_timeout_pointer(timeout))
+	{
+		return {-EINVAL, buffer};
+	}
 	ssize_t  result = with_sealed_socket(
 	  timeout,
 	  [&](SealedSocket *socket) {
