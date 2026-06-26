@@ -90,11 +90,13 @@ namespace
 	}
 
 	/**
-	 * Unseal `sealedSocket` and, if it is sealed with the correct type,
-	 * pass it to `operation`. This is a helper function used for
-	 * operations on sockets.
+	 * Unseal `sealedSocket` and, if it has all the given permissions and
+	 * is sealed with the correct type, pass it to `operation`. This is a
+	 * helper function used for operations on sockets.
 	 *
 	 * This function will return a negative code on error:
+	 *
+	 * `-EPERM` if the socket handle does not have the given permissions;
 	 *
 	 * `-EINVAL` if the unsealing fails;
 	 *
@@ -108,10 +110,16 @@ namespace
 	 */
 	int with_sealed_socket(FunctionWrapper<int(SealedSocket *socket)> operation,
 	                       Sealed<SealedSocket> sealedSocket,
+	                       int                  permissions,
 	                       bool                 isCloseOperation = false)
 	{
 		return with_restarting_checks(
 		  [&]() {
+			  if ((network_socket_permissions(sealedSocket) & permissions) !=
+			      permissions)
+			  {
+				  return -EPERM;
+			  }
 			  auto *socket = token_unseal(socket_key(), sealedSocket);
 			  if (socket == nullptr)
 			  {
@@ -147,7 +155,8 @@ namespace
 	 */
 	int with_sealed_socket(Timeout                                   *timeout,
 	                       FunctionWrapper<int(SealedSocket *socket)> operation,
-	                       Sealed<SealedSocket> sealedSocket)
+	                       Sealed<SealedSocket> sealedSocket,
+	                       int                  permissions)
 	{
 		return with_sealed_socket(
 		  [&](SealedSocket *socket) {
@@ -157,7 +166,8 @@ namespace
 			  }
 			  return -ETIMEDOUT;
 		  },
-		  sealedSocket);
+		  sealedSocket,
+		  permissions);
 	}
 
 	/**
@@ -338,7 +348,8 @@ namespace
 			  } while (timeout->may_block());
 			  return -ETIMEDOUT;
 		  },
-		  sealedSocket);
+		  sealedSocket,
+		  SocketPermitReceive);
 	}
 
 	/**
@@ -725,7 +736,8 @@ Socket network_socket_accept_tcp(Timeout            *timeout,
 		  socket = sealedSocket;
 		  return 0;
 	  },
-	  sealedListeningSocket);
+	  sealedListeningSocket,
+	  0 /* No specific permission required */);
 	return socket;
 }
 
@@ -776,7 +788,8 @@ int network_socket_connect_tcp_internal(Timeout       *timeout,
 				  return -ETIMEDOUT;
 		  }
 	  },
-	  socket);
+	  socket,
+	  0 /* No specific permission required */);
 }
 
 Socket network_socket_udp(Timeout            *timeout,
@@ -977,6 +990,7 @@ int network_socket_close(Timeout            *t,
 		  return -ETIMEDOUT;
 	  },
 	  sealedSocket,
+	  SocketPermitClose,
 	  true /* this is a close operation */);
 }
 
@@ -992,7 +1006,7 @@ network_socket_receive_from(Timeout            *timeout,
 	{
 		return {-EINVAL, buffer};
 	}
-	ssize_t  result = with_sealed_socket(
+	ssize_t result = with_sealed_socket(
 	  timeout,
 	  [&](SealedSocket *socket) {
 		  freertos_sockaddr remoteAddress;
@@ -1079,7 +1093,8 @@ network_socket_receive_from(Timeout            *timeout,
 		  }
 		  return received; // We had `received` == 0.
 	  } /* with_sealed_socket */,
-	  socket);
+	  socket,
+	  SocketPermitReceive);
 	return {result, buffer};
 }
 
@@ -1216,7 +1231,8 @@ ssize_t network_socket_send(Timeout *timeout,
 		  Debug::log("Send failed with unexpected error: {}", ret);
 		  return -EINVAL;
 	  },
-	  socket);
+	  socket,
+	  SocketPermitSend);
 }
 
 ssize_t network_socket_send_to(Timeout              *timeout,
@@ -1293,7 +1309,8 @@ ssize_t network_socket_send_to(Timeout              *timeout,
 		  Debug::log("Send failed with unexpected error: {}", ret);
 		  return -EINVAL;
 	  },
-	  socket);
+	  socket,
+	  SocketPermitSend);
 }
 
 int network_socket_kind(Socket socket, SocketKind *kind)
@@ -1318,5 +1335,6 @@ int network_socket_kind(Socket socket, SocketKind *kind)
 		    (&((socket->socket)->xBoundSocketListItem)));
 		  return 0;
 	  },
-	  socket);
+	  socket,
+	  0 /* No specific permission required */);
 }
