@@ -764,8 +764,15 @@ int network_socket_connect_tcp_internal(Timeout       *timeout,
 			  case -pdFREERTOS_ERRNO_EISCONN: // already connected
 				  Debug::log("Successfully connected to server");
 				  return 0;
+			  /**
+			   * In certain cases, `FreeRTOS_connect` may return
+			   * -ENOTCONN if the connection times out. This is not
+			   *  publicly documented.
+			   */
+			  case -pdFREERTOS_ERRNO_ENOTCONN:
 			  case -pdFREERTOS_ERRNO_EWOULDBLOCK:
 			  case -pdFREERTOS_ERRNO_ETIMEDOUT:
+				  Debug::log("Timed out while connecting");
 				  return -ETIMEDOUT;
 		  }
 	  },
