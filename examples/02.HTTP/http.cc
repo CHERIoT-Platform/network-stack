@@ -11,6 +11,8 @@
 #include <thread.h>
 #include <tick_macros.h>
 
+using CHERI::Capability;
+
 using Debug            = ConditionalDebug<true, "Network test">;
 constexpr bool UseIPv6 = CHERIOT_RTOS_OPTION_IPv6;
 
@@ -29,25 +31,31 @@ void __cheri_compartment("http_example") example()
 	Debug::log("Creating connection");
 	Timeout unlimited{UnlimitedTimeout};
 	auto    socket = network_socket_connect_tcp(
-      &unlimited, TEST_MALLOC, CONNECTION_CAPABILITY(ExampleCom));
+	  &unlimited, TEST_MALLOC, CONNECTION_CAPABILITY(ExampleCom));
+
+	if (!Capability{socket}.is_valid())
+	{
+		Debug::log("Failed to connect");
+		return;
+	}
 
 	static char      message[] = "GET / HTTP/1.1\r\n"
 	                             "Host: example.com\r\n"
 	                             "User-Agent: cheriot-demo\r\n"
 	                             "Accept: */*\r\n"
 	                             "\r\n";
-	constexpr size_t toSend    = sizeof(message) - 1;
+	constexpr size_t ToSend    = sizeof(message) - 1;
 	size_t           sent      = 0;
-	while (sent < toSend)
+	while (sent < ToSend)
 	{
-		size_t remaining = toSend - sent;
+		size_t remaining = ToSend - sent;
 
 		ssize_t sentThisCall =
 		  network_socket_send(&unlimited, socket, &(message[sent]), remaining);
-		Debug::log("Sent {} bytes", sentThisCall);
 
 		if (sentThisCall >= 0)
 		{
+			Debug::log("Sent {} bytes", sentThisCall);
 			sent += sentThisCall;
 		}
 		else
