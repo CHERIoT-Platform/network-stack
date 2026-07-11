@@ -1,12 +1,14 @@
 // Copyright SCI Semiconductor and CHERIoT Contributors.
 // SPDX-License-Identifier: MIT
 
-#include <compartment-macros.h>
-#include <cstdint>
-#include <debug.hh>
-#include <futex.h>
-#include <riscvreg.h>
-#include <sntp.h>
+#if !__has_include(<sys/time.h>)
+
+#	include <compartment-macros.h>
+#	include <cstdint>
+#	include <debug.hh>
+#	include <futex.h>
+#	include <riscvreg.h>
+#	include <sntp.h>
 
 using Debug = ConditionalDebug<false, "Time helper">;
 
@@ -23,18 +25,12 @@ int timeval_calculate(struct timeval *__restrict tp)
 	struct timeval time;
 	uint64_t       cycles;
 	uint32_t       epoch;
-	// Is the epoch currently updating?  This is factored out to a separate
-	// variable because the clang static analyser does not spot that the two
-	// expressions on epoch are identical and so can't be both true and false
-	// at the same time.
-	bool epochIsUpdating;
 	do
 	{
-		epoch           = atomic_load(&sntpTime->updatingEpoch);
-		epochIsUpdating = epoch & 0x1;
+		epoch = atomic_load(&sntpTime->updatingEpoch);
 		// If the low bit is set then the time is being updated.  Wait for the
 		// update to finish.
-		if (epochIsUpdating)
+		if (epoch & 0x1)
 		{
 			Debug::log("Waiting for SNTP update");
 			// Wait for the update to finish
@@ -44,10 +40,10 @@ int timeval_calculate(struct timeval *__restrict tp)
 		time.tv_sec  = sntpTime->seconds;
 		time.tv_usec = sntpTime->microseconds;
 		cycles       = sntpTime->cycles;
-	} while (epochIsUpdating || epoch != atomic_load(&sntpTime->updatingEpoch));
+	} while (epoch != atomic_load(&sntpTime->updatingEpoch));
 	Debug::log(
 	  "Got raw time {}.{}", static_cast<uint64_t>(time.tv_sec), time.tv_usec);
-	uint64_t now = rdcycle64();
+	uint64_t now = platform_monotonic_time_read();
 	Debug::log(
 	  "Elapsed cycles {} (now: {}, timestamp: {}", now - cycles, now, cycles);
 	// Elapsed time in cycles
@@ -68,3 +64,4 @@ int timeval_calculate(struct timeval *__restrict tp)
 	*tp          = time;
 	return 0;
 }
+#endif

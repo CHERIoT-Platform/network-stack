@@ -11,6 +11,18 @@
 #include <stdint.h>
 #include <timeout.h>
 
+#if __has_include(<sys/time.h>)
+#	include <time.h>
+/**
+ * If the RTOS supports pluggable time sources, provide a compatibility version
+ * of the old API that set them.
+ */
+static inline int sntp_update(TimeoutArgument timeout)
+{
+	return clock_update_wall_clock(timeout);
+}
+#else
+
 typedef int64_t  time_t;      // NOLINT
 typedef uint32_t suseconds_t; // NOLINT
 
@@ -95,3 +107,4 @@ static inline time_t time(time_t *tloc)
 	}
 	return tv.tv_sec;
 }
+#endif
