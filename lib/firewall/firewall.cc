@@ -668,7 +668,7 @@ namespace
 				[[fallthrough]];
 			case IPProtocolNumber::TCP:
 			{
-				if (ipv4Header->body_offset() < sizeof(ipv4Header))
+				if (ipv4Header->body_offset() < sizeof(*ipv4Header))
 				{
 					Debug::log("Body offset is {} but IPv4 header is {} bytes",
 					           ipv4Header->body_offset(),
