@@ -24,6 +24,11 @@
 #include <stdlib.h>
 #include <tick_macros.h>
 
+#if __has_include(<sys/time.h>)
+#	include "include/sntp_rtc.hh"
+#	define NEW_TIME_APIS
+#endif
+
 using CHERI::Capability;
 
 using Debug = ConditionalDebug<false, "NTP Client">;
@@ -86,6 +91,7 @@ namespace
 		  context->timeout, socket, CONNECTION_CAPABILITY(ntpPool));
 		if (address.kind == NetworkAddress::AddressKindInvalid)
 		{
+			Debug::log("Failed to authorise socket, returning -ENOTCONN");
 			Timeout unlimited{UnlimitedTimeout};
 			network_socket_close(&unlimited, MALLOC_CAPABILITY, socket);
 			context->timeout->elapse(unlimited.elapsed);
@@ -207,13 +213,17 @@ namespace
 	              "Year is wrong");
 
 	/**
-	 * The current time in NTP format.
+	 * The time in NTP format of the last time update.
 	 */
 	SntpTimestamp_t currentTime = {epoch_year_approximate(), 0};
+
+	/// The monotonic time at the time `currentTime` was believed correct.
+	uint64_t currentMonotonicTime = 0;
 
 	/// NTP era, used to handle 32-bit overflow in NTP timestamps.
 	uint32_t ntpEra = epoch_year_approximate() >> 32;
 
+#ifndef NEW_TIME_APIS
 	/**
 	 * Convert an NTP timestamp to a POSIX timeval.
 	 */
@@ -237,7 +247,7 @@ namespace
 	/**
 	 * Update the current UNIX time to reflect the last cached NTP time.
 	 */
-	void unix_time_update(uint64_t cycles)
+	void unix_time_update()
 	{
 		auto &currentUNIXTime =
 		  *SHARED_OBJECT_WITH_PERMISSIONS(SynchronisedTime,
@@ -252,13 +262,14 @@ namespace
 		  "Current time: {}.{}", currentTime.seconds, currentTime.fractions);
 		currentUNIXTime.updatingEpoch++;
 		ntp_date_to_timeval(currentUNIXTime, currentTime, ntpEra);
-		currentUNIXTime.cycles = cycles;
+		currentUNIXTime.cycles = currentMonotonicTime;
 		currentUNIXTime.updatingEpoch++;
 		Debug::log("Updated UNIX time");
 		Debug::log("Current UNIX time: {}.{}",
 		           static_cast<uint64_t>(currentUNIXTime.seconds),
 		           currentUNIXTime.microseconds);
 	}
+#endif
 
 	/**
 	 * Callback to get the current NTP time.
@@ -329,10 +340,9 @@ namespace
 		currentTime.seconds = 0;
 		// As a very rough approximation, assume that the server time is
 		// accurate at the midway point of the request.
-		uint64_t cycleTime =
+		currentMonotonicTime =
 		  ntpRequestStart + ((ntpRequestEnd - ntpRequestStart) / 2);
 		currentTime = *pServerTime;
-		unix_time_update(cycleTime);
 	}
 
 	/**
@@ -341,7 +351,7 @@ namespace
 	 * FIXME: There should be a hook for integrators to use the authentication
 	 * API and provide their own time server.
 	 */
-	int ntp_time_update(Timeout *timeout)
+	int ntp_time_update(Timeout *timeout, auto update = []() {})
 	{
 		NetworkContext udpContext{timeout, nullptr};
 		SntpStatus_t   status;
@@ -430,11 +440,13 @@ namespace
 				{
 					Debug::log("Failed to receive SNTP time response: {}",
 					           status);
+					Debug::log("Tried for {} ticks", timeout->elapsed);
 					break;
 				}
 
 				Debug::log("Received new time from NTP!");
 				status = SntpSuccess;
+				update();
 			}
 			else
 			{
@@ -450,14 +462,47 @@ namespace
 
 } // namespace
 
+#if __has_include(<sys/time.h>)
+int sntp_update(TimeoutArgument timeout,
+                clock_t        &outTime,
+                clock_t        &outMonotonicTime)
+{
+	Debug::log("Trying to fetch NTP time");
+	if (!timeout.is_valid())
+	{
+		Debug::log("Invalid timeout pointer: {}", timeout);
+		return -EINVAL;
+	}
+	auto update = [&]() {
+		outMonotonicTime = currentMonotonicTime;
+		clock_t seconds  = currentTime.seconds - SNTP_TIME_AT_UNIX_EPOCH_SECS;
+		seconds *= CPU_TIMER_HZ;
+		clock_t fractions = currentTime.fractions;
+		fractions *= CPU_TIMER_HZ;
+		fractions >>= 32;
+		outTime = seconds; //+ fractions;
+		Debug::log("Fetched NTP time {} for monotonic time {}",
+		           outTime,
+		           outMonotonicTime);
+	};
+	// Note: Using .relativeTimeout here is slightly misleading, but it avoids
+	// needing to propagate knowledge of the union down to code that needs to
+	// work with older versions of the RTOS.
+	// FIXME: Remove when this file is updated to use TimeoutArguments
+	// everywhere.
+	return ntp_time_update(timeout.relativeTimeout, update);
+}
+
+#else
 int sntp_update(Timeout *timeout)
 {
+	Debug::log("Calling the wrong NTP time");
 	if (!check_timeout_pointer(timeout))
 	{
 		Debug::log("Invalid timeout pointer: {}", timeout);
 		return -EINVAL;
 	}
-	return ntp_time_update(timeout);
+	return ntp_time_update(timeout, unix_time_update);
 }
 
 int sntp_time_set_unix(Timeout *timeout, time_t time)
@@ -474,8 +519,10 @@ int sntp_time_set_unix(Timeout *timeout, time_t time)
 		currentTime.seconds   = ntpTime & 0xffffffff;
 		currentTime.fractions = 0;
 		ntpEra                = ntpTime >> 32;
-		unix_time_update(rdcycle64());
+		currentMonotonicTime  = rdcycle64();
+		unix_time_update();
 		return 0;
 	}
 	return -ETIMEDOUT;
 }
+#endif
