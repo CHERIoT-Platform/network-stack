@@ -249,6 +249,9 @@ namespace
 			size_t currentSize = size();
 			void  *currentBase =
 			  resize_if_needed(base(), currentSize, capacity(), sizeof(T));
+
+			buffer = CHERI::Capability<T>{static_cast<T *>(currentBase)};
+
 			SmallTableBase::insert(
 			  currentBase, currentSize * sizeof(T), &element, sizeof(T));
 			set_size(currentSize + 1);
@@ -386,6 +389,60 @@ namespace
 
 			Debug::log("Finished small table tests");
 		}
+	}
+
+	/**
+	 * Test on small table resize.
+	 * This test adds excessive elements to the table and tests whether
+	 * the resize function works correctly.
+	 */
+	void test_small_table_growth()
+	{
+		Debug::log("Testing SmallTable resize");
+
+		SmallTable<int> table;
+
+		for (int i = 0; i < 8; ++i)
+		{
+			table.insert(i);
+		}
+
+		Debug::log("Inserted 8 elements successfully");
+		/**
+		 * Inspect the size and capacity before triggering resize().
+		 */
+		Debug::Assert(
+		  table.size() == 8, "Size is {}, should be 8", table.size());
+		Debug::Assert(table.capacity() == 8,
+		              "Capability is {}, should be 8",
+		              table.capacity());
+		Debug::log("Try inserting the 9th element, should trigger resize().");
+
+		table.insert(8);
+
+		/**
+		 * Inspect the size after triggering resize().
+		 */
+		Debug::Assert(
+		  table.size() == 9, "Size is {}, should be 9", table.capacity());
+		Debug::Assert(table.capacity() == 2 * 8,
+		              "Capability is {:d}, should be 16",
+		              table.capacity());
+		Debug::log("After ninth insertion: size {:d}, capacity {:d}",
+		           table.size(),
+		           table.capacity());
+
+		/**
+		 * Inspect the capability is still valid.
+		 */
+		Debug::log("Try accessing the resized table. "
+		           "This should not trigger a hardware exception. "
+		           "If the test stops here, it probably triggered one.");
+		int first = *table.begin();
+		Debug::log("Access succeeded, see if we can read the 9th element.");
+		Debug::Assert(table.contains(8),
+		              "Does not contain the newly added element '8'.");
+		Debug::log("Small table resizing test finished.");
 	}
 
 	/**
@@ -925,6 +982,7 @@ void __cheri_compartment("Firewall") ethernet_run_driver()
 {
 	// Test the small table (does nothing in release builds).
 	test_small_table();
+	test_small_table_growth();
 	// Sleep until the driver is initialized.
 	for (int barrierState = barrier; barrier != 2;)
 	{
