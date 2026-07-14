@@ -415,16 +415,10 @@ namespace
  * an attempted three-way-handshake failed. We can use it to tell the firewall
  * to remove the hole.
  *
- * It is also worth noting that this will never be called if *we* close the
- * socket through `FreeRTOS_closesocket`.
- *
- * This is because FreeRTOS+TCP does not do a three-way handshake close when
- * the socket is closed through `FreeRTOS_socketclose()`. Instead, FreeRTOS+TCP
- * sends a FIN to the peer and destroys the socket immediately. Any further
- * packet from the peer is answered with a RST (as a spurious packet).  Because
- * the socket is destroyed in a state when the TCP connection has not been
- * properly closed (it is just in the "FIN sent" stage, i.e., FIN Wait-1), the
- * callback is not called.
+ * Note that this may or may not be called if *we* close the socket through
+ * `FreeRTOS_closesocket`: if the remote peer does not complete the termination
+ * handshake or if our timeout runs out, the connection may be left dangling,
+ * in which case this callback will not be called.
  */
 static void on_tcp_connect(Socket_t socket, BaseType_t isConnected)
 {
@@ -841,11 +835,44 @@ int network_socket_close(Timeout            *t,
 			  {
 				  auto rawSocket = socket->socket;
 
-				  // Do not bother with the return value:
-				  // `FreeRTOS_shutdown` fails if the TCP
+				  // Nothing to do if `FreeRTOS_shutdown`
+				  // fails: this happens only if the TCP
 				  // connection is dead, which is likely to
 				  // happen in practice and has no impact here.
-				  FreeRTOS_shutdown(rawSocket, FREERTOS_SHUT_RDWR);
+				  if (FreeRTOS_shutdown(rawSocket, FREERTOS_SHUT_RDWR) == 0)
+				  {
+					  // Wait for `FreeRTOS_recv` to return
+					  // ENOTCONN or EINVAL, indicating
+					  // that the connection was properly
+					  // closed. We need to do this to
+					  // allow for the TCP connection
+					  // termination handshake to happen
+					  // (otherwise we will leave the
+					  // connection dangling).
+					  bool terminated = false;
+					  do
+					  {
+						  auto ret = with_freertos_timeout(
+						    t, rawSocket, FREERTOS_SO_RCVTIMEO, [&] {
+							    return FreeRTOS_recv(socket->socket,
+							                         nullptr,
+							                         1,
+							                         FREERTOS_MSG_PEEK);
+						    });
+
+						  // `FreeRTOS_recv` can return
+						  // other error codes; we can
+						  // safely ignore them.
+						  terminated = (ret == -pdFREERTOS_ERRNO_ENOTCONN) ||
+						               (ret == -pdFREERTOS_ERRNO_EINVAL);
+
+						  if (!terminated && t->may_block())
+						  {
+							  Timeout sleep{1};
+							  thread_sleep(&sleep);
+						  }
+					  } while (!terminated && t->may_block());
+				  }
 
 				  auto localPort = htons(rawSocket->usLocalPort);
 				  if (rawSocket->bits.bIsIPv6)
@@ -866,6 +893,16 @@ int network_socket_close(Timeout            *t,
 						  // Otherwise close the
 						  // corresponding firewall
 						  // hole.
+						  //
+						  // The firewall hole may
+						  // already have been closed
+						  // by `on_tcp_connect` if the
+						  // TCP termination handshake
+						  // completed, but we cannot
+						  // be certain of it since it
+						  // depends on the remote
+						  // peer. Attempting to close
+						  // it a second time is fine.
 						  if (rawSocket->u.xTCP.eTCPState == eTCP_LISTEN)
 						  {
 							  firewall_remove_tcpipv6_server_port(localPort);
