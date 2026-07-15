@@ -256,15 +256,17 @@ namespace
 
 		/**
 		 * Removes an element from the table.  Does nothing if the element is
-		 * not present.
+		 * not present. Returns whether or not the element was removed.
 		 */
-		void remove(const T &element)
+		bool remove(const T &element)
 		{
 			if (SmallTableBase::remove(
 			      base(), size() * sizeof(T), &element, sizeof(T)))
 			{
 				set_size(size() - 1);
+				return true;
 			}
+			return false;
 		}
 
 		/**
@@ -504,7 +506,7 @@ namespace
 			tcpServerPorts.clear();
 		}
 
-		void remove_endpoint(IPProtocolNumber protocol,
+		bool remove_endpoint(IPProtocolNumber protocol,
 		                     Address          endpoint,
 		                     uint16_t         localPort,
 		                     uint16_t         remotePort)
@@ -516,7 +518,7 @@ namespace
 			auto guardedTable = permitted_endpoints(protocol);
 			auto &[g, table]  = guardedTable;
 			ConnectionTuple tuple{endpoint, localPort, remotePort};
-			table.remove(tuple);
+			return table.remove(tuple);
 		}
 
 		void add_server_port(uint16_t localPort)
@@ -1030,10 +1032,12 @@ void firewall_remove_tcpipv4_remote_endpoint(uint32_t remoteAddress,
                                              uint16_t localPort,
                                              uint16_t remotePort)
 {
-	EndpointsTable<uint32_t>::instance().remove_endpoint(
-	  IPProtocolNumber::TCP, remoteAddress, localPort, remotePort);
-	if (EndpointsTable<uint32_t>::instance().is_server_port(localPort))
+	if (EndpointsTable<uint32_t>::instance().remove_endpoint(
+	      IPProtocolNumber::TCP, remoteAddress, localPort, remotePort) &&
+	    EndpointsTable<uint32_t>::instance().is_server_port(localPort))
 	{
+		// Decrease the number of clients only if we actually removed
+		// an entry from the endpoints table.
 		currentClientCount--;
 	}
 }
