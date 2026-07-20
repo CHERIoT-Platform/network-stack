@@ -746,7 +746,7 @@ namespace
 					    ((ntohs(tcpHeader->bitfield) & TCPBitfieldACKMask) ==
 					     0))
 					{
-						if (currentClientCount + 1 >=
+						if (currentClientCount + 1 >
 						    FirewallMaximumNumberOfClients)
 						{
 							// Maximum number of client connections
