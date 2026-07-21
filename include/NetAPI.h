@@ -235,8 +235,14 @@ Socket __cheri_compartment("NetAPI")
  * of the connected client.  These can be null if the caller is not interested
  * in the client's address or port.
  *
- * This returns a valid sealed capability to a connected socket on success, or
- * an untagged value on failure.
+ * This returns either a valid sealed socket type or an untagged capability that
+ * encodes the error code, and here are what each of them represent:
+ * - `-ENOMEM`: allocation of the wrapper timed out or does not have memory for
+ * now.
+ * - `-EINVAL`: The timeout pointer is invalid, or FreeRTOS_accept returns
+ * invalid socket, or fail to claim the socket poiting to mallocCapability, or
+ * fail to add socket to the socket reset list,
+ * - `-ETIMEDOUT`: timed out on FreeRTOS_accept.
  */
 Socket __cheri_compartment("TCPIP")
   network_socket_accept_tcp(Timeout            *timeout,
