@@ -3,6 +3,8 @@
 
 #pragma once
 #include <FreeRTOS_IP.h>
+#include <NetAPI.h>
+#include <atomic>
 #include <ds/linked_list.h>
 #include <function_wrapper.hh>
 #include <locks.hh>
@@ -42,6 +44,14 @@ struct SealedSocket
 	 * to the current instance of the network stack.
 	 */
 	uint64_t socketEpoch;
+	/**
+	 * Event waiter source futex array. This supports the multi-waiter
+	 * feature. Different events increment different futexes in the array and
+	 * wake the corresponding waiting threads.
+	 */
+	std::atomic<uint32_t> eventFutexState[NumFutexTypes];
+	int                   signal_event_futex(SocketEventType type);
+	int                   consume_event_futex(SocketEventType type);
 	/**
 	 * The lock protecting this socket.
 	 */

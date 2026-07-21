@@ -195,6 +195,13 @@ extern "C" void reset_network_stack_state(bool isIpThread)
 				DebugErrorHandler::log("Ignoring corrupted socket lock {}.",
 				                       lock);
 			}
+			// Notify all threads waiting on the socket's futexes so that they
+			// do not sleep forever on this old socket.
+			for (auto &eventState : socket->eventFutexState)
+			{
+				eventState.store(SocketNotAvailable);
+				eventState.notify_all();
+			}
 
 			FreeRTOS_Socket_t *s = socket->socket;
 			if (Capability{s}.is_valid() &&
