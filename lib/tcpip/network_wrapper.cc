@@ -793,16 +793,30 @@ int network_socket_close(Timeout            *t,
 	{
 		return -EINVAL;
 	}
+	/*
+	 * Since the lock can be set for destruction under
+	 * network stack reset scenario, we use the lockless
+	 * version of with_sealed_socket here.
+	 */
 	return with_sealed_socket(
 	  [=](SealedSocket *socket) {
+		  /*
+		   * Since with_sealed_socket has an internal
+		   * ephemeral call, socket won't be freed until
+		   * the first cross-compartment call: heap_can_free.
+		   * So before we make that call, save a snapshot
+		   * of the internal fields of the wrapper.
+		   */
+		  auto rawSocket   = socket->socket;
+		  auto socketEpoch = socket->socketEpoch;
 		  // We will fail to lock if the socket is coming from
 		  // a previous instance of the network stack as it set
 		  // for destruction. Ignore the failure: we will not
 		  // call the FreeRTOS API on it anyways.
 		  LockGuard g{socket->socketLock, t};
-		  if (g || (socket->socketEpoch != currentSocketEpoch.load()))
+		  if (g || (socketEpoch != currentSocketEpoch.load()))
 		  {
-			  if (socket->socketEpoch != currentSocketEpoch.load())
+			  if (socketEpoch != currentSocketEpoch.load())
 			  {
 				  Debug::log(
 				    "Destroying a socket from a previous instance of the "
@@ -812,7 +826,7 @@ int network_socket_close(Timeout            *t,
 			  }
 			  // Since we free the socket and the token at the end after
 			  // terminating the socket, ensure that the frees won't fail
-			  if (heap_can_free(mallocCapability, socket->socket) != 0 ||
+			  if (heap_can_free(mallocCapability, rawSocket) != 0 ||
 			      token_obj_can_destroy(
 			        mallocCapability, socket_key(), sealedSocket) != 0)
 			  {
@@ -823,7 +837,6 @@ int network_socket_close(Timeout            *t,
 				  // again with the right capability.
 				  return -EINVAL;
 			  }
-			  bool isTCP = socket->socket->ucProtocol == FREERTOS_IPPROTO_TCP;
 			  // Shut down the socket and close the firewall.
 			  //
 			  // Don't call `FreeRTOS_shutdown` if the socket is
@@ -831,10 +844,9 @@ int network_socket_close(Timeout            *t,
 			  // stack (the socket is invalid anyways). Don't close
 			  // the firewall either as this was already done
 			  // during the reset.
-			  if (socket->socketEpoch == currentSocketEpoch.load())
+			  if (socketEpoch == currentSocketEpoch.load())
 			  {
-				  auto rawSocket = socket->socket;
-
+				  bool isTCP = rawSocket->ucProtocol == FREERTOS_IPPROTO_TCP;
 				  // Nothing to do if `FreeRTOS_shutdown`
 				  // fails: this happens only if the TCP
 				  // connection is dead, which is likely to
@@ -854,10 +866,8 @@ int network_socket_close(Timeout            *t,
 					  {
 						  auto ret = with_freertos_timeout(
 						    t, rawSocket, FREERTOS_SO_RCVTIMEO, [&] {
-							    return FreeRTOS_recv(socket->socket,
-							                         nullptr,
-							                         1,
-							                         FREERTOS_MSG_PEEK);
+							    return FreeRTOS_recv(
+							      rawSocket, nullptr, 1, FREERTOS_MSG_PEEK);
 						    });
 
 						  // `FreeRTOS_recv` can return
@@ -929,7 +939,7 @@ int network_socket_close(Timeout            *t,
 						  // socket, which shouldn't
 						  // happen here.
 						  struct freertos_sockaddr address = {0};
-						  FreeRTOS_GetRemoteAddress(socket->socket, &address);
+						  FreeRTOS_GetRemoteAddress(rawSocket, &address);
 
 						  if (rawSocket->u.xTCP.eTCPState == eTCP_LISTEN)
 						  {
@@ -950,7 +960,7 @@ int network_socket_close(Timeout            *t,
 				  }
 			  }
 			  int ret = 0;
-			  if (socket->socketEpoch == currentSocketEpoch.load())
+			  if (socketEpoch == currentSocketEpoch.load())
 			  {
 				  Debug::Assert(!ds::linked_list::is_singleton(&(socket->ring)),
 				                "The socket should be present in the list.");
@@ -967,7 +977,7 @@ int network_socket_close(Timeout            *t,
 				  // clean up the memory. This returns 1 on success.
 				  // Again, do not do this if the socket is from a
 				  // previous instance of the network stack.
-				  auto closeStatus = close_socket_retry(t, socket->socket);
+				  auto closeStatus = close_socket_retry(t, rawSocket);
 				  if (closeStatus == 0)
 				  {
 					  // The only reason why this would fail is internal
@@ -990,7 +1000,7 @@ int network_socket_close(Timeout            *t,
 			  }
 
 			  // Drop the caller's claim on the socket.
-			  if (heap_free(mallocCapability, socket->socket) != 0)
+			  if (heap_free(mallocCapability, rawSocket) != 0)
 			  {
 				  // This is not supposed to happen, since we did a
 				  // `heap_can_free` earlier (unless we did not have
