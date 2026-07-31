@@ -51,7 +51,7 @@ enum SocketEventType : uint8_t
 static constexpr size_t NumFutexTypes = SocketEventType::SocketAcceptEvent + 1;
 /// Sentinel value stored in a socket event futex after the socket has been
 /// torn down.
-static constexpr uint32_t SocketNotAvailable = -1;
+static constexpr int32_t SocketNotAvailable = INT32_MIN;
 
 /**
  * Enumeration defining the connection type.
