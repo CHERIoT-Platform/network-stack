@@ -120,7 +120,7 @@ namespace
 			  }
 			  /*
 			   * We are not holding the socket lock here, but still doing
-			   * deference of the socket, which can lead to an UAF error.
+			   * dereference of the socket, which can lead to an UAF error.
 			   * To address this, we use ephemeral call before dereferencing
 			   * the socket.
 			   */
@@ -128,8 +128,8 @@ namespace
 			    heap_claim_ephemeral(TimeoutWaitForever, socket, nullptr);
 			  if (result != 0)
 			  {
-				  /**
-				   * The result cannot be -ETIMEOUT, since we have unlimited
+				  /*
+				   * The result cannot be -ETIMEDOUT, since we have unlimited
 				   * timeout. Return -EINVAL if socket is neither null nor a
 				   * valid pointer at the end.
 				   */
