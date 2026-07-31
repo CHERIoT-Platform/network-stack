@@ -425,6 +425,12 @@ int SealedSocket::signal_event_futex(SocketEventType type)
 	uint32_t current = futex.load();
 	while (current != SocketNotAvailable)
 	{
+		/*
+		 * If the futex's current value equals current,
+		 * store current + 1 and return true. Otherwise
+		 * write the actual current value into current
+		 * (by reference) and return false.
+		 */
 		if (futex.compare_exchange_strong(current, current + 1))
 		{
 			futex.notify_all();
@@ -435,10 +441,6 @@ int SealedSocket::signal_event_futex(SocketEventType type)
 	return -EINVAL;
 }
 
-/**
- * The caller must hold socketLock, which prevents the SealedSocket from being
- * deallocated while this method accesses the futex.
- */
 int SealedSocket::consume_event_futex(SocketEventType type)
 {
 	auto    &futex   = eventFutexState[type];
