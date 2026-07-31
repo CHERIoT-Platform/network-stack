@@ -49,7 +49,7 @@ struct SealedSocket
 	 * feature. Different events increment different futexes in the array and
 	 * wake the corresponding waiting threads.
 	 */
-	std::atomic<uint32_t> eventFutexState[NumFutexTypes];
+	std::atomic<int32_t> eventFutexState[NumFutexTypes];
 	/**
 	 * Increments the futex and notifies all waiters if the futex is still
 	 * valid.
@@ -58,16 +58,17 @@ struct SealedSocket
 	 */
 	int signal_event_futex(SocketEventType type);
 	/**
-	 * Consume one pending event by decrementing the futex.
+	 * Records one successfully accepted child socket by decrementing the accept
+	 * event counter.
 	 *
 	 * The caller must hold `socketLock`, which prevents the socket from being
-	 * deallocated while the futex is accessed. This operation is only
-	 * bookkeeping: the caller has already consumed the corresponding event, so
-	 * a zero counter is not an error.
+	 * freed while the futex is accessed. The futex value may become negative
+	 * if this helper is invoked after `FreeRTOS_accept()` successfully dequeue
+	 * a child, but before `on_tcp_connect()` increment the futex. The delayed
+	 * increment will repay this temporary debt.
 	 *
-	 * Returns 0 if the futex remains valid, regardless of whether the counter
-	 * was decremented. Returns `-EINVAL` if the futex has been invalidated by
-	 * being set to `SocketNotAvailable` because the socket is being torn down.
+	 * Returns 0 on success, or `-EINVAL` if the futex has been invalidated by
+	 * being set to `SocketNotAvailable`.
 	 */
 	int consume_event_futex(SocketEventType type);
 	/**
