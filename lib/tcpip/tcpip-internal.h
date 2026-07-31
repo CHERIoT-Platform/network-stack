@@ -50,8 +50,26 @@ struct SealedSocket
 	 * wake the corresponding waiting threads.
 	 */
 	std::atomic<uint32_t> eventFutexState[NumFutexTypes];
-	int                   signal_event_futex(SocketEventType type);
-	int                   consume_event_futex(SocketEventType type);
+	/**
+	 * Increments the futex and notifies all waiters if the futex is still
+	 * valid.
+	 *
+	 * Returns 0 on success, or `-EINVAL` if the futex has been invalidated.
+	 */
+	int signal_event_futex(SocketEventType type);
+	/**
+	 * Consume one pending event by decrementing the futex.
+	 *
+	 * The caller must hold `socketLock`, which prevents the socket from being
+	 * deallocated while the futex is accessed. This operation is only
+	 * bookkeeping: the caller has already consumed the corresponding event, so
+	 * a zero counter is not an error.
+	 *
+	 * Returns 0 if the futex remains valid, regardless of whether the counter
+	 * was decremented. Returns `-EINVAL` if the futex has been invalidated by
+	 * being set to `SocketNotAvailable` because the socket is being torn down.
+	 */
+	int consume_event_futex(SocketEventType type);
 	/**
 	 * The lock protecting this socket.
 	 */
