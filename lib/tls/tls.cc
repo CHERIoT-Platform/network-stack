@@ -434,7 +434,7 @@ TLSConnection tls_connection_create(Timeout             *t,
 	br_ssl_client_init(
 	  clientContext.get(), x509Context.get(), trustAnchors, trustAnchorsCount);
 
-	static constexpr size_t                           MinimumBufferSize = 837;
+	static constexpr size_t                           MinimumBufferSize = 1024;
 	std::unique_ptr<unsigned char, decltype(deleter)> iobufIn{
 	  static_cast<unsigned char *>(
 	    heap_allocate(t, allocator, MinimumBufferSize)),
