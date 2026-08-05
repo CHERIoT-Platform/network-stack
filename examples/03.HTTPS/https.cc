@@ -14,7 +14,7 @@
 
 #include "DigiCert_Global_G2_TLS_RSA_SHA256_2020_CA1.h"
 
-using Debug            = ConditionalDebug<true, "Network test">;
+using Debug            = ConditionalDebug<true, "HTTPS Example">;
 constexpr bool UseIPv6 = CHERIOT_RTOS_OPTION_IPv6;
 
 DECLARE_AND_DEFINE_CONNECTION_CAPABILITY(ExampleComTLS,
