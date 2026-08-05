@@ -296,6 +296,8 @@ namespace
 				  auto state = br_ssl_engine_current_state(engine);
 				  if ((state & BR_SSL_CLOSED) == BR_SSL_CLOSED)
 				  {
+					  Debug::log("Last error: {}",
+					             br_ssl_engine_last_error(engine));
 					  return -ENOTCONN;
 				  }
 
@@ -305,6 +307,7 @@ namespace
 					  auto [sent, unfinished] = send_records(t, connection);
 					  if (sent == -ECOMPARTMENTFAIL)
 					  {
+						  Debug::log("TCP/IP compartment crashed");
 						  // The TCP/IP stack crashed; tell the
 						  // caller that the link is dead.
 						  return -ENOTCONN;
@@ -355,6 +358,8 @@ namespace
 					  }
 					  if (received <= 0)
 					  {
+						  Debug::log("Last error: {}",
+						             br_ssl_engine_last_error(engine));
 						  // The receive failed. This
 						  // can happen for a number of
 						  // reasons, but most likely
@@ -513,6 +518,7 @@ TLSConnection tls_connection_create(Timeout             *t,
 		{
 			if (receive_records(t, context) <= 0)
 			{
+				Debug::log("Last error: {}", br_ssl_engine_last_error(engine));
 				return nullptr;
 			}
 		}
@@ -548,6 +554,8 @@ ssize_t tls_connection_send(Timeout      *t,
 			  auto state = br_ssl_engine_current_state(engine);
 			  if ((state & BR_SSL_CLOSED) == BR_SSL_CLOSED)
 			  {
+				  Debug::log("Last error: {}",
+				             br_ssl_engine_last_error(engine));
 				  return -ENOTCONN;
 			  }
 			  if ((state & BR_SSL_SENDREC) == BR_SSL_SENDREC)
@@ -557,6 +565,7 @@ ssize_t tls_connection_send(Timeout      *t,
 				  auto [sent, unfinished] = send_records(t, connection);
 				  if (sent == -ECOMPARTMENTFAIL)
 				  {
+					  Debug::log("TCP/IP compartment crashed");
 					  // The TCP/IP stack crashed; tell the
 					  // caller that the link is dead.
 					  return -ENOTCONN;
