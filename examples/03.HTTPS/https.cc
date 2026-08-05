@@ -12,7 +12,7 @@
 #include <tick_macros.h>
 #include <tls.h>
 
-#include "DigiCert_Global_G2_TLS_RSA_SHA256_2020_CA1.h"
+#include "ssl.com.h"
 
 using Debug            = ConditionalDebug<true, "HTTPS Example">;
 constexpr bool UseIPv6 = CHERIOT_RTOS_OPTION_IPv6;
