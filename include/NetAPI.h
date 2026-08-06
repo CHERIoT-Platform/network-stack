@@ -112,6 +112,25 @@ struct BindCapabilityState
 	uint16_t maximumNumberOfConcurrentTCPConnections;
 };
 
+/**
+ * Permissions on socket handles.
+ */
+enum [[clang::flag_enum]] SocketPermission
+{
+	/**
+	 * This handle may be used to send data.
+	 */
+	SocketPermitSend = (1 << 0),
+	/**
+	 * This handle may be used to receive data.
+	 */
+	SocketPermitReceive = (1 << 1),
+	/**
+	 * This handle may be used to close the socket.
+	 */
+	SocketPermitClose = (1 << 2),
+};
+
 /// Type for a bind capability
 typedef CHERI_SEALED(struct BindCapabilityState *) BindCapability;
 
@@ -264,6 +283,27 @@ Socket __cheri_compartment("TCPIP")
                      bool                isIPv6);
 
 /**
+ * Returns the permissions held by this socket handle. This is a bitmask of
+ * `SocketPermission` values.
+ */
+static inline int network_socket_permissions(Socket socket)
+{
+	return token_permissions_get(socket);
+}
+
+/**
+ * Returns a copy of `socket` with a subset of permissions.  The `permissions`
+ * argument is a bitmask of `SocketPermission` values.  The returned handle has
+ * only the permissions that are both already present on `socket` and
+ * enumerated in `permissions`.
+ */
+static inline Socket network_socket_permissions_and(Socket socket,
+                                                    int    permissions)
+{
+	return token_permissions_and(socket, permissions);
+}
+
+/**
  * Authorise a UDP socket to send packets to a specific host.  This opens a
  * firewall hole allowing the socket to send and receive packets to the host.
  *
@@ -287,8 +327,11 @@ NetworkAddress __cheri_compartment("NetAPI")
  * Close a socket.  This must be called with the same malloc capability that
  * was used to allocate the socket.
  *
+ * The socket handle must hold the permission `SocketPermitClose`.
+ *
  * Returns 0 on success, or a negative error code on failure:
  *
+ *  - -EPERM: The socket handle does not hold the permission to close.
  *  - -EINVAL: Invalid argument (the socket is not valid, the malloc capability
  *             does not match the socket, or the timeout is invalid). When
  *             -EINVAL is returned, no resources were freed and the socket was
@@ -326,13 +369,16 @@ struct NetworkReceiveResult
  * allocated with the given malloc capability, the caller is responsible for
  * freeing this buffer.
  *
+ * The socket handle must hold the permission `SocketPermitReceive`.
+ *
  * The `bytesReceived` field of the result will be negative if an error
  * occurred.  The `buffer` field will be an untagged value if no data were
  * received.
  *
  * The negative values will be errno values:
  *
- *  - `-EINVAL`: The socket is not valid.
+ *  - `-EPERM`: The socket handle does not hold the permission to receive data.
+ *  - `-EINVAL`: The timeout or socket is not valid.
  *  - `-ETIMEDOUT`: The timeout was reached before data could be received.
  *  - `-ENOTCONN`: The socket is not connected.
  */
@@ -346,6 +392,8 @@ NetworkReceiveResult __cheri_compartment("TCPIP")
  * data are received or the timeout expires.  If data are received, they will be
  * stored in the provided buffer.
  *
+ * The socket handle must hold the permission `SocketPermitReceive`.
+ *
  * NOTE: Callers should remove global and load permissions from `buffer` before
  * passing it to this function if they are worried about a potentially
  * compromised network stack.
@@ -355,8 +403,9 @@ NetworkReceiveResult __cheri_compartment("TCPIP")
  *
  * The negative values will be errno values:
  *
- *  - `-EPERM`: `buffer` and/or `length` are invalid.
- *  - `-EINVAL`: The socket is not valid.
+ *  - `-EPERM`: `buffer` and/or `length` are invalid, or the socket handle does
+ *              not hold the permission to receive data.
+ *  - `-EINVAL`: The timeout or socket is not valid.
  *  - `-ETIMEDOUT`: The timeout was reached before data could be received.
  *  - `-ENOTCONN`: The socket is not connected.
  */
@@ -372,6 +421,8 @@ int __cheri_compartment("TCPIP")
  * allocated with the given malloc capability, the caller is responsible for
  * freeing this buffer.
  *
+ * The socket handle must hold the permission `SocketPermitReceive`.
+ *
  * The `address` and `port` arguments are used to return the address and port
  * of the sender, in host byte order.  These can be null if the caller is not
  * interested in the sender's address or port.
@@ -386,8 +437,9 @@ int __cheri_compartment("TCPIP")
  * The negative values will be errno values:
  *
  *  - `-ENOMEM`: The allocation quota is insufficient to hold the packet.
- *  - `-EPERM`: The `address` and/or `port` pointers are invalid.
- *  - `-EINVAL`: The socket is not valid.
+ *  - `-EPERM`: The `address` and/or `port` pointers are invalid, or the socket
+ *              handle does not hold the permission to receive data.
+ *  - `-EINVAL`: The timeout or socket is not valid.
  *  - `-ETIMEDOUT`: The timeout was reached before data could be received.
  *  - `-ENOTCONN`: The socket is not connected.
  */
@@ -399,8 +451,23 @@ NetworkReceiveResult __cheri_compartment("TCPIP")
                               uint16_t           *port);
 
 /**
- * Send data over a TCP socket.  This will block until the data have been sent
- * or the timeout expires.
+ * Send data over a TCP socket. This will block until the data have been queued
+ * for sending or the timeout expires.
+ *
+ * The socket handle must hold the permission `SocketPermitSend`.
+ *
+ * The return value is either the number of bytes queued for sending, or a
+ * negative error code.
+ *
+ * The negative values will be errno values:
+ *
+ *  - `-EPERM`: `buffer` and/or `length` are invalid, or the socket handle does
+ *              not hold the permission to send data.
+ *  - `-EINVAL`: The timeout or socket is not valid.
+ *  - `-ETIMEDOUT`: The timeout was reached before data could be sent.
+ *  - `-ENOMEM`: The network stack ran out of memory (quota or available
+ *               memory) to send the packet.
+ *  - `-ENOTCONN`: The socket is not connected.
  */
 ssize_t __cheri_compartment("TCPIP") network_socket_send(Timeout *timeout,
                                                          Socket   socket,
@@ -413,8 +480,22 @@ ssize_t __cheri_compartment("TCPIP") network_socket_send(Timeout *timeout,
  * authorised with `network_socket_udp_authorise_host` (the packets will be
  * silently dropped if not, there will be no error reported).
  *
- * This will block until the data have been sent or the timeout expires.  The
- * return value is the number of bytes sent or a negative error code.
+ * The socket handle must hold the permission `SocketPermitSend`.
+ *
+ * This will block until the data have been queued for sending or the timeout
+ * expires. The return value is the number of bytes queued for sending or a
+ * negative error code.
+ *
+ * The negative values will be errno values:
+ *
+ *  - `-EPERM`: `buffer` and/or `length` and/or `address` are invalid, or the
+ *              socket handle does not hold the permission to send data.
+ *  - `-EINVAL`: The timeout or socket is not valid.
+ *  - `-ETIMEDOUT`: The timeout was reached before data could be sent.
+ *  - `-ENOMEM`: The network stack ran out of memory (quota or available
+ *               memory) to send the packet.
+ *  - `-ENOTCONN`: The socket is invalid and should be closed (typically caused
+ *                 by a network stack reset).
  */
 ssize_t __cheri_compartment("TCPIP")
   network_socket_send_to(Timeout              *timeout,
