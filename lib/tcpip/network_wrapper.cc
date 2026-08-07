@@ -415,6 +415,9 @@ namespace
  * an attempted three-way-handshake failed. We can use it to tell the firewall
  * to remove the hole.
  *
+ * For an active close, FreeRTOS also calls this before sending the final ACK.
+ * The firewall hole must stay open until that ACK passes its egress filter.
+ *
  * Note that this may or may not be called if *we* close the socket through
  * `FreeRTOS_closesocket`: if the remote peer does not complete the termination
  * handshake or if our timeout runs out, the connection may be left dangling,
@@ -425,8 +428,8 @@ static void on_tcp_connect(Socket_t socket, BaseType_t isConnected)
 	if (!isConnected)
 	{
 		/**
-		 * A TCP connection was closed. Close the corresponding
-		 * firewall hole.
+		 * A TCP connection was closed. Close its firewall hole, or hold
+		 * it open for the final ACK.
 		 *
 		 * Note that this is called from the TCP/IP thread, i.e., it
 		 * cannot possibly race with a free of the `socket`, even if
@@ -447,8 +450,29 @@ static void on_tcp_connect(Socket_t socket, BaseType_t isConnected)
 		}
 		else
 		{
-			firewall_remove_tcpipv4_remote_endpoint(
-			  address.sin_address.ulIP_IPv4, localPort, address.sin_port);
+			const auto &tcp = socket->u.xTCP;
+			/*
+			 * Check whether we are the termination
+			 * initiator and ready to send the final ack.
+			 */
+			if ((tcp.eTCPState == eCLOSE_WAIT) && !tcp.bits.bFinAccepted &&
+			    tcp.bits.bFinSent && tcp.bits.bFinRecv && tcp.bits.bFinAcked &&
+			    !tcp.bits.bFinLast)
+			{
+				// Wait for egress to mark the hole safe to remove.
+				if (firewall_mark_tcpipv4_endpoint_in_termination(
+				      address.sin_address.ulIP_IPv4,
+				      localPort,
+				      address.sin_port) != 0)
+				{
+					Debug::log("Failed to mark the firewall hole as closing");
+				}
+			}
+			else
+			{
+				firewall_remove_tcpipv4_remote_endpoint(
+				  address.sin_address.ulIP_IPv4, localPort, address.sin_port);
+			}
 		}
 	}
 }
@@ -880,8 +904,15 @@ int network_socket_close(Timeout            *t,
 						  {
 							  Timeout sleep{1};
 							  thread_sleep(&sleep);
+							  // Count this sleep in the caller's timeout.
+							  t->elapse(sleep.elapsed);
 						  }
 					  } while (!terminated && t->may_block());
+
+					  if (!terminated)
+					  {
+						  return -ETIMEDOUT;
+					  }
 				  }
 
 				  auto localPort = htons(rawSocket->usLocalPort);
@@ -947,6 +978,38 @@ int network_socket_close(Timeout            *t,
 						  }
 						  else
 						  {
+							  // Get the state of the endpoint associated
+							  // with this socket.
+							  auto firewallState =
+							    firewall_get_tcpipv4_endpoint_state(
+							      address.sin_address.ulIP_IPv4,
+							      localPort,
+							      address.sin_port);
+
+							  // Wait until egress marks the hole safe to
+							  // remove.
+							  while ((firewallState !=
+							          TCPFirewallState::CanBeRemoved) &&
+							         t->may_block())
+							  {
+								  Timeout sleep{1};
+								  thread_sleep(&sleep);
+								  t->elapse(sleep.elapsed);
+								  firewallState =
+								    firewall_get_tcpipv4_endpoint_state(
+								      address.sin_address.ulIP_IPv4,
+								      localPort,
+								      address.sin_port);
+							  }
+
+							  if (firewallState !=
+							      TCPFirewallState::CanBeRemoved)
+							  {
+								  // Keep the socket and hole so the caller can
+								  // retry.
+								  return -ETIMEDOUT;
+							  }
+
 							  firewall_remove_tcpipv4_remote_endpoint(
 							    address.sin_address.ulIP_IPv4,
 							    localPort,

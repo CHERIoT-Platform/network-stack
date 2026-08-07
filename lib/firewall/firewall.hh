@@ -113,6 +113,46 @@ void __cheri_compartment("Firewall")
                                 uint16_t remotePort);
 
 /**
+ * State of an IPv4 TCP firewall hole during close.
+ *
+ *  - `InUse`: The connection is open and packets may pass.
+ *  - `InTermination`: The final packet has not passed egress yet.
+ *  - `CanBeRemoved`: Egress passed the final packet; the hole may be removed.
+ *  - `NotFound`: No hole matches the address and ports.
+ */
+enum class TCPFirewallState : uint32_t
+{
+	InUse         = 0,
+	InTermination = 1,
+	CanBeRemoved  = 2,
+	NotFound      = 3,
+};
+
+/**
+ * Change a TCP hole from `InUse` to `InTermination`, keeping it open for the
+ * final egress packet.
+ *
+ * Returns:
+ *
+ *  - 0 on success.
+ *  - `-ENOENT` if no in-use hole matches.
+ */
+int __cheri_compartment("Firewall")
+  firewall_mark_tcpipv4_endpoint_in_termination(uint32_t remoteAddress,
+                                                uint16_t localPort,
+                                                uint16_t remotePort);
+
+/**
+ * Get a TCP hole's state without changing it.
+ *
+ * Returns the state, or `TCPFirewallState::NotFound` if no hole matches.
+ */
+TCPFirewallState __cheri_compartment("Firewall")
+  firewall_get_tcpipv4_endpoint_state(uint32_t remoteAddress,
+                                      uint16_t localPort,
+                                      uint16_t remotePort);
+
+/**
  * Open a hole in the firewall for UDP packets to and from the given endpoint.
  * This permits inbound packets to, and outbound packets from, the specified
  * local port, if the remote endpoint is the given remote address and port.

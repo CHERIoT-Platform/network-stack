@@ -3,9 +3,11 @@
 
 #include <atomic>
 #include <compartment-macros.h>
+#include <cstddef>
 #include <debug.hh>
 // #include <fail-simulator-on-error.h>
 #include <endianness.hh>
+#include <errno.h>
 #include <locks.hh>
 #include <platform-entropy.hh>
 #include <platform-ethernet.hh>
@@ -37,7 +39,8 @@ namespace
 		__noinline void insert(void       *buffer,
 		                       size_t      bufferSize,
 		                       const void *element,
-		                       size_t      elementSize)
+		                       size_t      elementSize,
+		                       size_t      keySize)
 		{
 			// This currently does a linear search.  This is less code than a
 			// binary search and we don't insert on a hot path, so this should
@@ -45,7 +48,7 @@ namespace
 			for (size_t i = 0; i < bufferSize; i += elementSize)
 			{
 				void *current = reinterpret_cast<uint8_t *>(buffer) + i;
-				if (memcmp(current, element, elementSize) > 0)
+				if (memcmp(current, element, keySize) > 0)
 				{
 					memmove(reinterpret_cast<uint8_t *>(current) + elementSize,
 					        current,
@@ -66,7 +69,8 @@ namespace
 		__noinline void *binary_search(void       *buffer,
 		                               size_t      bufferSize,
 		                               const void *element,
-		                               size_t      elementSize)
+		                               size_t      elementSize,
+		                               size_t      comparisonSize)
 		{
 			if (bufferSize > 0)
 			{
@@ -77,7 +81,7 @@ namespace
 					size_t mid = low + (high - low) / 2;
 					void  *current =
 					  reinterpret_cast<uint8_t *>(buffer) + (mid * elementSize);
-					int comparison = memcmp(current, element, elementSize);
+					int comparison = memcmp(current, element, comparisonSize);
 					if (comparison == 0)
 					{
 						return current;
@@ -107,10 +111,11 @@ namespace
 		__noinline bool remove(void       *buffer,
 		                       size_t      bufferSize,
 		                       const void *element,
-		                       size_t      elementSize)
+		                       size_t      elementSize,
+		                       size_t      keySize)
 		{
 			void *found =
-			  binary_search(buffer, bufferSize, element, elementSize);
+			  binary_search(buffer, bufferSize, element, elementSize, keySize);
 			if (found == nullptr)
 			{
 				return false;
@@ -153,11 +158,11 @@ namespace
 	/**
 	 * A simple table of `T`s, stored as a sorted array.  This uses `memcmp` and
 	 * `memcpy` to compare and copy elements and so requires that `T` is a
-	 * trivial type.
+	 * trivial type.  The first `KeySize` bytes form the table key.
 	 *
 	 * This never shrinks and does a full copy if it needs to grow.
 	 */
-	template<typename T>
+	template<typename T, size_t KeySize = sizeof(T)>
 	class SmallTable : public SmallTableBase
 	{
 		static_assert(std::is_trivial_v<T>, "T must be a trivial type");
@@ -252,8 +257,11 @@ namespace
 
 			buffer = CHERI::Capability<T>{static_cast<T *>(currentBase)};
 
-			SmallTableBase::insert(
-			  currentBase, currentSize * sizeof(T), &element, sizeof(T));
+			SmallTableBase::insert(currentBase,
+			                       currentSize * sizeof(T),
+			                       &element,
+			                       sizeof(T),
+			                       KeySize);
 			set_size(currentSize + 1);
 		}
 
@@ -264,7 +272,7 @@ namespace
 		bool remove(const T &element)
 		{
 			if (SmallTableBase::remove(
-			      base(), size() * sizeof(T), &element, sizeof(T)))
+			      base(), size() * sizeof(T), &element, sizeof(T), KeySize))
 			{
 				set_size(size() - 1);
 				return true;
@@ -287,13 +295,20 @@ namespace
 		}
 
 		/**
+		 * Returns the matching element, or `nullptr` if it is not present.
+		 */
+		T *find(const T &element)
+		{
+			return static_cast<T *>(binary_search(
+			  base(), size() * sizeof(T), &element, sizeof(T), KeySize));
+		}
+
+		/**
 		 * Returns true if the table contains the given element.
 		 */
 		bool contains(const T &element)
 		{
-			return binary_search(
-			         base(), size() * sizeof(T), &element, sizeof(T)) !=
-			       nullptr;
+			return find(element) != nullptr;
 		}
 
 		/**
@@ -523,14 +538,19 @@ namespace
 			Address  remoteAddress;
 			uint16_t localPort;
 			uint16_t remotePort;
+			// Tracks whether this hole is open, closing, or safe to remove.
+			TCPFirewallState state;
 			// A clang-tidy bug thinks that this should be = nullptr instead of
 			// = default.
 			auto operator<=>(const ConnectionTuple &) const = default; // NOLINT
 		};
-		SmallTable<uint16_t>        tcpServerPorts;
-		SmallTable<ConnectionTuple> permittedTCPEndpoints;
-		SmallTable<ConnectionTuple> permittedUDPEndpoints;
-		FlagLockPriorityInherited   permittedEndpointsLock;
+		using ConnectionTable =
+		  SmallTable<ConnectionTuple, offsetof(ConnectionTuple, state)>;
+
+		SmallTable<uint16_t>      tcpServerPorts;
+		ConnectionTable           permittedTCPEndpoints;
+		ConnectionTable           permittedUDPEndpoints;
+		FlagLockPriorityInherited permittedEndpointsLock;
 
 		using GuardedTable =
 		  std::pair<LockGuard<decltype(permittedEndpointsLock)>,
@@ -546,6 +566,17 @@ namespace
 			                    protocol == IPProtocolNumber::TCP
 			                      ? permittedTCPEndpoints
 			                      : permittedUDPEndpoints};
+		}
+
+		/**
+		 * Find a hole by endpoint without comparing its state.
+		 *
+		 * Returns the matching hole, or `nullptr` if none is found.
+		 */
+		ConnectionTuple *find_endpoint(ConnectionTable       &table,
+		                               const ConnectionTuple &key)
+		{
+			return table.find(key);
 		}
 
 		public:
@@ -574,8 +605,85 @@ namespace
 			// auto [g, table] = permitted_endpoints(protocol);
 			auto guardedTable = permitted_endpoints(protocol);
 			auto &[g, table]  = guardedTable;
-			ConnectionTuple tuple{endpoint, localPort, remotePort};
+			ConnectionTuple tuple{
+			  endpoint, localPort, remotePort, TCPFirewallState::InUse};
 			return table.remove(tuple);
+		}
+
+		/**
+		 * Change a TCP hole from `InUse` to `InTermination`.
+		 *
+		 * Returns:
+		 *
+		 *  - 0 on success.
+		 *  - `-ENOENT` if no in-use hole matches.
+		 */
+		int mark_tcp_endpoint_in_termination(Address  remoteAddress,
+		                                     uint16_t localPort,
+		                                     uint16_t remotePort)
+		{
+			LockGuard       g{permittedEndpointsLock};
+			ConnectionTuple key{
+			  remoteAddress, localPort, remotePort, TCPFirewallState::InUse};
+			if (ConnectionTuple *tuple =
+			      find_endpoint(permittedTCPEndpoints, key);
+			    (tuple != nullptr) && (tuple->state == TCPFirewallState::InUse))
+			{
+				// The final packet still needs this hole.
+				tuple->state = TCPFirewallState::InTermination;
+				return 0;
+			}
+			return -ENOENT;
+		}
+
+		/**
+		 * Change a TCP hole from `InTermination` to `CanBeRemoved`.
+		 *
+		 * Returns:
+		 *
+		 *  - 0 on success.
+		 *  - `-ENOENT` if no closing hole matches.
+		 */
+		int mark_tcp_endpoint_can_be_removed(Address  remoteAddress,
+		                                     uint16_t localPort,
+		                                     uint16_t remotePort)
+		{
+			LockGuard       g{permittedEndpointsLock};
+			ConnectionTuple key{remoteAddress,
+			                    localPort,
+			                    remotePort,
+			                    TCPFirewallState::InTermination};
+			if (ConnectionTuple *tuple =
+			      find_endpoint(permittedTCPEndpoints, key);
+			    (tuple != nullptr) &&
+			    (tuple->state == TCPFirewallState::InTermination))
+			{
+				// The final packet passed the filter.
+				tuple->state = TCPFirewallState::CanBeRemoved;
+				return 0;
+			}
+			return -ENOENT;
+		}
+
+		/**
+		 * Get a TCP hole's state without changing it.
+		 *
+		 * Returns the state, or `TCPFirewallState::NotFound` if no hole
+		 * matches.
+		 */
+		TCPFirewallState tcp_endpoint_state(Address  remoteAddress,
+		                                    uint16_t localPort,
+		                                    uint16_t remotePort)
+		{
+			LockGuard       g{permittedEndpointsLock};
+			ConnectionTuple key{
+			  remoteAddress, localPort, remotePort, TCPFirewallState::InUse};
+			if (ConnectionTuple *tuple =
+			      find_endpoint(permittedTCPEndpoints, key))
+			{
+				return tuple->state;
+			}
+			return TCPFirewallState::NotFound;
 		}
 
 		void add_server_port(uint16_t localPort)
@@ -607,8 +715,12 @@ namespace
 			// auto [g, table] = permitted_endpoints(protocol);
 			auto guardedTable = permitted_endpoints(protocol);
 			auto &[g, table]  = guardedTable;
-			ConnectionTuple tuple{remoteAddress, localPort, remotePort};
-			table.insert(tuple);
+			ConnectionTuple tuple{
+			  remoteAddress, localPort, remotePort, TCPFirewallState::InUse};
+			if (!table.contains(tuple))
+			{
+				table.insert(tuple);
+			}
 		}
 
 		void remove_endpoint(IPProtocolNumber protocol, uint16_t localPort)
@@ -643,7 +755,8 @@ namespace
 			// auto [g, table] = permitted_endpoints(protocol);
 			auto guardedTable = permitted_endpoints(protocol);
 			auto &[g, table]  = guardedTable;
-			ConnectionTuple tuple{endpoint, localPort, remotePort};
+			ConnectionTuple tuple{
+			  endpoint, localPort, remotePort, TCPFirewallState::InUse};
 			return table.contains(tuple);
 		}
 	};
@@ -881,6 +994,23 @@ namespace
 				else
 				{
 					Debug::log("Permitting outbound IPv4 packet");
+
+					const auto *ipv4Header =
+					  reinterpret_cast<const IPv4Header *>(
+					    data + sizeof(EthernetHeader));
+					if (ipv4Header->protocol == IPProtocolNumber::TCP)
+					{
+						const auto *tcpHeader =
+						  reinterpret_cast<const TCPUDPCommonPrefix *>(
+						    reinterpret_cast<const uint8_t *>(ipv4Header) +
+						    ipv4Header->body_offset());
+						// The packet passed; its hole may now be removed.
+						(void)EndpointsTable<uint32_t>::instance()
+						  .mark_tcp_endpoint_can_be_removed(
+						    ipv4Header->destinationAddress,
+						    tcpHeader->sourcePort,
+						    tcpHeader->destinationPort);
+					}
 				}
 				return ret;
 			}
@@ -1065,6 +1195,22 @@ void firewall_add_tcpipv4_endpoint(uint32_t remoteAddress,
 {
 	EndpointsTable<uint32_t>::instance().add_endpoint(
 	  IPProtocolNumber::TCP, remoteAddress, localPort, remotePort);
+}
+
+int firewall_mark_tcpipv4_endpoint_in_termination(uint32_t remoteAddress,
+                                                  uint16_t localPort,
+                                                  uint16_t remotePort)
+{
+	return EndpointsTable<uint32_t>::instance()
+	  .mark_tcp_endpoint_in_termination(remoteAddress, localPort, remotePort);
+}
+
+TCPFirewallState firewall_get_tcpipv4_endpoint_state(uint32_t remoteAddress,
+                                                     uint16_t localPort,
+                                                     uint16_t remotePort)
+{
+	return EndpointsTable<uint32_t>::instance().tcp_endpoint_state(
+	  remoteAddress, localPort, remotePort);
 }
 
 void firewall_add_udpipv4_endpoint(uint32_t remoteAddress,
