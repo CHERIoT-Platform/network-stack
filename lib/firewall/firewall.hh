@@ -114,18 +114,17 @@ void __cheri_compartment("Firewall")
 
 /**
  * State of an IPv4 TCP firewall hole during close.
- *
- *  - `InUse`: The connection is open and packets may pass.
- *  - `InTermination`: The final packet has not passed egress yet.
- *  - `CanBeRemoved`: Egress passed the final packet; the hole may be removed.
- *  - `NotFound`: No hole matches the address and ports.
  */
 enum class TCPFirewallState : uint8_t
 {
-	InUse         = 0,
+	/// The socket is active and packets may pass through this hole.
+	InUse = 0,
+	/// The socket is closing and its final ACK has not passed egress.
 	InTermination = 1,
-	CanBeRemoved  = 2,
-	NotFound      = 3,
+	/// The final ACK passed egress and the hole may be removed.
+	CanBeRemoved = 2,
+	/// No hole matches the remote address and local and remote ports.
+	NotFound = 3,
 };
 
 /**
