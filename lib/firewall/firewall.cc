@@ -1205,12 +1205,13 @@ int firewall_mark_tcpipv4_endpoint_in_termination(uint32_t remoteAddress,
 	  .mark_tcp_endpoint_in_termination(remoteAddress, localPort, remotePort);
 }
 
-TCPFirewallState firewall_get_tcpipv4_endpoint_state(uint32_t remoteAddress,
-                                                     uint16_t localPort,
-                                                     uint16_t remotePort)
+int firewall_get_tcpipv4_endpoint_state(uint32_t remoteAddress,
+                                        uint16_t localPort,
+                                        uint16_t remotePort)
 {
-	return EndpointsTable<uint32_t>::instance().tcp_endpoint_state(
-	  remoteAddress, localPort, remotePort);
+	return static_cast<int>(
+	  EndpointsTable<uint32_t>::instance().tcp_endpoint_state(
+	    remoteAddress, localPort, remotePort));
 }
 
 void firewall_add_udpipv4_endpoint(uint32_t remoteAddress,

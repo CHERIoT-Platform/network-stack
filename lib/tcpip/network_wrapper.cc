@@ -988,8 +988,10 @@ int network_socket_close(Timeout            *t,
 
 							  // Wait until egress marks the hole safe to
 							  // remove.
-							  while ((firewallState !=
-							          TCPFirewallState::CanBeRemoved) &&
+							  while ((firewallState >= 0) &&
+							         (firewallState !=
+							          static_cast<int>(
+							            TCPFirewallState::CanBeRemoved)) &&
 							         t->may_block())
 							  {
 								  Timeout sleep{1};
@@ -1002,8 +1004,14 @@ int network_socket_close(Timeout            *t,
 								      address.sin_port);
 							  }
 
+							  if (firewallState < 0)
+							  {
+								  return firewallState;
+							  }
+
 							  if (firewallState !=
-							      TCPFirewallState::CanBeRemoved)
+							      static_cast<int>(
+							        TCPFirewallState::CanBeRemoved))
 							  {
 								  // Keep the socket and hole so the caller can
 								  // retry.

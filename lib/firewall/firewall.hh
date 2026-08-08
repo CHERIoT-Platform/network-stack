@@ -120,7 +120,7 @@ void __cheri_compartment("Firewall")
  *  - `CanBeRemoved`: Egress passed the final packet; the hole may be removed.
  *  - `NotFound`: No hole matches the address and ports.
  */
-enum class TCPFirewallState : uint32_t
+enum class TCPFirewallState : uint8_t
 {
 	InUse         = 0,
 	InTermination = 1,
@@ -145,9 +145,14 @@ int __cheri_compartment("Firewall")
 /**
  * Get a TCP hole's state without changing it.
  *
- * Returns the state, or `TCPFirewallState::NotFound` if no hole matches.
+ * Returns:
+ *
+ *  - A `TCPFirewallState` value on success.
+ *  - `-ENOTENOUGHSTACK` if there is not enough stack to call the compartment.
+ *  - `-ENOTENOUGHTRUSTEDSTACK` if there is not enough trusted stack.
+ *  - `-ECOMPARTMENTFAIL` if the firewall compartment fails.
  */
-TCPFirewallState __cheri_compartment("Firewall")
+int __cheri_compartment("Firewall")
   firewall_get_tcpipv4_endpoint_state(uint32_t remoteAddress,
                                       uint16_t localPort,
                                       uint16_t remotePort);
