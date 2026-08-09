@@ -40,8 +40,12 @@ struct NetworkAddress
  */
 enum SocketEventType : uint8_t
 {
-	SocketAcceptEvent = 0, // Triggered when a new TCP connection is accepted on
-	                       // a listening socket
+	/// Triggered when a new TCP connection
+	/// is accepted on a listening socket.
+	/// The value of the futex corresponding to
+	/// SocketAcceptEvent, means the number of
+	/// pending connections.
+	SocketAcceptEvent = 0,
 	// SocketReceiveEvent = 1, // Triggered when data is received on a socket
 	// SocketSendEvent = 2     // Triggered when a socket has space available
 	// for sending
