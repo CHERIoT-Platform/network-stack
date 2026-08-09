@@ -715,6 +715,13 @@ Socket network_socket_accept_tcp(Timeout            *timeout,
 		  }
 
 		  socketWrapper->socketEpoch = currentSocketEpoch.load();
+		  /*
+		   * For the newly allocated child socket, initialize the futexes.
+		   */
+		  for (auto &eventState : socketWrapper->eventFutexState)
+		  {
+			  eventState.store(0);
+		  }
 
 		  struct freertos_sockaddr addressTmp;
 		  uint32_t                 addressLength = sizeof(addressTmp);
@@ -798,6 +805,7 @@ Socket network_socket_accept_tcp(Timeout            *timeout,
 			  token_obj_destroy(mallocCapability, socket_key(), sealedSocket);
 			  return -EINVAL;
 		  }
+		  xSocketSetSocketID(rawSocket, socketWrapper);
 
 		  // Set `address`.
 		  if ((heap_claim_ephemeral(timeout, address) < 0) ||
