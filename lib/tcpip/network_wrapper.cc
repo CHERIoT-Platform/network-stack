@@ -415,7 +415,7 @@ namespace
 
 } // namespace
 
-int SealedSocket::signal_event_futex(SocketEventType type)
+int SealedSocket::signal_event_futex(SocketEventType type, int32_t count)
 {
 	auto &futex = eventFutexState[type];
 	if (heap_claim_ephemeral(TimeoutWaitForever, &futex) != 0)
@@ -423,15 +423,16 @@ int SealedSocket::signal_event_futex(SocketEventType type)
 		return -EINVAL;
 	}
 	int32_t current = futex.load();
-	while (current != SocketNotAvailable)
+	while ((current != SocketConnectionClosed) &&
+	       (current != SocketNotAvailable))
 	{
 		/*
 		 * If the futex's current value equals current,
-		 * store current + 1 and return true. Otherwise
+		 * store current + count and return true. Otherwise
 		 * write the actual current value into current
 		 * (by reference) and return false.
 		 */
-		if (futex.compare_exchange_strong(current, current + 1))
+		if (futex.compare_exchange_strong(current, current + count))
 		{
 			futex.notify_all();
 			return 0;
@@ -440,14 +441,41 @@ int SealedSocket::signal_event_futex(SocketEventType type)
 
 	return -EINVAL;
 }
+/**
+ * Wake send waiters when FreeRTOS reports that the TCP connection has closed.
+ * Preserve SocketNotAvailable if the socket wrapper is already being torn down.
+ */
+void SealedSocket::mark_tcp_send_closed()
+{
+	auto &futex = eventFutexState[SocketEventType::SocketTCPSendEvent];
+	// This function will only be called from FreeRTOS callback,
+	// so the caller will not held the socket lock when calling this
+	// function. Thus, ephemeral call is needed to prevent Use-After-Free
+	// issue.
+	if (heap_claim_ephemeral(TimeoutWaitForever, &futex) != 0)
+	{
+		return;
+	}
+	int32_t current = futex.load();
+	while ((current != SocketConnectionClosed) &&
+	       (current != SocketNotAvailable))
+	{
+		if (futex.compare_exchange_strong(current, SocketConnectionClosed))
+		{
+			futex.notify_all();
+			return;
+		}
+	}
+}
 
-int SealedSocket::consume_event_futex(SocketEventType type)
+int SealedSocket::consume_event_futex(SocketEventType type, int32_t count)
 {
 	auto   &futex   = eventFutexState[type];
 	int32_t current = futex.load();
-	while (current != SocketNotAvailable)
+	while ((current != SocketConnectionClosed) &&
+	       (current != SocketNotAvailable))
 	{
-		if (futex.compare_exchange_strong(current, current - 1))
+		if (futex.compare_exchange_strong(current, current - count))
 		{
 			return 0;
 		}
@@ -455,10 +483,29 @@ int SealedSocket::consume_event_futex(SocketEventType type)
 
 	return -EINVAL;
 }
+/**
+ * Callback called by FreeRTOS+TCP when TCP bytes are acknowledged.
+ *
+ * Add the acknowledged byte count to the send event futex and wake all threads
+ * waiting for txStream space.
+ */
+static void on_tcp_sent(Socket_t socket, size_t length)
+{
+	// Retrieve the wrapper from the back pointer.
+	auto *wrapper = static_cast<SealedSocket *>(pvSocketGetSocketID(socket));
+	if (wrapper != nullptr)
+	{
+		wrapper->signal_event_futex(SocketEventType::SocketTCPSendEvent,
+		                            static_cast<int32_t>(length));
+	}
+}
+F_TCP_UDP_Handler_t onTCPSentCallback = {nullptr, nullptr, on_tcp_sent};
 
 /**
  * Callback called by FreeRTOS+TCP when a TCP connection is created or
  * terminated.
+ *
+ * A terminated connection also wakes threads waiting for TCP send space.
  *
  * We use this callback to handle the case where a three-way TCP handshake
  * initiated by a peer on a listening socket fails.
@@ -509,8 +556,14 @@ static void on_tcp_connect(Socket_t socket, BaseType_t isConnected)
 			firewall_remove_tcpipv4_remote_endpoint(
 			  address.sin_address.ulIP_IPv4, localPort, address.sin_port);
 		}
+		auto *wrapper =
+		  static_cast<SealedSocket *>(pvSocketGetSocketID(socket));
+		if (wrapper != nullptr)
+		{
+			wrapper->mark_tcp_send_closed();
+		}
 	}
-	else
+	else if (socket->u.xTCP.eTCPState == eTCP_LISTEN)
 	{
 		// Update eventFutexState in the listening socket and wake up the
 		// threads sleeping on the corresponding futex.
@@ -664,13 +717,25 @@ Socket network_socket_create_and_bind(Timeout            *timeout,
 					    mallocCapability, socket_key(), sealedSocket);
 					  return -EAGAIN;
 				  }
-
+			  }
+			  if (type == ConnectionTypeTCP)
+			  {
 				  FreeRTOS_setsockopt(
 				    socket,
 				    0,
 				    FREERTOS_SO_TCP_CONN_HANDLER,
 				    static_cast<void *>(&onTCPConnectCallback),
 				    sizeof(onTCPConnectCallback));
+				  /*
+				   * Register the callback `on_tcp_sent()`
+				   * for sending bytes. This is to support
+				   * multiwaiter feature in network stack.
+				   */
+				  FreeRTOS_setsockopt(socket,
+				                      0,
+				                      FREERTOS_SO_TCP_SENT_HANDLER,
+				                      static_cast<void *>(&onTCPSentCallback),
+				                      sizeof(onTCPSentCallback));
 			  }
 		  }
 		  else
@@ -1421,14 +1486,37 @@ ssize_t network_socket_send(Timeout *timeout,
 		  {
 			  return -EPERM;
 		  }
+		  // Create the txStream and initialize send futex on the
+		  // first non-zero send.
+		  if ((length != 0) && (socket->socket->u.xTCP.txStream == nullptr))
+		  {
+			  if (FreeRTOS_get_tx_base(socket->socket) == nullptr)
+			  {
+				  // Allocation failed.
+				  return -ENOMEM;
+			  }
+			  // Store current available bytes to initialize the futex.
+			  auto &sendFutex =
+			    socket->eventFutexState[SocketEventType::SocketTCPSendEvent];
+			  int32_t uninitialized = 0;
+			  // The reason why we use compare_exchange_* here is that
+			  // if the socket is disconnected, a plain .store() would
+			  // overwrite SocketConnectionClosed.
+			  sendFutex.compare_exchange_strong(
+			    uninitialized, FreeRTOS_tx_space(socket->socket));
+		  }
 		  Debug::log("Sending {}-byte TCP packet from {}", length, buffer);
 		  int ret = with_freertos_timeout(
 		    timeout, socket->socket, FREERTOS_SO_SNDTIMEO, [&] {
 			    return FreeRTOS_send(socket->socket, buffer, length, 0);
 		    });
 		  Debug::log("FreeRTOS_send returned {}", ret);
+		  // Subtract the bytes queued by FreeRTOS_send() from the available
+		  // txStream space.
 		  if (ret >= 0)
 		  {
+			  socket->consume_event_futex(SocketEventType::SocketTCPSendEvent,
+			                              ret);
 			  return ret;
 		  }
 		  if (ret == -pdFREERTOS_ERRNO_ENOTCONN)
