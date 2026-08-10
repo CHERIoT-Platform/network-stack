@@ -118,6 +118,23 @@ namespace
 				  Debug::log("Failed to unseal socket");
 				  return -EINVAL;
 			  }
+			  /*
+			   * We are not holding the socket lock here, but still doing
+			   * dereference of the socket, which can lead to an UAF error.
+			   * To address this, we use ephemeral call before dereferencing
+			   * the socket.
+			   */
+			  int result =
+			    heap_claim_ephemeral(TimeoutWaitForever, socket, nullptr);
+			  if (result != 0)
+			  {
+				  /*
+				   * The result cannot be -ETIMEDOUT, since we have unlimited
+				   * timeout. Return -EINVAL if socket is neither null nor a
+				   * valid pointer at the end.
+				   */
+				  return result;
+			  }
 			  if (socket->socketEpoch != currentSocketEpoch.load())
 			  {
 				  Debug::log(
