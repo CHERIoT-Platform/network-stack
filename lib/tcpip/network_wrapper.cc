@@ -753,6 +753,10 @@ int network_socket_connect_tcp_internal(Timeout       *timeout,
                                         NetworkAddress address,
                                         short          port)
 {
+	if (!check_timeout_pointer(timeout))
+	{
+		return -EINVAL;
+	}
 	return with_sealed_socket(
 	  [&](SealedSocket *socket) {
 		  bool                     isIPv6 = socket->socket->bits.bIsIPv6;
