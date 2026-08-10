@@ -51,15 +51,20 @@ struct SealedSocket
 	 */
 	std::atomic<int32_t> eventFutexState[NumFutexTypes];
 	/**
-	 * Increments the futex and notifies all waiters if the futex is still
-	 * valid.
+	 * Increments the futex by `count` and notifies all waiters if the futex is
+	 * still valid.
 	 *
-	 * Returns 0 on success, or `-EINVAL` if the futex has been invalidated.
+	 * Returns 0 on success, or `-EINVAL` if the futex has been set to a
+	 * terminal value.
 	 */
-	int signal_event_futex(SocketEventType type);
+	int signal_event_futex(SocketEventType type, int32_t count = 1);
 	/**
-	 * Records one successfully accepted child socket by decrementing the accept
-	 * event counter.
+	 * Marks the TCP send event futex as closed and notifies all waiters.
+	 */
+	void mark_tcp_send_closed();
+	/**
+	 * Records successfully consumed events by decrementing the event counter by
+	 * `count`.
 	 *
 	 * The caller must hold `socketLock`, which prevents the socket from being
 	 * freed while the futex is accessed. The futex value may become negative
@@ -67,10 +72,10 @@ struct SealedSocket
 	 * a child, but before `on_tcp_connect()` increment the futex. The delayed
 	 * increment will repay this temporary debt.
 	 *
-	 * Returns 0 on success, or `-EINVAL` if the futex has been invalidated by
-	 * being set to `SocketNotAvailable`.
+	 * Returns 0 on success, or `-EINVAL` if the futex has been set to a
+	 * terminal value.
 	 */
-	int consume_event_futex(SocketEventType type);
+	int consume_event_futex(SocketEventType type, int32_t count = 1);
 	/**
 	 * The lock protecting this socket.
 	 */
