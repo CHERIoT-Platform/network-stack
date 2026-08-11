@@ -68,9 +68,9 @@ struct SealedSocket
 	 */
 	int signal_event_futex(SocketEventType type, int32_t count = 1);
 	/**
-	 * Marks the TCP send event futex as closed and notifies all waiters.
+	 * Marks a TCP event futex as closed and notifies all waiters.
 	 */
-	void mark_tcp_send_closed();
+	void mark_tcp_event_closed(SocketEventType type);
 	/**
 	 * Records successfully consumed events by decrementing the event counter by
 	 * `count`.

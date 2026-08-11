@@ -460,12 +460,12 @@ int SealedSocket::signal_event_futex(SocketEventType type, int32_t count)
 	return -EINVAL;
 }
 /**
- * Wake send waiters when FreeRTOS reports that the TCP connection has closed.
+ * Wake waiters when FreeRTOS reports that the TCP connection has closed.
  * Preserve SocketNotAvailable if the socket wrapper is already being torn down.
  */
-void SealedSocket::mark_tcp_send_closed()
+void SealedSocket::mark_tcp_event_closed(SocketEventType type)
 {
-	auto &futex = eventFutexState[SocketEventType::SocketTCPSendEvent];
+	auto &futex = eventFutexState[type];
 	// This function will only be called from FreeRTOS callback,
 	// so the caller will not held the socket lock when calling this
 	// function. Thus, ephemeral call is needed to prevent Use-After-Free
@@ -578,11 +578,19 @@ static void on_tcp_connect(Socket_t socket, BaseType_t isConnected)
 		  static_cast<SealedSocket *>(pvSocketGetSocketID(socket));
 		if (wrapper != nullptr)
 		{
-			wrapper->mark_tcp_send_closed();
+			/*
+			 * Mark both events as closed and wake their waiters. The sentinel
+			 * prevents future waits from blocking on a connection that can no
+			 * longer be used.
+			 */
+			wrapper->mark_tcp_event_closed(SocketEventType::SocketTCPSendEvent);
+			wrapper->mark_tcp_event_closed(
+			  SocketEventType::SocketTCPConnectEvent);
 		}
 	}
 	else if (socket->u.xTCP.eTCPState == eTCP_LISTEN)
 	{
+		// A child connection is ready on this listening socket.
 		// Update eventFutexState in the listening socket and wake up the
 		// threads sleeping on the corresponding futex.
 		// Use the FreeRTOS getter to get the wrapper capability we stored in
@@ -598,6 +606,16 @@ static void on_tcp_connect(Socket_t socket, BaseType_t isConnected)
 			wrapper->signal_event_futex(SocketEventType::SocketAcceptEvent);
 		}
 		return;
+	}
+	else
+	{
+		// The outgoing client socket is now connected.
+		auto *wrapper =
+		  static_cast<SealedSocket *>(pvSocketGetSocketID(socket));
+		if (wrapper != nullptr)
+		{
+			wrapper->signal_event_futex(SocketEventType::SocketTCPConnectEvent);
+		}
 	}
 }
 F_TCP_UDP_Handler_t onTCPConnectCallback = {on_tcp_connect};
@@ -973,13 +991,20 @@ int network_socket_connect_tcp_internal(Timeout       *timeout,
 			  case -pdFREERTOS_ERRNO_EISCONN: // already connected
 				  Debug::log("Successfully connected to server");
 				  return 0;
+			  /*
+			   * EWOULDBLOCK means this call started the connection without
+			   * waiting. EINPROGRESS means an earlier call is still connecting.
+			   */
+			  case -pdFREERTOS_ERRNO_EWOULDBLOCK:
+			  case -pdFREERTOS_ERRNO_EINPROGRESS:
+				  Debug::log("Connection in progress");
+				  return -EINPROGRESS;
 			  /**
 			   * In certain cases, `FreeRTOS_connect` may return
 			   * -ENOTCONN if the connection times out. This is not
 			   *  publicly documented.
 			   */
 			  case -pdFREERTOS_ERRNO_ENOTCONN:
-			  case -pdFREERTOS_ERRNO_EWOULDBLOCK:
 			  case -pdFREERTOS_ERRNO_ETIMEDOUT:
 				  Debug::log("Timed out while connecting");
 				  return -ETIMEDOUT;
