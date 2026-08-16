@@ -51,6 +51,15 @@ struct SealedSocket
 	 */
 	std::atomic<int32_t> eventFutexState[NumFutexTypes];
 	/**
+	 * Initialize all event futexes for a given socket.
+	 * This should be called as long as a socket is created.
+	 * All futexes will be initialized to `0` to align with
+	 * the futexes semantics, except `SocketTCPSendEvent` futex.
+	 * It will be initialized to pre-configured txStream buffer
+	 * size to prevent indefinite blocking thread.
+	 */
+	void initialize_event_futexes();
+	/**
 	 * Increments the futex by `count` and notifies all waiters if the futex is
 	 * still valid.
 	 *
