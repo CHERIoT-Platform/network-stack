@@ -309,9 +309,10 @@ Socket __cheri_compartment("TCPIP")
  * Return the event source associated with a socket.
  *
  * The returned capability is read-only and bounded to four bytes.
- * For a connected TCP socket, the first non-empty send initializes
- * `SocketTCPSendEvent`, which then counts bytes that a zero-timeout send may
- * add to the transmit stream.
+ * For a TCP socket, the futex `SocketTCPSendEvent` initially reports
+ * the configured maximum txStream capacity before the buffer is allocated.
+ * This is to prevent the user thread from sleeping on the multi-waiter
+ * forever before the first `network_socket_send()` is called.
  */
 uint32_t *__cheri_compartment("TCPIP")
   network_socket_get_event_source(Socket sealedSocket, SocketEventType type);

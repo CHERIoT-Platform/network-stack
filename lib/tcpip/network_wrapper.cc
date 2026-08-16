@@ -415,6 +415,24 @@ namespace
 
 } // namespace
 
+void SealedSocket::initialize_event_futexes()
+{
+	for (auto &eventState : eventFutexState)
+	{
+		eventState.store(0);
+	}
+
+	if (socket->ucProtocol == FREERTOS_IPPROTO_TCP)
+	{
+		/*
+		 * FreeRTOS creates txStream lazily.  Lie about its current space and
+		 * use its maximum size now: otherwise a caller that waits on this futex
+		 * before its first send() will block forever.
+		 */
+		eventFutexState[SocketTCPSendEvent].store(FreeRTOS_tx_space(socket));
+	}
+}
+
 int SealedSocket::signal_event_futex(SocketEventType type, int32_t count)
 {
 	auto &futex = eventFutexState[type];
@@ -608,12 +626,6 @@ Socket network_socket_create_and_bind(Timeout            *timeout,
 
 		  // Set the socket epoch
 		  socketWrapper->socketEpoch = currentSocketEpoch.load();
-		  // Multi-waiter: initialize the futexes.
-		  for (auto &eventState : socketWrapper->eventFutexState)
-		  {
-			  eventState.store(0);
-		  }
-
 		  const auto Family = isIPv6 ? FREERTOS_AF_INET6 : FREERTOS_AF_INET;
 		  Socket_t   socket =
 		    FreeRTOS_socket(Family,
@@ -637,6 +649,7 @@ Socket network_socket_create_and_bind(Timeout            *timeout,
 		   * socket wrapper from the FreeRTOS socket in the callbacks.
 		   */
 		  socketWrapper->socket = socket;
+		  socketWrapper->initialize_event_futexes();
 		  xSocketSetSocketID(socket, socketWrapper);
 
 		  // Claim the socket so that it counts towards the caller's quota.  The
@@ -780,14 +793,6 @@ Socket network_socket_accept_tcp(Timeout            *timeout,
 		  }
 
 		  socketWrapper->socketEpoch = currentSocketEpoch.load();
-		  /*
-		   * For the newly allocated child socket, initialize the futexes.
-		   */
-		  for (auto &eventState : socketWrapper->eventFutexState)
-		  {
-			  eventState.store(0);
-		  }
-
 		  struct freertos_sockaddr addressTmp;
 		  uint32_t                 addressLength = sizeof(addressTmp);
 		  FreeRTOS_Socket_t       *rawSocket     = nullptr;
@@ -836,6 +841,7 @@ Socket network_socket_accept_tcp(Timeout            *timeout,
 			  return futexConsumeResult;
 		  }
 		  socketWrapper->socket = rawSocket;
+		  socketWrapper->initialize_event_futexes();
 
 		  // Claim the socket so that it counts towards the caller's quota.  The
 		  // network stack also keeps a claim to it.  We will drop this claim on
@@ -1486,24 +1492,25 @@ ssize_t network_socket_send(Timeout *timeout,
 		  {
 			  return -EPERM;
 		  }
-		  // Create the txStream and initialize send futex on the
-		  // first non-zero send.
+		  // Create txStream on the first non-zero send and replace the
+		  // fake place holder value with its exact available space.
 		  if ((length != 0) && (socket->socket->u.xTCP.txStream == nullptr))
 		  {
+			  int32_t advertisedSpace = FreeRTOS_tx_space(socket->socket);
 			  if (FreeRTOS_get_tx_base(socket->socket) == nullptr)
 			  {
 				  // Allocation failed.
 				  return -ENOMEM;
 			  }
-			  // Store current available bytes to initialize the futex.
+			  // Reconcile the advertised capacity with the newly allocated
+			  // stream's exact usable space.
 			  auto &sendFutex =
 			    socket->eventFutexState[SocketEventType::SocketTCPSendEvent];
-			  int32_t uninitialized = 0;
 			  // The reason why we use compare_exchange_* here is that
 			  // if the socket is disconnected, a plain .store() would
 			  // overwrite SocketConnectionClosed.
 			  sendFutex.compare_exchange_strong(
-			    uninitialized, FreeRTOS_tx_space(socket->socket));
+			    advertisedSpace, FreeRTOS_tx_space(socket->socket));
 		  }
 		  Debug::log("Sending {}-byte TCP packet from {}", length, buffer);
 		  int ret = with_freertos_timeout(
