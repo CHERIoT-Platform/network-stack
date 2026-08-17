@@ -855,17 +855,22 @@ int mqtt_publish(Timeout       *t,
                  size_t         payloadLength,
                  bool           retain)
 {
+	if (!check_timeout_pointer(t))
+	{
+		return -EINVAL;
+	}
+
+	if (!heap_claim_ephemeral(t, topic, payload))
+	{
+		return -EINVAL;
+	}
+
 	if (!CHERI::check_pointer(topic, topicLength))
 	{
 		return -EINVAL;
 	}
 
 	if (!CHERI::check_pointer(payload, payloadLength))
-	{
-		return -EINVAL;
-	}
-
-	if (!check_timeout_pointer(t))
 	{
 		return -EINVAL;
 	}
