@@ -16,6 +16,7 @@ option("tls-sha384")
 compartment("TLS")
   add_rules("cheriot.component-debug")
   add_options("tls-rsa", "tls-sha384")
+  add_deps("randombytes")
   set_default(false)
   -- TLS API
   add_files("tls.cc")

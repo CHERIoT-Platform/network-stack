@@ -9,7 +9,7 @@
 #include <debug.hh>
 #include <function_wrapper.hh>
 #include <locks.hh>
-#include <platform-entropy.hh>
+#include <randombytes_wrapper.h>
 #include <sealed_cleanup.hh>
 #include <timeout.h>
 #include <tls.h>
@@ -86,12 +86,6 @@ namespace
 
 	{
 		return STATIC_SEALING_TYPE(TLSConnection);
-	}
-
-	auto rand()
-	{
-		static EntropySource source;
-		return source();
 	}
 
 	ssize_t with_sealed_tls_context(Timeout      *timeout,
@@ -457,7 +451,12 @@ TLSConnection tls_connection_create(Timeout             *t,
 	                               iobufOut.get(),
 	                               MinimumBufferSize);
 
-	auto entropy = rand();
+	uint8_t entropy[16];
+	if (randombytes(entropy) != 0)
+	{
+		Debug::log("Failed to gather entropy");
+		return nullptr;
+	}
 	br_ssl_engine_inject_entropy(
 	  &clientContext->eng, &entropy, sizeof(entropy));
 

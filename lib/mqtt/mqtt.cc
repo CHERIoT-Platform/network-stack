@@ -10,7 +10,7 @@
 #include <debug.hh>
 #include <locks.hh>
 #include <mqtt.h>
-#include <platform-entropy.hh>
+#include <randombytes_wrapper.h>
 #include <stdlib.h>
 #include <string_view>
 #include <transport_interface.h>
@@ -116,15 +116,6 @@ namespace
 
 	{
 		return STATIC_SEALING_TYPE(MQTTHandle);
-	}
-
-	/**
-	 * Returns a weak pseudo-random number.
-	 */
-	uint64_t rand()
-	{
-		static EntropySource rng;
-		return rng();
 	}
 
 	/**
@@ -1138,11 +1129,18 @@ int mqtt_generate_client_id(char *buffer, size_t length)
 		return -EINVAL;
 	}
 
+	uint8_t entropy[MQTTMaximumClientIDSize];
+	int     randErr = randombytes(entropy);
+	if (randErr != 0)
+	{
+		return randErr;
+	}
+
 	for (size_t i = 0; i < length; i++)
 	{
 		// Select a character at random.
 		// Note: biased because of the modulo, see API documentation
-		buffer[i] = characters[rand() % characters.size()];
+		buffer[i] = characters[entropy[i] % characters.size()];
 	}
 
 	Debug::Assert(is_valid_client_id({buffer, length}),
