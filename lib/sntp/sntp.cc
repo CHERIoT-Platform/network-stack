@@ -20,6 +20,7 @@
 #include <core_sntp_serializer.h>
 #include <debug.hh>
 #include <locks.hh>
+#include <randombytes_wrapper.h>
 #include <sntp.h>
 #include <stdlib.h>
 #include <tick_macros.h>
@@ -53,14 +54,6 @@ struct NetworkContext
 
 namespace
 {
-
-	/// Returns a weak pseudo-random number.
-	uint64_t rand()
-	{
-		static EntropySource rng;
-		return rng();
-	}
-
 	/**
 	 * We do the DNS lookup on socket creation because the coreSNTP library
 	 * does not provide a context to the callback for the DNS lookup.  The
@@ -407,9 +400,17 @@ namespace
 					break;
 				}
 
+				uint32_t entropy = 0;
+				if (randombytes(entropy) != 0)
+				{
+					Debug::log(
+					  "Failed to gather entropy for SNTP time request");
+					break;
+				}
+
 				/* Loop of SNTP client for period time synchronization. */
 				/* @[code_example_sntp_send_receive] */
-				status = Sntp_SendTimeRequest(&context, rand(), 1000);
+				status = Sntp_SendTimeRequest(&context, entropy, 1000);
 				if (status != SntpSuccess)
 				{
 					Debug::log("Failed to send SNTP request: {}", status);

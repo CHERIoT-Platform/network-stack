@@ -6,7 +6,7 @@ debugOption("MQTT")
 compartment("MQTT")
   add_rules("cheriot.component-debug")
   set_default(false)
-  add_deps("freestanding", "NetAPI", "TLS")
+  add_deps("freestanding", "NetAPI", "TLS", "randombytes")
   add_files("mqtt.cc")
   add_defines("CHERIOT_NO_AMBIENT_MALLOC", "CHERIOT_NO_NEW_DELETE")
   add_includedirs(".", "../../include", "../../third_party/coreMQTT/source/include",

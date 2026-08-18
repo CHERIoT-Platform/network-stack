@@ -5,7 +5,7 @@
 #include <debug.hh>
 #include <endianness.hh>
 #include <errno.h>
-#include <platform-entropy.hh>
+#include <randombytes_wrapper.h>
 #include <thread.h>
 #include <tick_macros.h>
 #include <unwind.h>
@@ -100,15 +100,6 @@ namespace
 	 */
 	uint16_t       queryID     = {0};
 	NetworkAddress queryResult = {0};
-
-	/**
-	 * Returns a weak pseudo-random number. Used to generate the query ID.
-	 */
-	uint64_t rand()
-	{
-		static EntropySource rng;
-		return rng();
-	}
 
 	/**
 	 * MAC address of the device. We obtain this from the firewall.
@@ -1080,7 +1071,11 @@ __cheri_compartment("DNS") int network_host_resolve(Timeout        *timeout,
 
 	// Prepare the query answer buffer and ID for the new query.
 	memset(&queryResult, 0, sizeof(NetworkAddress));
-	queryID = rand();
+	int randErr = randombytes(queryID);
+	if (randErr != 0)
+	{
+		return randErr;
+	}
 
 	// Zero-out in case we fail (DNS resolution is not on the critical path
 	// anyways).
