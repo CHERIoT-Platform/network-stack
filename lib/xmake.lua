@@ -34,7 +34,9 @@ includes("tcpip",
          "netapi",
          "sntp",
          "mqtt",
+         "mqtt_wolfssl",
          "tls",
          "dns",
-         "firewall")
+         "firewall",
+         "wolfssl")
 

@@ -18,6 +18,7 @@ The network stack includes components from a variety of third parties:
  - [FreeRTOS coreSNTP](https://github.com/FreeRTOS/coreSNTP) provides the SNTP client.
  - [FreeRTOS coreMQTT](https://github.com/FreeRTOS/coreMQTT) provides the MQTT client.
  - [BearSSL](https://www.bearssl.org) provides the TLS 1.2 stack.
+ - [wolfSSL](https://www.wolfssl.com) provides an alternative TLS stack (TLS 1.3 capable).
 
 This demonstrates the CHERIoT platform's ability to adopt existing codebases.
 We are building around 100 KLoC of third-party code into this stack.
@@ -38,6 +39,14 @@ Four are mostly existing third-party code with thin wrappers:
  - The SNTP compartment is mostly just another consumer of the network stack, but it provides a real-time clock that is used by the TLS stack.
  - The TLS stack is, again, mostly unmodified BearSSL code, with just some thin wrappers added around the edges.
  - The MQTT compartment, like the SNTP compartment, is just another consumer of the network stack (the TLS layer, specifically) and provides a simple interface for connecting to MQTT servers, publishing messages and receiving notifications of publish events.
+
+Two additional compartments provide an alternative TLS stack based on wolfSSL (TLS 1.3):
+
+ - The `WolfSSLTLS` compartment wraps wolfSSL and mirrors the BearSSL TLS compartment's interface.
+ - The `WolfSSLMQTT` compartment provides a wolfSSL-backed MQTT client equivalent to the existing BearSSL `MQTT` compartment.
+
+Examples `06.HTTPS-wolfssl`, `07.HTTPS-wolfssl-concurrent`, and `08.MQTT-wolfssl` demonstrate these compartments.
+See [`tests/wolfssl/wolfcrypt/README.md`](tests/wolfssl/wolfcrypt/README.md) for the wolfCrypt test and benchmark application.
 
 These are joined by three new compartments:
 
@@ -84,7 +93,7 @@ It is fault-tolerant: when an error is triggered (CHERI spatial or temporal safe
 We expand on this capability [below](#automatic-restart-of-the-tcpip-stack).
 
 Unlike the TCP/IP stack, the TLS compartment is almost completely stateless.
-This makes resetting the compartment trivial, and gives strong flow isolation properties: Even if an attacker compromises the TLS compartment by sending malicious data over one connection that triggers a bug in BearSSL (unlikely), it is extraordinarily difficult for them to interfere with any other TLS connection.
+This makes resetting the compartment trivial, and gives strong flow isolation properties: Even if an attacker compromises the TLS compartment by sending malicious data over one connection that triggers a bug in the TLS library (unlikely), it is extraordinarily difficult for them to interfere with any other TLS connection.
 
 All inbound and outbound data go through the on-device firewall, which is controlled by the Network API compartment.
 The TCP/IP stack has no access to the NetAPI control-plane interface.
