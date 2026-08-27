@@ -35,6 +35,42 @@ struct NetworkAddress
 };
 
 /**
+ * Enumeration that defines futex types. Each value corresponds
+ * to an index in the socket's futex array.
+ */
+enum SocketEventType : uint8_t
+{
+	/// Triggered when a new TCP connection
+	/// is accepted on a listening socket.
+	/// The value of the futex corresponding to
+	/// SocketAcceptEvent, means the number of
+	/// pending connections.
+	SocketAcceptEvent = 0,
+	/// Triggered when a socket has space available
+	/// for sending bytes.
+	/// The value of the futex corresponding to
+	/// SocketTCPSendEvent, means the number of free
+	/// bytes available in the txStream buffer of
+	/// the socket.
+	/// After multiwaiter_wait() returns, do not wait for this value to reach
+	/// the full size of the pending send. Call network_socket_send() again
+	/// whenever any space is available; it may send only part of the requested
+	/// data.
+	SocketTCPSendEvent = 1,
+	// Triggered when data is received on a socket
+	// SocketReceiveEvent = 2,
+};
+
+/// Number of distinct socket event futex types.
+static constexpr size_t NumFutexTypes = SocketEventType::SocketTCPSendEvent + 1;
+/// Sentinel value stored in the TCP send event futex when the wrapper still
+/// exists but the TCP connection can no longer send.
+static constexpr int32_t SocketConnectionClosed = INT32_MIN + 1;
+/// Sentinel value stored in a socket event futex after the socket has been
+/// torn down.
+static constexpr int32_t SocketNotAvailable = INT32_MIN;
+
+/**
  * Enumeration defining the connection type.
  */
 enum ConnectionType : uint8_t
@@ -268,6 +304,18 @@ Socket __cheri_compartment("TCPIP")
   network_socket_udp(Timeout            *timeout,
                      AllocatorCapability mallocCapability,
                      bool                isIPv6);
+
+/**
+ * Return the event source associated with a socket.
+ *
+ * The returned capability is read-only and bounded to four bytes.
+ * For a TCP socket, the futex `SocketTCPSendEvent` initially reports
+ * the configured maximum txStream capacity before the buffer is allocated.
+ * This is to prevent the user thread from sleeping on the multi-waiter
+ * forever before the first `network_socket_send()` is called.
+ */
+uint32_t *__cheri_compartment("TCPIP")
+  network_socket_get_event_source(Socket sealedSocket, SocketEventType type);
 
 /**
  * Authorise a UDP socket to send packets to a specific host.  This opens a

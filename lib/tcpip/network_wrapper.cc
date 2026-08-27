@@ -412,11 +412,118 @@ namespace
 
 		return ret;
 	}
+
 } // namespace
+
+void SealedSocket::initialize_event_futexes()
+{
+	for (auto &eventState : eventFutexState)
+	{
+		eventState.store(0);
+	}
+
+	if (socket->ucProtocol == FREERTOS_IPPROTO_TCP)
+	{
+		/*
+		 * FreeRTOS creates txStream lazily.  Lie about its current space and
+		 * use its maximum size now: otherwise a caller that waits on this futex
+		 * before its first send() will block forever.
+		 */
+		eventFutexState[SocketTCPSendEvent].store(FreeRTOS_tx_space(socket));
+	}
+}
+
+int SealedSocket::signal_event_futex(SocketEventType type, int32_t count)
+{
+	auto &futex = eventFutexState[type];
+	if (heap_claim_ephemeral(TimeoutWaitForever, &futex) != 0)
+	{
+		return -EINVAL;
+	}
+	int32_t current = futex.load();
+	while ((current != SocketConnectionClosed) &&
+	       (current != SocketNotAvailable))
+	{
+		/*
+		 * If the futex's current value equals current,
+		 * store current + count and return true. Otherwise
+		 * write the actual current value into current
+		 * (by reference) and return false.
+		 */
+		if (futex.compare_exchange_strong(current, current + count))
+		{
+			futex.notify_all();
+			return 0;
+		}
+	}
+
+	return -EINVAL;
+}
+/**
+ * Wake send waiters when FreeRTOS reports that the TCP connection has closed.
+ * Preserve SocketNotAvailable if the socket wrapper is already being torn down.
+ */
+void SealedSocket::mark_tcp_send_closed()
+{
+	auto &futex = eventFutexState[SocketEventType::SocketTCPSendEvent];
+	// This function will only be called from FreeRTOS callback,
+	// so the caller will not held the socket lock when calling this
+	// function. Thus, ephemeral call is needed to prevent Use-After-Free
+	// issue.
+	if (heap_claim_ephemeral(TimeoutWaitForever, &futex) != 0)
+	{
+		return;
+	}
+	int32_t current = futex.load();
+	while ((current != SocketConnectionClosed) &&
+	       (current != SocketNotAvailable))
+	{
+		if (futex.compare_exchange_strong(current, SocketConnectionClosed))
+		{
+			futex.notify_all();
+			return;
+		}
+	}
+}
+
+int SealedSocket::consume_event_futex(SocketEventType type, int32_t count)
+{
+	auto   &futex   = eventFutexState[type];
+	int32_t current = futex.load();
+	while ((current != SocketConnectionClosed) &&
+	       (current != SocketNotAvailable))
+	{
+		if (futex.compare_exchange_strong(current, current - count))
+		{
+			return 0;
+		}
+	}
+
+	return -EINVAL;
+}
+/**
+ * Callback called by FreeRTOS+TCP when TCP bytes are acknowledged.
+ *
+ * Add the acknowledged byte count to the send event futex and wake all threads
+ * waiting for txStream space.
+ */
+static void on_tcp_sent(Socket_t socket, size_t length)
+{
+	// Retrieve the wrapper from the back pointer.
+	auto *wrapper = static_cast<SealedSocket *>(pvSocketGetSocketID(socket));
+	if (wrapper != nullptr)
+	{
+		wrapper->signal_event_futex(SocketEventType::SocketTCPSendEvent,
+		                            static_cast<int32_t>(length));
+	}
+}
+F_TCP_UDP_Handler_t onTCPSentCallback = {nullptr, nullptr, on_tcp_sent};
 
 /**
  * Callback called by FreeRTOS+TCP when a TCP connection is created or
  * terminated.
+ *
+ * A terminated connection also wakes threads waiting for TCP send space.
  *
  * We use this callback to handle the case where a three-way TCP handshake
  * initiated by a peer on a listening socket fails.
@@ -467,6 +574,30 @@ static void on_tcp_connect(Socket_t socket, BaseType_t isConnected)
 			firewall_remove_tcpipv4_remote_endpoint(
 			  address.sin_address.ulIP_IPv4, localPort, address.sin_port);
 		}
+		auto *wrapper =
+		  static_cast<SealedSocket *>(pvSocketGetSocketID(socket));
+		if (wrapper != nullptr)
+		{
+			wrapper->mark_tcp_send_closed();
+		}
+	}
+	else if (socket->u.xTCP.eTCPState == eTCP_LISTEN)
+	{
+		// Update eventFutexState in the listening socket and wake up the
+		// threads sleeping on the corresponding futex.
+		// Use the FreeRTOS getter to get the wrapper capability we stored in
+		// it.
+		auto *wrapper =
+		  static_cast<SealedSocket *>(pvSocketGetSocketID(socket));
+		if (wrapper != nullptr)
+		{
+			/*
+			 * Ignore the return value. If the socket has been invalidated,
+			 * the subsequent accept call will detect that it is unavailable.
+			 */
+			wrapper->signal_event_futex(SocketEventType::SocketAcceptEvent);
+		}
+		return;
 	}
 }
 F_TCP_UDP_Handler_t onTCPConnectCallback = {on_tcp_connect};
@@ -495,7 +626,6 @@ Socket network_socket_create_and_bind(Timeout            *timeout,
 
 		  // Set the socket epoch
 		  socketWrapper->socketEpoch = currentSocketEpoch.load();
-
 		  const auto Family = isIPv6 ? FREERTOS_AF_INET6 : FREERTOS_AF_INET;
 		  Socket_t   socket =
 		    FreeRTOS_socket(Family,
@@ -512,7 +642,15 @@ Socket network_socket_create_and_bind(Timeout            *timeout,
 			  token_obj_destroy(mallocCapability, socket_key(), sealedSocket);
 			  return -ENOMEM;
 		  }
+
+		  /*
+		   * Create a bidirectional association between the FreeRTOS socket and
+		   * the sealed socket wrapper. This is used to retrieve the sealed
+		   * socket wrapper from the FreeRTOS socket in the callbacks.
+		   */
 		  socketWrapper->socket = socket;
+		  socketWrapper->initialize_event_futexes();
+		  xSocketSetSocketID(socket, socketWrapper);
 
 		  // Claim the socket so that it counts towards the caller's quota.  The
 		  // network stack also keeps a claim to it.  We will drop this claim on
@@ -592,13 +730,25 @@ Socket network_socket_create_and_bind(Timeout            *timeout,
 					    mallocCapability, socket_key(), sealedSocket);
 					  return -EAGAIN;
 				  }
-
+			  }
+			  if (type == ConnectionTypeTCP)
+			  {
 				  FreeRTOS_setsockopt(
 				    socket,
 				    0,
 				    FREERTOS_SO_TCP_CONN_HANDLER,
 				    static_cast<void *>(&onTCPConnectCallback),
 				    sizeof(onTCPConnectCallback));
+				  /*
+				   * Register the callback `on_tcp_sent()`
+				   * for sending bytes. This is to support
+				   * multiwaiter feature in network stack.
+				   */
+				  FreeRTOS_setsockopt(socket,
+				                      0,
+				                      FREERTOS_SO_TCP_SENT_HANDLER,
+				                      static_cast<void *>(&onTCPSentCallback),
+				                      sizeof(onTCPSentCallback));
 			  }
 		  }
 		  else
@@ -643,7 +793,6 @@ Socket network_socket_accept_tcp(Timeout            *timeout,
 		  }
 
 		  socketWrapper->socketEpoch = currentSocketEpoch.load();
-
 		  struct freertos_sockaddr addressTmp;
 		  uint32_t                 addressLength = sizeof(addressTmp);
 		  FreeRTOS_Socket_t       *rawSocket     = nullptr;
@@ -673,7 +822,26 @@ Socket network_socket_accept_tcp(Timeout            *timeout,
 			  token_obj_destroy(mallocCapability, socket_key(), sealedSocket);
 			  return acceptResult;
 		  }
+		  /*
+		   * Note that here we update the futex, but no need to call
+		   * notify_all() on the waiting threads. Because the threads are
+		   * waiting on multiwaiter for arriving connected socket, but here the
+		   * semantics is not having an arrving connection. So there is no need
+		   * to wake the threads up, since they will probably find that there is
+		   * no available sockets and go back to sleep again.
+		   */
+		  int futexConsumeResult = listeningSocket->consume_event_futex(
+		    SocketEventType::SocketAcceptEvent);
+		  if (futexConsumeResult != 0)
+		  {
+			  // Return -EINVAL, which represents the
+			  // socket will be freed soon.
+			  close_socket_retry(timeout, rawSocket);
+			  token_obj_destroy(mallocCapability, socket_key(), sealedSocket);
+			  return futexConsumeResult;
+		  }
 		  socketWrapper->socket = rawSocket;
+		  socketWrapper->initialize_event_futexes();
 
 		  // Claim the socket so that it counts towards the caller's quota.  The
 		  // network stack also keeps a claim to it.  We will drop this claim on
@@ -708,6 +876,7 @@ Socket network_socket_accept_tcp(Timeout            *timeout,
 			  token_obj_destroy(mallocCapability, socket_key(), sealedSocket);
 			  return -EINVAL;
 		  }
+		  xSocketSetSocketID(rawSocket, socketWrapper);
 
 		  // Set `address`.
 		  if ((heap_claim_ephemeral(timeout, address) < 0) ||
@@ -831,6 +1000,36 @@ Socket network_socket_udp(Timeout            *timeout,
 	  timeout, mallocCapability, isIPv6, ConnectionTypeUDP);
 }
 
+/**
+ * Getter to get the read only capability of a specific futex in
+ * specific socket. If the futex is invalid, return a untagged nullptr.
+ */
+uint32_t *network_socket_get_event_source(Socket          sealedSocket,
+                                          SocketEventType type)
+{
+	uint32_t *result = nullptr;
+	if (type < NumFutexTypes)
+	{
+		with_sealed_socket(
+		  [&](SealedSocket *socket) {
+			  auto *futex = &socket->eventFutexState[type];
+
+			  Capability readOnlyEventSource{futex};
+			  // Expose the futex as read-only. The caller may observe its raw
+			  // 32-bit representation but may modify it only through the
+			  // socket callbacks.
+			  readOnlyEventSource.bounds() = sizeof(*futex);
+			  readOnlyEventSource.permissions() &=
+			    {Permission::Load, Permission::Global};
+
+			  result = reinterpret_cast<uint32_t *>(readOnlyEventSource.get());
+			  return 0;
+		  },
+		  sealedSocket);
+	}
+	return result;
+}
+
 int network_socket_close(Timeout            *t,
                          AllocatorCapability mallocCapability,
                          Socket              sealedSocket)
@@ -893,6 +1092,12 @@ int network_socket_close(Timeout            *t,
 			  if (socketEpoch == currentSocketEpoch.load())
 			  {
 				  bool isTCP = rawSocket->ucProtocol == FREERTOS_IPPROTO_TCP;
+
+				  // Set the back pointer (pointing to the
+				  // wrapper) to nullptr, so that we will not
+				  // have a dangling pointer.
+				  xSocketSetSocketID(rawSocket, nullptr);
+
 				  // Nothing to do if `FreeRTOS_shutdown`
 				  // fails: this happens only if the TCP
 				  // connection is dead, which is likely to
@@ -1039,6 +1244,14 @@ int network_socket_close(Timeout            *t,
 					  // task. With some luck, the socket can be
 					  // freed next time we try.
 					  return -ETIMEDOUT;
+				  }
+				  // Wake any thread waiting on this socket's event futex so
+				  // that it does not sleep forever on memory that is about to
+				  // be freed.
+				  for (auto &eventState : socket->eventFutexState)
+				  {
+					  eventState.store(SocketNotAvailable);
+					  eventState.notify_all();
 				  }
 
 				  g.release();
@@ -1279,14 +1492,38 @@ ssize_t network_socket_send(Timeout *timeout,
 		  {
 			  return -EPERM;
 		  }
+		  // Create txStream on the first non-zero send and replace the
+		  // fake place holder value with its exact available space.
+		  if ((length != 0) && (socket->socket->u.xTCP.txStream == nullptr))
+		  {
+			  int32_t advertisedSpace = FreeRTOS_tx_space(socket->socket);
+			  if (FreeRTOS_get_tx_base(socket->socket) == nullptr)
+			  {
+				  // Allocation failed.
+				  return -ENOMEM;
+			  }
+			  // Reconcile the advertised capacity with the newly allocated
+			  // stream's exact usable space.
+			  auto &sendFutex =
+			    socket->eventFutexState[SocketEventType::SocketTCPSendEvent];
+			  // The reason why we use compare_exchange_* here is that
+			  // if the socket is disconnected, a plain .store() would
+			  // overwrite SocketConnectionClosed.
+			  sendFutex.compare_exchange_strong(
+			    advertisedSpace, FreeRTOS_tx_space(socket->socket));
+		  }
 		  Debug::log("Sending {}-byte TCP packet from {}", length, buffer);
 		  int ret = with_freertos_timeout(
 		    timeout, socket->socket, FREERTOS_SO_SNDTIMEO, [&] {
 			    return FreeRTOS_send(socket->socket, buffer, length, 0);
 		    });
 		  Debug::log("FreeRTOS_send returned {}", ret);
+		  // Subtract the bytes queued by FreeRTOS_send() from the available
+		  // txStream space.
 		  if (ret >= 0)
 		  {
+			  socket->consume_event_futex(SocketEventType::SocketTCPSendEvent,
+			                              ret);
 			  return ret;
 		  }
 		  if (ret == -pdFREERTOS_ERRNO_ENOTCONN)
