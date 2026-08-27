@@ -45,6 +45,8 @@ Socket __cheri_compartment("TCPIP")
 
 /**
  * Connect a TCP socket to the given address.
+ *
+ * Returns `-EINPROGRESS` if a zero timeout starts the connection.
  */
 int __cheri_compartment("TCPIP")
   network_socket_connect_tcp_internal(Timeout       *timeout,

@@ -3,6 +3,8 @@
 
 #pragma once
 #include <FreeRTOS_IP.h>
+#include <NetAPI.h>
+#include <atomic>
 #include <ds/linked_list.h>
 #include <function_wrapper.hh>
 #include <locks.hh>
@@ -42,6 +44,47 @@ struct SealedSocket
 	 * to the current instance of the network stack.
 	 */
 	uint64_t socketEpoch;
+	/**
+	 * Event waiter source futex array. This supports the multi-waiter
+	 * feature. Different events increment different futexes in the array and
+	 * wake the corresponding waiting threads.
+	 */
+	std::atomic<int32_t> eventFutexState[NumFutexTypes];
+	/**
+	 * Initialize all event futexes for a given socket.
+	 * This should be called as long as a socket is created.
+	 * All futexes will be initialized to `0` to align with
+	 * the futexes semantics, except `SocketTCPSendEvent` futex.
+	 * It will be initialized to pre-configured txStream buffer
+	 * size to prevent indefinite blocking thread.
+	 */
+	void initialize_event_futexes();
+	/**
+	 * Increments the futex by `count` and notifies all waiters if the futex is
+	 * still valid.
+	 *
+	 * Returns 0 on success, or `-EINVAL` if the futex has been set to a
+	 * terminal value.
+	 */
+	int signal_event_futex(SocketEventType type, int32_t count = 1);
+	/**
+	 * Marks a TCP event futex as closed and notifies all waiters.
+	 */
+	void mark_tcp_event_closed(SocketEventType type);
+	/**
+	 * Records successfully consumed events by decrementing the event counter by
+	 * `count`.
+	 *
+	 * The caller must hold `socketLock`, which prevents the socket from being
+	 * freed while the futex is accessed. The futex value may become negative
+	 * if this helper is invoked after `FreeRTOS_accept()` successfully dequeue
+	 * a child, but before `on_tcp_connect()` increment the futex. The delayed
+	 * increment will repay this temporary debt.
+	 *
+	 * Returns 0 on success, or `-EINVAL` if the futex has been set to a
+	 * terminal value.
+	 */
+	int consume_event_futex(SocketEventType type, int32_t count = 1);
 	/**
 	 * The lock protecting this socket.
 	 */

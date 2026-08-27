@@ -7,6 +7,7 @@
 #include <atomic>
 #include <debug.hh>
 #include <endianness.hh>
+#include <errno.h>
 #include <token.h>
 
 constexpr bool DebugNetAPI =
@@ -116,8 +117,9 @@ Socket network_socket_connect_tcp(Timeout             *timeout,
 		  address.ipv4, kind.localPort, ntohs(host->port));
 	}
 
-	if (network_socket_connect_tcp_internal(
-	      timeout, sealedSocket, address, host->port) != 0)
+	int connectResult = network_socket_connect_tcp_internal(
+	  timeout, sealedSocket, address, host->port);
+	if ((connectResult != 0) && (connectResult != -EINPROGRESS))
 	{
 		Timeout t{UnlimitedTimeout};
 		// We pass an unlimited timeout, so this cannot fail in any
