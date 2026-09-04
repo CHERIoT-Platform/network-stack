@@ -13,6 +13,7 @@
 #include <timeout.hh>
 #include <vector>
 
+#include "protocol-addresses-debug.hh"
 #include "protocol-headers.hh"
 
 using Debug = ConditionalDebug<false, "Firewall">;
@@ -483,13 +484,7 @@ namespace
 				macAddress[0] |= 0b10;
 				// Make sure that the broadcast bit is 0
 				macAddress[0] &= ~0b1;
-				Debug::log("MAC address: {}:{}:{}:{}:{}:{}",
-				           macAddress[0],
-				           macAddress[1],
-				           macAddress[2],
-				           macAddress[3],
-				           macAddress[4],
-				           macAddress[5]);
+				Debug::log("MAC address: {}", macAddress);
 				return macAddress;
 			}
 		}();
@@ -770,13 +765,10 @@ namespace
 				                             localPortNumber,
 				                             remotePortNumber))
 				{
-					Debug::log("Permitting {} {} {}.{}.{}.{}",
+					Debug::log("Permitting {} {} {}",
 					           ipv4Header->protocol,
 					           isIngress ? "from" : "to",
-					           static_cast<int>(endpoint) & 0xff,
-					           static_cast<int>(endpoint >> 8) & 0xff,
-					           static_cast<int>(endpoint >> 16) & 0xff,
-					           static_cast<int>(endpoint >> 24) & 0xff);
+					           endpoint);
 					return ForwardFlags::ForwardNetworkStack;
 				}
 				// First SYN to a local server port should
@@ -814,11 +806,8 @@ namespace
 						}
 						currentClientCount++;
 						Debug::log("Permitting new client TCP connection from "
-						           "{}.{}.{}.{}:{}",
-						           static_cast<int>(endpoint) & 0xff,
-						           static_cast<int>(endpoint >> 8) & 0xff,
-						           static_cast<int>(endpoint >> 16) & 0xff,
-						           static_cast<int>(endpoint >> 24) & 0xff,
+						           "{}:{}",
+						           endpoint,
 						           static_cast<int>(ntohs(remotePortNumber)));
 						EndpointsTable<IPv4Address>::instance().add_endpoint(
 						  IPProtocolNumber::TCP,
@@ -924,14 +913,8 @@ namespace
 		if ((ethernetHeader->destination != mac_address()) &&
 		    (ethernetHeader->destination != broadcastMAC))
 		{
-			Debug::log(
-			  "Dropping frame with destination MAC address {}:{}:{}:{}:{}:{}",
-			  ethernetHeader->destination[0],
-			  ethernetHeader->destination[1],
-			  ethernetHeader->destination[2],
-			  ethernetHeader->destination[3],
-			  ethernetHeader->destination[4],
-			  ethernetHeader->destination[5]);
+			Debug::log("Dropping frame with destination MAC address {}",
+			           ethernetHeader->destination);
 			return ForwardFlags::Discard;
 		}
 		switch (ethernetHeader->etherType)
