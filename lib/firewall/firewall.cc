@@ -13,6 +13,7 @@
 #include <timeout.hh>
 #include <vector>
 
+#include "protocol-addresses-debug.hh"
 #include "protocol-headers.hh"
 
 using Debug = ConditionalDebug<false, "Firewall">;
@@ -472,8 +473,8 @@ namespace
 			}
 			else
 			{
-				std::array<uint8_t, 6> macAddress;
-				EntropySource          entropy;
+				MACAddress    macAddress;
+				EntropySource entropy;
 				for (auto &byte : macAddress)
 				{
 					byte = entropy();
@@ -483,13 +484,7 @@ namespace
 				macAddress[0] |= 0b10;
 				// Make sure that the broadcast bit is 0
 				macAddress[0] &= ~0b1;
-				Debug::log("MAC address: {}:{}:{}:{}:{}:{}",
-				           macAddress[0],
-				           macAddress[1],
-				           macAddress[2],
-				           macAddress[3],
-				           macAddress[4],
-				           macAddress[5]);
+				Debug::log("MAC address: {}", macAddress);
 				return macAddress;
 			}
 		}();
@@ -545,7 +540,7 @@ namespace
 			return GuardedTable{LockGuard{permittedEndpointsLock},
 			                    protocol == IPProtocolNumber::TCP
 			                      ? permittedTCPEndpoints
-			                      : permittedUDPEndpoints};
+								  : permittedUDPEndpoints};
 		}
 
 		public:
@@ -665,7 +660,7 @@ namespace
 		return false;
 	}
 
-	uint32_t          dnsServerAddress;
+	IPv4Address       dnsServerAddress;
 	_Atomic(uint32_t) dnsIsPermitted;
 
 	/**
@@ -693,9 +688,9 @@ namespace
 
 	ForwardFlags packet_filter_ipv4(const uint8_t *data,
 	                                size_t         length,
-	                                uint32_t(IPv4Header::*remoteAddress),
-	                                uint16_t(TCPUDPCommonPrefix::*localPort),
-	                                uint16_t(TCPUDPCommonPrefix::*remotePort),
+	                                IPv4Address IPv4Header::*remoteAddress,
+	                                uint16_t TCPUDPCommonPrefix::*localPort,
+	                                uint16_t TCPUDPCommonPrefix::*remotePort,
 	                                bool permitBroadcast)
 	{
 		if (__predict_false(length < sizeof(IPv4Header)))
@@ -746,9 +741,9 @@ namespace
 				auto *tcpudpHeader =
 				  reinterpret_cast<const TCPUDPCommonPrefix *>(
 				    data + ipv4Header->body_offset());
-				uint32_t endpoint         = ipv4Header->*remoteAddress;
-				uint16_t localPortNumber  = tcpudpHeader->*localPort;
-				uint16_t remotePortNumber = tcpudpHeader->*remotePort;
+				IPv4Address endpoint         = ipv4Header->*remoteAddress;
+				uint16_t    localPortNumber  = tcpudpHeader->*localPort;
+				uint16_t    remotePortNumber = tcpudpHeader->*remotePort;
 				bool isIngress = (remoteAddress == &IPv4Header::sourceAddress);
 				// Permit DNS requests during a DNS query.
 				if (dnsIsPermitted > 0)
@@ -764,19 +759,16 @@ namespace
 						return ForwardFlags::ForwardDNS;
 					}
 				}
-				if (EndpointsTable<uint32_t>::instance().is_endpoint_permitted(
-				      ipv4Header->protocol,
-				      endpoint,
-				      localPortNumber,
-				      remotePortNumber))
+				if (EndpointsTable<IPv4Address>::instance()
+				      .is_endpoint_permitted(ipv4Header->protocol,
+				                             endpoint,
+				                             localPortNumber,
+				                             remotePortNumber))
 				{
-					Debug::log("Permitting {} {} {}.{}.{}.{}",
+					Debug::log("Permitting {} {} {}",
 					           ipv4Header->protocol,
 					           isIngress ? "from" : "to",
-					           static_cast<int>(endpoint) & 0xff,
-					           static_cast<int>(endpoint >> 8) & 0xff,
-					           static_cast<int>(endpoint >> 16) & 0xff,
-					           static_cast<int>(endpoint >> 24) & 0xff);
+					           endpoint);
 					return ForwardFlags::ForwardNetworkStack;
 				}
 				// First SYN to a local server port should
@@ -787,7 +779,7 @@ namespace
 				// (e.g., retransmissions).
 				if ((isIngress) &&
 				    (ipv4Header->protocol == IPProtocolNumber::TCP) &&
-				    (EndpointsTable<uint32_t>::instance().is_server_port(
+				    (EndpointsTable<IPv4Address>::instance().is_server_port(
 				      localPortNumber)))
 				{
 					if (ipv4Header->body_offset() + sizeof(TCPHeader) > length)
@@ -814,13 +806,10 @@ namespace
 						}
 						currentClientCount++;
 						Debug::log("Permitting new client TCP connection from "
-						           "{}.{}.{}.{}:{}",
-						           static_cast<int>(endpoint) & 0xff,
-						           static_cast<int>(endpoint >> 8) & 0xff,
-						           static_cast<int>(endpoint >> 16) & 0xff,
-						           static_cast<int>(endpoint >> 24) & 0xff,
+						           "{}:{}",
+						           endpoint,
 						           static_cast<int>(ntohs(remotePortNumber)));
-						EndpointsTable<uint32_t>::instance().add_endpoint(
+						EndpointsTable<IPv4Address>::instance().add_endpoint(
 						  IPProtocolNumber::TCP,
 						  endpoint,
 						  localPortNumber,
@@ -924,14 +913,8 @@ namespace
 		if ((ethernetHeader->destination != mac_address()) &&
 		    (ethernetHeader->destination != broadcastMAC))
 		{
-			Debug::log(
-			  "Dropping frame with destination MAC address {}:{}:{}:{}:{}:{}",
-			  ethernetHeader->destination[0],
-			  ethernetHeader->destination[1],
-			  ethernetHeader->destination[2],
-			  ethernetHeader->destination[3],
-			  ethernetHeader->destination[4],
-			  ethernetHeader->destination[5]);
+			Debug::log("Dropping frame with destination MAC address {}",
+			           ethernetHeader->destination);
 			return ForwardFlags::Discard;
 		}
 		switch (ethernetHeader->etherType)
@@ -1031,7 +1014,7 @@ bool ethernet_link_is_up()
 	return ethernet.phy_link_status();
 }
 
-void firewall_dns_server_ip_set(uint32_t ip)
+void firewall_dns_server_ip_set(IPv4Address ip)
 {
 	// This is potentially racy but, since it's called very early in network
 	// stack initialisation, it's not worth worrying about an attacker being
@@ -1051,27 +1034,27 @@ void firewall_permit_dns(bool dnsIsPermitted)
 
 void firewall_add_tcpipv4_server_port(uint16_t localPort)
 {
-	EndpointsTable<uint32_t>::instance().add_server_port(localPort);
+	EndpointsTable<IPv4Address>::instance().add_server_port(localPort);
 }
 
 void firewall_remove_tcpipv4_server_port(uint16_t localPort)
 {
-	EndpointsTable<uint32_t>::instance().remove_server_port(localPort);
+	EndpointsTable<IPv4Address>::instance().remove_server_port(localPort);
 }
 
-void firewall_add_tcpipv4_endpoint(uint32_t remoteAddress,
-                                   uint16_t localPort,
-                                   uint16_t remotePort)
+void firewall_add_tcpipv4_endpoint(IPv4Address remoteAddress,
+                                   uint16_t    localPort,
+                                   uint16_t    remotePort)
 {
-	EndpointsTable<uint32_t>::instance().add_endpoint(
+	EndpointsTable<IPv4Address>::instance().add_endpoint(
 	  IPProtocolNumber::TCP, remoteAddress, localPort, remotePort);
 }
 
-void firewall_add_udpipv4_endpoint(uint32_t remoteAddress,
-                                   uint16_t localPort,
-                                   uint16_t remotePort)
+void firewall_add_udpipv4_endpoint(IPv4Address remoteAddress,
+                                   uint16_t    localPort,
+                                   uint16_t    remotePort)
 {
-	EndpointsTable<uint32_t>::instance().add_endpoint(
+	EndpointsTable<IPv4Address>::instance().add_endpoint(
 	  IPProtocolNumber::UDP, remoteAddress, localPort, remotePort);
 }
 
@@ -1080,19 +1063,19 @@ void firewall_remove_tcpipv4_local_endpoint(uint16_t localPort)
 	// Server ports are likely to be associated to more than one entry in
 	// the firewall.
 	Debug::Assert(
-	  !EndpointsTable<uint32_t>::instance().is_server_port(localPort),
+	  !EndpointsTable<IPv4Address>::instance().is_server_port(localPort),
 	  "Trying to remove a local endpoint on a server port.");
-	EndpointsTable<uint32_t>::instance().remove_endpoint(IPProtocolNumber::TCP,
-	                                                     localPort);
+	EndpointsTable<IPv4Address>::instance().remove_endpoint(
+	  IPProtocolNumber::TCP, localPort);
 }
 
-void firewall_remove_tcpipv4_remote_endpoint(uint32_t remoteAddress,
-                                             uint16_t localPort,
-                                             uint16_t remotePort)
+void firewall_remove_tcpipv4_remote_endpoint(IPv4Address remoteAddress,
+                                             uint16_t    localPort,
+                                             uint16_t    remotePort)
 {
-	if (EndpointsTable<uint32_t>::instance().remove_endpoint(
+	if (EndpointsTable<IPv4Address>::instance().remove_endpoint(
 	      IPProtocolNumber::TCP, remoteAddress, localPort, remotePort) &&
-	    EndpointsTable<uint32_t>::instance().is_server_port(localPort))
+	    EndpointsTable<IPv4Address>::instance().is_server_port(localPort))
 	{
 		// Decrease the number of clients only if we actually removed
 		// an entry from the endpoints table.
@@ -1102,15 +1085,15 @@ void firewall_remove_tcpipv4_remote_endpoint(uint32_t remoteAddress,
 
 void firewall_remove_udpipv4_local_endpoint(uint16_t localPort)
 {
-	EndpointsTable<uint32_t>::instance().remove_endpoint(IPProtocolNumber::UDP,
-	                                                     localPort);
+	EndpointsTable<IPv4Address>::instance().remove_endpoint(
+	  IPProtocolNumber::UDP, localPort);
 }
 
-void firewall_remove_udpipv4_remote_endpoint(uint32_t remoteAddress,
-                                             uint16_t localPort,
-                                             uint16_t remotePort)
+void firewall_remove_udpipv4_remote_endpoint(IPv4Address remoteAddress,
+                                             uint16_t    localPort,
+                                             uint16_t    remotePort)
 {
-	EndpointsTable<uint32_t>::instance().remove_endpoint(
+	EndpointsTable<IPv4Address>::instance().remove_endpoint(
 	  IPProtocolNumber::UDP, remoteAddress, localPort, remotePort);
 }
 
@@ -1231,8 +1214,8 @@ bool ethernet_driver_start(std::atomic<uint8_t> *state)
 		EndpointsTable<IPv6Address>::instance().clear(IPProtocolNumber::UDP);
 		EndpointsTable<IPv6Address>::instance().clear(IPProtocolNumber::TCP);
 #endif
-		EndpointsTable<uint32_t>::instance().clear(IPProtocolNumber::UDP);
-		EndpointsTable<uint32_t>::instance().clear(IPProtocolNumber::TCP);
+		EndpointsTable<IPv4Address>::instance().clear(IPProtocolNumber::UDP);
+		EndpointsTable<IPv4Address>::instance().clear(IPProtocolNumber::TCP);
 		return true;
 	}
 	// Protect against double entry.  If the barrier state is 0, no

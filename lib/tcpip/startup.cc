@@ -156,11 +156,11 @@ void __cheri_compartment("TCPIP") network_start()
 	Debug::log("Kicking IP stack");
 	if (FreeRTOS_IPInit_Multi() == pdPASS)
 	{
-		Debug::log("Successfully initialized IP stack\n");
+		Debug::log("Successfully initialized IP stack");
 	}
 	else
 	{
-		Debug::log("Failed to initialize IP stack\n");
+		Debug::log("Failed to initialize IP stack");
 	}
 	if (restartState.load() == 0)
 	{
