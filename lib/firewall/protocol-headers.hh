@@ -4,6 +4,7 @@
 #pragma once
 
 #include <array>
+#include <cstdint>
 
 /**
  * EtherType values, for Ethernet headers.  These are defined in network
@@ -38,7 +39,59 @@ const char *ethertype_as_string(EtherType etherType)
 /**
  * Ethernet MAC address.
  */
-using MACAddress = std::array<uint8_t, 6>;
+struct MACAddress
+{
+	using Raw = std::array<uint8_t, 6>;
+
+	Raw raw;
+
+	constexpr MACAddress() = default;
+
+	constexpr MACAddress(Raw &&r) : raw(r) {}
+
+	/// Pass-through aggregate initialization
+	template<typename... T>
+	constexpr MACAddress(const T &&...r) : raw({static_cast<uint8_t>(r)...})
+	{
+	}
+
+	template<typename Self>
+	auto data(this Self &&self)
+	{
+		return self.raw.data();
+	}
+
+	template<typename Self>
+	auto begin(this Self &&self)
+	{
+		return self.raw.begin();
+	}
+
+	template<typename Self>
+	auto end(this Self &&self)
+	{
+		return self.raw.end();
+	}
+
+	template<typename Self>
+	auto &operator[](this Self &&self, size_t ix)
+	{
+		return self.raw[ix];
+	}
+
+	template<typename Self>
+	constexpr bool operator==(this Self &&self, MACAddress &other)
+	{
+		return self.raw == other.raw;
+	}
+
+	template<typename Self>
+	constexpr operator Raw &(this Self &&self)
+	{
+		return self.raw;
+	}
+};
+static_assert(sizeof(MACAddress) == sizeof(MACAddress::Raw));
 
 /**
  * Ethernet header.
@@ -64,6 +117,22 @@ enum IPProtocolNumber : uint8_t
 	ICMP = 1,
 	TCP  = 6,
 	UDP  = 17,
+};
+
+struct IPv4Address
+{
+	uint32_t raw;
+
+	constexpr IPv4Address() = default;
+
+	constexpr IPv4Address(uint32_t r) : raw(r) {};
+
+	constexpr IPv4Address(const IPv4Address &) = default;
+
+	operator uint32_t() const
+	{
+		return raw;
+	}
 };
 
 /**
@@ -136,11 +205,11 @@ struct IPv4Header
 	/**
 	 * Source IP address.
 	 */
-	uint32_t sourceAddress;
+	IPv4Address sourceAddress;
 	/**
 	 * Destination IP address.
 	 */
-	uint32_t destinationAddress;
+	IPv4Address destinationAddress;
 
 	/**
 	 * Returns the offset of the start of the body of this packet.
