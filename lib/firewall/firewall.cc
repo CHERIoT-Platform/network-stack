@@ -1014,7 +1014,7 @@ bool ethernet_link_is_up()
 	return ethernet.phy_link_status();
 }
 
-void firewall_dns_server_ip_set(uint32_t ip)
+void firewall_dns_server_ip_set(IPv4Address ip)
 {
 	// This is potentially racy but, since it's called very early in network
 	// stack initialisation, it's not worth worrying about an attacker being
@@ -1042,17 +1042,17 @@ void firewall_remove_tcpipv4_server_port(uint16_t localPort)
 	EndpointsTable<IPv4Address>::instance().remove_server_port(localPort);
 }
 
-void firewall_add_tcpipv4_endpoint(uint32_t remoteAddress,
-                                   uint16_t localPort,
-                                   uint16_t remotePort)
+void firewall_add_tcpipv4_endpoint(IPv4Address remoteAddress,
+                                   uint16_t    localPort,
+                                   uint16_t    remotePort)
 {
 	EndpointsTable<IPv4Address>::instance().add_endpoint(
 	  IPProtocolNumber::TCP, remoteAddress, localPort, remotePort);
 }
 
-void firewall_add_udpipv4_endpoint(uint32_t remoteAddress,
-                                   uint16_t localPort,
-                                   uint16_t remotePort)
+void firewall_add_udpipv4_endpoint(IPv4Address remoteAddress,
+                                   uint16_t    localPort,
+                                   uint16_t    remotePort)
 {
 	EndpointsTable<IPv4Address>::instance().add_endpoint(
 	  IPProtocolNumber::UDP, remoteAddress, localPort, remotePort);
@@ -1069,9 +1069,9 @@ void firewall_remove_tcpipv4_local_endpoint(uint16_t localPort)
 	  IPProtocolNumber::TCP, localPort);
 }
 
-void firewall_remove_tcpipv4_remote_endpoint(uint32_t remoteAddress,
-                                             uint16_t localPort,
-                                             uint16_t remotePort)
+void firewall_remove_tcpipv4_remote_endpoint(IPv4Address remoteAddress,
+                                             uint16_t    localPort,
+                                             uint16_t    remotePort)
 {
 	if (EndpointsTable<IPv4Address>::instance().remove_endpoint(
 	      IPProtocolNumber::TCP, remoteAddress, localPort, remotePort) &&
@@ -1089,9 +1089,9 @@ void firewall_remove_udpipv4_local_endpoint(uint16_t localPort)
 	  IPProtocolNumber::UDP, localPort);
 }
 
-void firewall_remove_udpipv4_remote_endpoint(uint32_t remoteAddress,
-                                             uint16_t localPort,
-                                             uint16_t remotePort)
+void firewall_remove_udpipv4_remote_endpoint(IPv4Address remoteAddress,
+                                             uint16_t    localPort,
+                                             uint16_t    remotePort)
 {
 	EndpointsTable<IPv4Address>::instance().remove_endpoint(
 	  IPProtocolNumber::UDP, remoteAddress, localPort, remotePort);
