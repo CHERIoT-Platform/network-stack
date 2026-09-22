@@ -973,36 +973,52 @@ void __cheri_compartment("Firewall") ethernet_run_driver()
 	}
 	auto &interface = lazy_network_interface();
 
+	using FrameType =
+	  std::variant_alternative_t<0, decltype(interface.receive_frame())>;
+
 	while (true)
 	{
-		uint32_t lastInterrupt = interface.receive_interrupt_value();
-		int      packets       = 0;
-		// Debug::log("Receive interrupt value: {}", lastInterrupt);
-		//  Debug::log("Checking for frames");
-		while (auto maybeFrame = interface.receive_frame())
-		{
-			packets++;
-			auto        &frame = *maybeFrame;
-			ForwardFlags flags =
-			  packet_filter_ingress(frame.buffer, frame.length);
-			// Send the frame buffer to the TCP/IP stack as
-			// a read-only, non-capturable capability.
-			CHERI::Capability frameBuffer{frame.buffer};
-			frameBuffer.permissions() &= CHERI::Permission::Load;
-			if (flags & ForwardFlags::ForwardDNS)
-			{
-				dns_resolver_receive_frame(frameBuffer, frame.length);
-			}
-			if (flags & ForwardFlags::ForwardNetworkStack)
-			{
-				network_stack_receive_frame(frameBuffer, frame.length);
-			}
-		}
-		receivedCounter += packets;
-		// Sleep until the next frame arrives
-		Timeout t{UnlimitedTimeout};
-		// Timeout t{MS_TO_TICKS(1000)}; // For debugging, don't wait forever
-		interface.receive_interrupt_complete(&t, lastInterrupt);
+		int packets = 0;
+
+		std::visit(
+		  [&interface, &packets](auto &&arg) {
+			  using ArgType = const std::decay_t<decltype(arg)>;
+
+			  if constexpr (std::is_same_v<ArgType, FrameType>)
+			  {
+				  packets++;
+				  ForwardFlags flags =
+				    packet_filter_ingress(arg.buffer, arg.length);
+				  // Send the frame buffer to the TCP/IP stack as
+				  // a read-only, non-capturable capability.
+				  CHERI::Capability frameBuffer{arg.buffer};
+				  frameBuffer.permissions() &= CHERI::Permission::Load;
+				  if (flags & ForwardFlags::ForwardDNS)
+				  {
+					  dns_resolver_receive_frame(frameBuffer, arg.length);
+				  }
+				  if (flags & ForwardFlags::ForwardNetworkStack)
+				  {
+					  network_stack_receive_frame(frameBuffer, arg.length);
+				  }
+			  }
+			  else if constexpr (std::is_same_v<ArgType, const uint32_t>)
+			  {
+				  Debug::log("Sleeping on futex counter {}", arg);
+
+				  receivedCounter += packets;
+				  packets = 0;
+
+				  Timeout t{UnlimitedTimeout};
+				  // Timeout t{MS_TO_TICKS(1000)}; // For debugging, not forever
+				  interface.receive_interrupt_complete(&t, arg);
+			  }
+			  else
+			  {
+				  static_assert(false, "Visitor failed to visit!");
+			  }
+		  },
+		  interface.receive_frame());
 	}
 	Debug::log("Driver thread exiting");
 }
