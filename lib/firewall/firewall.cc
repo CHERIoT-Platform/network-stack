@@ -427,9 +427,9 @@ namespace
 		Debug::Assert(
 		  table.size() == 9, "Size is {}, should be 9", table.capacity());
 		Debug::Assert(table.capacity() == 2 * 8,
-		              "Capability is {:d}, should be 16",
+		              "Capability is {}, should be 16",
 		              table.capacity());
-		Debug::log("After ninth insertion: size {:d}, capacity {:d}",
+		Debug::log("After ninth insertion: size {}, capacity {}",
 		           table.size(),
 		           table.capacity());
 
