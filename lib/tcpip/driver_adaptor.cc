@@ -9,7 +9,6 @@
 // #include <fail-simulator-on-error.h>
 #include <futex.h>
 #include <locks.hh>
-#include <platform-ethernet.hh>
 #include <timeout.h>
 
 #include "tcpip-internal.h"

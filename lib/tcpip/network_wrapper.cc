@@ -15,7 +15,6 @@
 #include <endianness.hh>
 #include <limits>
 #include <locks.hh>
-#include <platform-ethernet.hh>
 #include <token.h>
 
 constexpr bool DebugTCPIP =
