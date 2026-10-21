@@ -300,9 +300,9 @@ namespace
 			  {
 				  int available =
 				    FreeRTOS_recv(socket->socket,
-				                  nullptr,
-				                  std::numeric_limits<size_t>::max(),
-				                  FREERTOS_MSG_PEEK | FREERTOS_MSG_DONTWAIT);
+					              nullptr,
+					              std::numeric_limits<size_t>::max(),
+					              FREERTOS_MSG_PEEK | FREERTOS_MSG_DONTWAIT);
 				  if (available > 0)
 				  {
 					  void *buffer = prepareBuffer(available);
@@ -499,10 +499,10 @@ Socket network_socket_create_and_bind(Timeout            *timeout,
 		  const auto Family = isIPv6 ? FREERTOS_AF_INET6 : FREERTOS_AF_INET;
 		  Socket_t   socket =
 		    FreeRTOS_socket(Family,
-		                    type == ConnectionTypeTCP ? FREERTOS_SOCK_STREAM
-		                                              : FREERTOS_SOCK_DGRAM,
-		                    type == ConnectionTypeTCP ? FREERTOS_IPPROTO_TCP
-		                                              : FREERTOS_IPPROTO_UDP);
+			                type == ConnectionTypeTCP ? FREERTOS_SOCK_STREAM
+			                                          : FREERTOS_SOCK_DGRAM,
+			                type == ConnectionTypeTCP ? FREERTOS_IPPROTO_TCP
+			                                          : FREERTOS_IPPROTO_UDP);
 		  if (socket == FREERTOS_INVALID_SOCKET)
 		  {
 			  Debug::log("Failed to create socket.");
@@ -1093,11 +1093,11 @@ network_socket_receive_from(Timeout            *timeout,
 			    // UDP returns a pointer to the packet buffer, so we don't end
 			    // up claiming a huge stream buffer.
 			    return FreeRTOS_recvfrom(socket->socket,
-			                             &unclaimedBuffer,
-			                             0,
-			                             FREERTOS_ZERO_COPY,
-			                             &remoteAddress,
-			                             &remoteAddressLength);
+				                         &unclaimedBuffer,
+				                         0,
+				                         FREERTOS_ZERO_COPY,
+				                         &remoteAddress,
+				                         &remoteAddressLength);
 		    } /* with_freertos_timeout */);
 		  if (received > 0)
 		  {
