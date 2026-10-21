@@ -9,7 +9,6 @@
 #include <FreeRTOS_ND.h>
 
 #include <debug.hh>
-#include <platform-ethernet.hh>
 #include <tcpip-internal.h>
 
 using Debug = ConditionalDebug<false, "TCP/IP Stack startup">;
