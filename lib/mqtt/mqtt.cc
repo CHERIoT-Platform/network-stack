@@ -15,6 +15,7 @@
 #include <string_view>
 #include <transport_interface.h>
 
+using namespace CHERI;
 using CHERI::Capability;
 
 constexpr bool DebugMQTT =
@@ -1124,7 +1125,7 @@ int mqtt_generate_client_id(char *buffer, size_t length)
 		return -EINVAL;
 	}
 
-	if (!CHERI::check_pointer(buffer, length))
+	if (!check_pointer<PermissionSet{Permission::Store}>(buffer, length))
 	{
 		return -EINVAL;
 	}
