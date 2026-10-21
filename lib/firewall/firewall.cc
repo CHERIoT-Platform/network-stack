@@ -545,7 +545,7 @@ namespace
 			return GuardedTable{LockGuard{permittedEndpointsLock},
 			                    protocol == IPProtocolNumber::TCP
 			                      ? permittedTCPEndpoints
-			                      : permittedUDPEndpoints};
+								  : permittedUDPEndpoints};
 		}
 
 		public:

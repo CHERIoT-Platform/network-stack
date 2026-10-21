@@ -49,7 +49,7 @@ __always_inline int randombytes(T &output)
  */
 template<typename T, size_t N>
     requires(!rbw_detail::HasRandomBytesOverload<T[N]> &&
-             std::is_arithmetic_v<T>)
+	         std::is_arithmetic_v<T>)
 __always_inline int randombytes(T (&output)[N])
 {
 	return randombytes(reinterpret_cast<uint8_t *>(&output), sizeof(output));
