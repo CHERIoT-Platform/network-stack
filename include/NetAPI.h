@@ -35,6 +35,29 @@ struct NetworkAddress
 };
 
 /**
+ * Enumeration that defines futex types. Each value corresponds
+ * to an index in the socket's futex array.
+ */
+enum SocketEventType : uint8_t
+{
+	/// Triggered when a new TCP connection
+	/// is accepted on a listening socket.
+	/// The value of the futex corresponding to
+	/// SocketAcceptEvent, means the number of
+	/// pending connections.
+	SocketAcceptEvent = 0,
+	// SocketReceiveEvent = 1, // Triggered when data is received on a socket
+	// SocketSendEvent = 2     // Triggered when a socket has space available
+	// for sending
+};
+
+/// Number of distinct socket event futex types.
+static constexpr size_t NumFutexTypes = SocketEventType::SocketAcceptEvent + 1;
+/// Sentinel value stored in a socket event futex after the socket has been
+/// torn down.
+static constexpr int32_t SocketNotAvailable = INT32_MIN;
+
+/**
  * Enumeration defining the connection type.
  */
 enum ConnectionType : uint8_t
@@ -268,6 +291,14 @@ Socket __cheri_compartment("TCPIP")
   network_socket_udp(Timeout            *timeout,
                      AllocatorCapability mallocCapability,
                      bool                isIPv6);
+
+/**
+ * Return the event source associated with a socket.
+ *
+ * The returned capability is read-only and bounded to four bytes.
+ */
+uint32_t *__cheri_compartment("TCPIP")
+  network_socket_get_event_source(Socket sealedSocket, SocketEventType type);
 
 /**
  * Authorise a UDP socket to send packets to a specific host.  This opens a
