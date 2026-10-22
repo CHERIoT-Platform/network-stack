@@ -3,7 +3,7 @@
 
 #pragma once
 
-#include <array>
+#include "protocol-addresses.hh"
 
 /**
  * EtherType values, for Ethernet headers.  These are defined in network
@@ -36,11 +36,6 @@ const char *ethertype_as_string(EtherType etherType)
 }
 
 /**
- * Ethernet MAC address.
- */
-using MACAddress = std::array<uint8_t, 6>;
-
-/**
  * Ethernet header.
  */
 struct EthernetHeader
@@ -64,38 +59,6 @@ enum IPProtocolNumber : uint8_t
 	ICMP = 1,
 	TCP  = 6,
 	UDP  = 17,
-};
-
-/**
- * IPv6 address.
- *
- * This should be `std::array<uint8_t, 16>` but our version of `std::array`
- * does not yet have a three-way comparison operator.
- */
-struct IPv6Address
-{
-	/**
-	 * The bytes of the address.
-	 */
-	uint8_t bytes[16];
-	/**
-	 * Returns a pointer to the bytes of this address.
-	 */
-	auto data()
-	{
-		return bytes;
-	}
-	/**
-	 * Returns the size of an address.
-	 */
-	[[nodiscard]] size_t size() const
-	{
-		return sizeof(bytes);
-	}
-	/// Comparison operator.
-	// A clang-tidy bug thinks that this should be = nullptr instead of =
-	// default.
-	auto operator<=>(const IPv6Address &) const = default; // NOLINT
 };
 
 struct IPv4Header
@@ -136,11 +99,11 @@ struct IPv4Header
 	/**
 	 * Source IP address.
 	 */
-	uint32_t sourceAddress;
+	IPv4Address sourceAddress;
 	/**
 	 * Destination IP address.
 	 */
-	uint32_t destinationAddress;
+	IPv4Address destinationAddress;
 
 	/**
 	 * Returns the offset of the start of the body of this packet.
