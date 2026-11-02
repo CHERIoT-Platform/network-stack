@@ -10,3 +10,7 @@
 [submodule "third_party/coreMQTT"]
 	path = third_party/coreMQTT
 	url = https://github.com/FreeRTOS/coreMQTT
+[submodule "third_party/wolfssl"]
+	path = third_party/wolfssl
+	url = https://github.com/The-Capable-Hub/wolfssl.git
+	branch = wbeasley/cheriot-changes
