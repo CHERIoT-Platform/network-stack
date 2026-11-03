@@ -35,6 +35,49 @@ struct NetworkAddress
 };
 
 /**
+ * Enumeration that defines futex types. Each value corresponds
+ * to an index in the socket's futex array.
+ */
+enum SocketEventType : uint8_t
+{
+	/// Triggered when a new TCP connection
+	/// is accepted on a listening socket.
+	/// The value of the futex corresponding to
+	/// SocketAcceptEvent, means the number of
+	/// pending connections.
+	SocketAcceptEvent = 0,
+	/// Triggered when a socket has space available
+	/// for sending bytes.
+	/// The value of the futex corresponding to
+	/// SocketTCPSendEvent, means the number of free
+	/// bytes available in the txStream buffer of
+	/// the socket.
+	/// After multiwaiter_wait() returns, do not wait for this value to reach
+	/// the full size of the pending send. Call network_socket_send() again
+	/// whenever any space is available; it may send only part of the requested
+	/// data.
+	SocketTCPSendEvent = 1,
+	/// The connection state of an outgoing TCP socket.
+	/// Zero means connecting, one means connected. The futex
+	/// never changes from 1 back to 0. Since the connect futex is a state, not
+	/// a consumable event. Resetting it to zero would incorrectly mean that
+	/// this socket it not connected.
+	SocketTCPConnectEvent = 2,
+	// Triggered when data is received on a socket
+	// SocketReceiveEvent = 3,
+};
+
+/// Number of distinct socket event futex types.
+static constexpr size_t NumFutexTypes =
+  SocketEventType::SocketTCPConnectEvent + 1;
+/// Sentinel value stored in a TCP event futex when the wrapper still exists
+/// but the TCP connection has closed.
+static constexpr int32_t SocketConnectionClosed = INT32_MIN + 1;
+/// Sentinel value stored in a socket event futex after the socket has been
+/// torn down.
+static constexpr int32_t SocketNotAvailable = INT32_MIN;
+
+/**
  * Enumeration defining the connection type.
  */
 enum ConnectionType : uint8_t
@@ -189,10 +232,11 @@ typedef CHERI_SEALED(struct SealedSocket *) Socket;
 void __cheri_compartment("TCPIP") network_start(void);
 
 /**
- * Create a connected TCP socket.
+ * Create a TCP socket and connect it to an authorised host.
  *
  * This function will block until the connection is established or the timeout
- * is reached.
+ * is reached. With a zero timeout, it starts the connection and returns without
+ * waiting for it to complete.
  *
  * The `mallocCapability` argument is used to allocate memory for the socket
  * and must have sufficient quota remaining for the socket.
@@ -200,8 +244,14 @@ void __cheri_compartment("TCPIP") network_start(void);
  * The `hostCapability` argument is a capability authorising the connection to
  * a specific host.
  *
- * This returns a valid sealed capability to a socket on success, or an
- * untagged value on failure.
+ * The return value is:
+ *
+ *  - A valid sealed socket capability if the connection succeeds or a
+ *    zero-timeout call starts the connection.
+ *  - An untagged value if the operation fails or a blocking call reaches its
+ *    timeout.
+ *
+ * The caller must close any valid socket returned by this function.
  */
 Socket __cheri_compartment("NetAPI")
   network_socket_connect_tcp(Timeout             *timeout,
@@ -268,6 +318,18 @@ Socket __cheri_compartment("TCPIP")
   network_socket_udp(Timeout            *timeout,
                      AllocatorCapability mallocCapability,
                      bool                isIPv6);
+
+/**
+ * Return the event source associated with a socket.
+ *
+ * The returned capability is read-only and bounded to four bytes.
+ * For a TCP socket, the futex `SocketTCPSendEvent` initially reports
+ * the configured maximum txStream capacity before the buffer is allocated.
+ * This is to prevent the user thread from sleeping on the multi-waiter
+ * forever before the first `network_socket_send()` is called.
+ */
+uint32_t *__cheri_compartment("TCPIP")
+  network_socket_get_event_source(Socket sealedSocket, SocketEventType type);
 
 /**
  * Authorise a UDP socket to send packets to a specific host.  This opens a
