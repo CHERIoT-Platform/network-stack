@@ -5,6 +5,8 @@
 #include <atomic>
 #include <compartment.h>
 
+#include "protocol-addresses.hh"
+
 /**
  * Unless specified otherwise, all APIs exposed in this header take IP
  * addresses and ports in network byte order.
@@ -89,7 +91,7 @@ void __cheri_compartment("DNS") initialize_dns_resolver(uint8_t *macAddress);
  *
  * This should only be called from the TCP/IP compartment.
  */
-void __cheri_compartment("Firewall") firewall_dns_server_ip_set(uint32_t ip);
+void __cheri_compartment("Firewall") firewall_dns_server_ip_set(IPv4Address ip);
 
 /**
  * Toggle whether DNS is permitted.  This is used to open a hole in the
@@ -108,9 +110,9 @@ void __cheri_compartment("Firewall")
  * This should be called only by the NetAPI compartment.
  */
 void __cheri_compartment("Firewall")
-  firewall_add_tcpipv4_endpoint(uint32_t remoteAddress,
-                                uint16_t localPort,
-                                uint16_t remotePort);
+  firewall_add_tcpipv4_endpoint(IPv4Address remoteAddress,
+                                uint16_t    localPort,
+                                uint16_t    remotePort);
 
 /**
  * Open a hole in the firewall for UDP packets to and from the given endpoint.
@@ -120,9 +122,9 @@ void __cheri_compartment("Firewall")
  * This should be called only by the NetAPI compartment.
  */
 void __cheri_compartment("Firewall")
-  firewall_add_udpipv4_endpoint(uint32_t remoteAddress,
-                                uint16_t localPort,
-                                uint16_t remotePort);
+  firewall_add_udpipv4_endpoint(IPv4Address remoteAddress,
+                                uint16_t    localPort,
+                                uint16_t    remotePort);
 
 /**
  * Close a hole in the firewall for TCP packets to and from the given endpoint.
@@ -145,9 +147,9 @@ void __cheri_compartment("Firewall")
  * (see discussion in `firewall_remove_tcpipv4_local_endpoint`).
  */
 void __cheri_compartment("Firewall")
-  firewall_remove_tcpipv4_remote_endpoint(uint32_t remoteAddress,
-                                          uint16_t localPort,
-                                          uint16_t remotePort);
+  firewall_remove_tcpipv4_remote_endpoint(IPv4Address remoteAddress,
+                                          uint16_t    localPort,
+                                          uint16_t    remotePort);
 
 /**
  * Close a hole in the firewall for UDP packets to and from the given endpoint.
@@ -167,9 +169,9 @@ void __cheri_compartment("Firewall")
  * (see discussion in `firewall_remove_udpipv4_local_endpoint`).
  */
 void __cheri_compartment("Firewall")
-  firewall_remove_udpipv4_remote_endpoint(uint32_t remoteAddress,
-                                          uint16_t localPort,
-                                          uint16_t remotePort);
+  firewall_remove_udpipv4_remote_endpoint(IPv4Address remoteAddress,
+                                          uint16_t    localPort,
+                                          uint16_t    remotePort);
 
 /**
  * Register a local TCP port as server port into the firewall.
