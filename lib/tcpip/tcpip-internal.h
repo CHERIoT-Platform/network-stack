@@ -3,6 +3,8 @@
 
 #pragma once
 #include <FreeRTOS_IP.h>
+#include <NetAPI.h>
+#include <atomic>
 #include <ds/linked_list.h>
 #include <function_wrapper.hh>
 #include <locks.hh>
@@ -42,6 +44,33 @@ struct SealedSocket
 	 * to the current instance of the network stack.
 	 */
 	uint64_t socketEpoch;
+	/**
+	 * Event waiter source futex array. This supports the multi-waiter
+	 * feature. Different events increment different futexes in the array and
+	 * wake the corresponding waiting threads.
+	 */
+	std::atomic<int32_t> eventFutexState[NumFutexTypes];
+	/**
+	 * Increments the futex and notifies all waiters if the futex is still
+	 * valid.
+	 *
+	 * Returns 0 on success, or `-EINVAL` if the futex has been invalidated.
+	 */
+	int signal_event_futex(SocketEventType type);
+	/**
+	 * Records one successfully accepted child socket by decrementing the accept
+	 * event counter.
+	 *
+	 * The caller must hold `socketLock`, which prevents the socket from being
+	 * freed while the futex is accessed. The futex value may become negative
+	 * if this helper is invoked after `FreeRTOS_accept()` successfully dequeue
+	 * a child, but before `on_tcp_connect()` increment the futex. The delayed
+	 * increment will repay this temporary debt.
+	 *
+	 * Returns 0 on success, or `-EINVAL` if the futex has been invalidated by
+	 * being set to `SocketNotAvailable`.
+	 */
+	int consume_event_futex(SocketEventType type);
 	/**
 	 * The lock protecting this socket.
 	 */
