@@ -1513,6 +1513,11 @@ ssize_t network_socket_send(Timeout *timeout,
 		  {
 			  return -EPERM;
 		  }
+		  // Ensure it is a TCP socket before accessing it.
+		  if (socket->socket->ucProtocol != FREERTOS_IPPROTO_TCP)
+		  {
+			  return -EINVAL;
+		  }
 		  // Create txStream on the first non-zero send and replace the
 		  // fake place holder value with its exact available space.
 		  if ((length != 0) && (socket->socket->u.xTCP.txStream == nullptr))
