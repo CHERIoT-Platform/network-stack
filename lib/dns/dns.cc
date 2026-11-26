@@ -10,7 +10,7 @@
 #include <tick_macros.h>
 #include <unwind.h>
 
-using Debug = ConditionalDebug<false, "DNS Resolver">;
+using Debug = ConditionalDebug<DEBUG_DNS, "DNS Resolver">;
 
 #include "../firewall/firewall.hh"
 
