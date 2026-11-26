@@ -15,7 +15,7 @@
 
 #include "protocol-headers.hh"
 
-using Debug = ConditionalDebug<false, "Firewall">;
+using Debug = ConditionalDebug<DEBUG_FIREWALL, "Firewall">;
 
 #include "firewall.hh"
 
